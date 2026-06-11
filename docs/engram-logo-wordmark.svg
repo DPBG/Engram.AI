@@ -1,6 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" role="img" aria-label="Engram — neuromorphic AI">
   <title>Engram — neuromorphic AI</title>
   <defs>
+    <radialGradient id="ew-bg" cx="0.32" cy="0.4" r="0.9">
+      <stop offset="0" stop-color="#16264a"/>
+      <stop offset="1" stop-color="#0a0e1a"/>
+    </radialGradient>
     <linearGradient id="ew-edge" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#22d3ee"/>
       <stop offset="0.5" stop-color="#5ea4f5"/>
@@ -12,9 +16,9 @@
       <stop offset="1" stop-color="#a78bfa"/>
     </linearGradient>
     <linearGradient id="ew-word" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#22d3ee"/>
-      <stop offset="0.5" stop-color="#5ea4f5"/>
-      <stop offset="1" stop-color="#a78bfa"/>
+      <stop offset="0" stop-color="#5fe0f5"/>
+      <stop offset="0.5" stop-color="#7db4ff"/>
+      <stop offset="1" stop-color="#b79cff"/>
     </linearGradient>
     <radialGradient id="ew-node" cx="0.5" cy="0.38" r="0.65">
       <stop offset="0" stop-color="#daf6ff"/>
@@ -30,10 +34,14 @@
     </filter>
   </defs>
 
+  <!-- dark card so the lockup is visible on light OR dark backgrounds -->
+  <rect x="2" y="2" width="716" height="196" rx="28" fill="url(#ew-bg)"/>
+  <rect x="2.75" y="2.75" width="714.5" height="194.5" rx="27.25" fill="none" stroke="url(#ew-ring)" stroke-width="1.5" opacity="0.4"/>
+
   <!-- logomark -->
-  <g transform="translate(6,16) scale(0.7)">
-    <circle cx="120" cy="120" r="106" fill="none" stroke="url(#ew-ring)" stroke-width="2.5" opacity="0.45"/>
-    <g filter="url(#ew-glow)" stroke="url(#ew-edge)" stroke-width="2.4" stroke-linecap="round" opacity="0.85">
+  <g transform="translate(14,18) scale(0.7)">
+    <circle cx="120" cy="120" r="106" fill="none" stroke="url(#ew-ring)" stroke-width="2.5" opacity="0.55"/>
+    <g filter="url(#ew-glow)" stroke="url(#ew-edge)" stroke-width="2.4" stroke-linecap="round" opacity="0.9">
       <line x1="120" y1="56"  x2="171" y2="76"/>
       <line x1="171" y1="76"  x2="187" y2="122"/>
       <line x1="187" y1="122" x2="162" y2="170"/>
@@ -72,5 +80,5 @@
   <text x="196" y="112" font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif"
         font-size="84" font-weight="800" letter-spacing="6" fill="url(#ew-word)">ENGRAM</text>
   <text x="200" y="146" font-family="Segoe UI, system-ui, -apple-system, Helvetica, Arial, sans-serif"
-        font-size="17" font-weight="600" letter-spacing="7" fill="#7e8a9e">NEUROMORPHIC&#160;AI</text>
+        font-size="17" font-weight="600" letter-spacing="7" fill="#8a97ab">NEUROMORPHIC&#160;AI</text>
 </svg>
