@@ -365,6 +365,14 @@ body{
       </div>
       <div class="eg-right"><a href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener">GitHub</a></div>
     </header>
+    <script>
+      // When embedded (iframed by the demo pages with ?embed=true), hide this
+      // top bar so it does not double up with the host page's own header.
+      if (new URLSearchParams(location.search).get('embed') === 'true') {
+        var _egTopbar = document.querySelector('.eg-topbar');
+        if (_egTopbar) _egTopbar.style.display = 'none';
+      }
+    </script>
 
     <div id="canvas-container"></div>
 
