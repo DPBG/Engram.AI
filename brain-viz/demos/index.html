@@ -10,7 +10,7 @@
 <style>
   :root{
     --bg:#070b15;
-    --text:#cdd6e6; --dim:#7a8699; --bright:#eef2fb;
+    --text:#cdd6e6; --dim:#7a8699; --faint:#525d70; --bright:#eef2fb;
     --border:rgba(120,160,225,0.10); --border-2:rgba(120,160,225,0.20);
     --sans:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --mono:'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
@@ -18,232 +18,250 @@
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{
-    font-family:var(--sans); color:var(--text); line-height:1.5;
-    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-    min-height:100vh;
+    font-family:var(--sans);color:var(--text);line-height:1.5;min-height:100vh;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
     background:
-      radial-gradient(1100px 620px at 50% -8%, rgba(36,92,170,0.20), transparent 62%),
-      radial-gradient(820px 480px at 86% 4%, rgba(124,92,222,0.12), transparent 60%),
+      radial-gradient(1000px 560px at 18% -6%, rgba(36,92,170,0.20), transparent 60%),
+      radial-gradient(760px 460px at 100% 8%, rgba(124,92,222,0.12), transparent 60%),
       var(--bg);
     background-attachment:fixed;
-    padding:clamp(30px,5vw,76px) clamp(16px,4vw,40px) clamp(40px,5vw,64px);
   }
-  .wrap{max-width:1180px;margin:0 auto}
+  a{color:inherit}
 
-  /* ---- hero ---- */
-  .hero{text-align:center;margin-bottom:clamp(34px,5vw,56px)}
-  .mark{width:64px;height:64px;margin:0 auto 18px;display:block;filter:drop-shadow(0 6px 22px rgba(46,128,220,0.35))}
-  .brand{
-    font-size:clamp(40px,7vw,62px);font-weight:800;letter-spacing:.16em;line-height:1;
-    background:linear-gradient(100deg,#5fe0f5,#7db4ff 46%,#b79cff);
-    -webkit-background-clip:text;background-clip:text;color:transparent;
-    margin-left:.16em; /* optical center for the letter-spacing */
-  }
-  .tagline{margin-top:15px;font-size:clamp(14px,2.1vw,17px);color:var(--dim);font-weight:400}
-  .chips{margin-top:22px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-  .chip{
-    font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
-    color:var(--dim);background:rgba(148,178,225,0.04);
-    border:1px solid var(--border);border-radius:999px;
-    padding:6px 14px;display:inline-flex;align-items:center;gap:8px;text-decoration:none;
-    transition:color .25s, border-color .25s, background .25s;
-  }
-  .chip:hover{color:var(--bright);border-color:var(--border-2);background:rgba(148,178,225,0.07)}
-  .dot{width:7px;height:7px;border-radius:50%;background:#38d97a;box-shadow:0 0 9px #38d97a;animation:pulse 1.9s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .shell{display:grid;grid-template-columns:300px 1fr;min-height:100vh}
 
-  /* ---- live stats ---- */
-  .stats{
-    display:flex;align-items:center;justify-content:center;flex-wrap:wrap;
-    gap:clamp(16px,3.4vw,40px);
-    max-width:940px;margin:0 auto clamp(36px,5vw,56px);
-    padding:22px clamp(18px,4vw,38px);
-    background:linear-gradient(180deg,rgba(148,178,225,0.055),rgba(148,178,225,0.015));
-    border:1px solid var(--border);border-radius:16px;
-    backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);
-  }
-  .stat{text-align:center;min-width:92px}
-  .stat-value{font-family:var(--mono);font-size:clamp(22px,3vw,28px);font-weight:600;letter-spacing:-.01em;color:var(--bright)}
-  .stat-value.c-blue{color:#7db4ff}
-  .stat-value.c-green{color:#38d97a}
-  .stat-value.c-amber{color:#f5b13a}
-  .stat-value.c-cyan{color:#22d3ee}
-  .stat-value.c-violet{color:#b79cff}
-  .stat-label{margin-top:7px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
-  .divider{width:1px;height:36px;background:var(--border)}
-
-  /* ---- demo grid ---- */
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(264px,1fr));gap:16px}
-  .card{
-    position:relative;display:flex;flex-direction:column;isolation:isolate;overflow:hidden;
-    padding:24px 22px 20px;border-radius:14px;text-decoration:none;color:var(--text);
+  /* ---------- left rail ---------- */
+  .side{
+    position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+    display:flex;flex-direction:column;
+    padding:38px 30px;
     background:linear-gradient(180deg,rgba(148,178,225,0.05),rgba(148,178,225,0.012));
-    border:1px solid var(--border);
-    transition:transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+    border-right:1px solid var(--border);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   }
-  .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--c),transparent 72%);opacity:.85}
-  .card .idx{position:absolute;top:6px;right:14px;z-index:-1;font-family:var(--mono);font-weight:700;font-size:56px;line-height:1;letter-spacing:-.04em;color:var(--c);opacity:.09}
-  .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--c);margin-bottom:12px}
-  .card h3{font-size:17px;font-weight:600;letter-spacing:-.01em;color:var(--bright);margin-bottom:9px}
-  .card p{font-size:12.5px;line-height:1.65;color:var(--dim);flex:1}
-  .meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px}
-  .tag{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--c);padding:4px 10px;border-radius:999px;background:color-mix(in srgb, var(--c) 14%, transparent);border:1px solid color-mix(in srgb, var(--c) 24%, transparent)}
-  .go{font-size:17px;line-height:1;color:var(--c);opacity:0;transform:translateX(-5px);transition:opacity .25s, transform .25s}
-  .card:hover{transform:translateY(-3px);border-color:color-mix(in srgb, var(--c) 55%, var(--border));box-shadow:0 16px 42px -14px color-mix(in srgb, var(--c) 42%, transparent)}
-  .card:hover .go{opacity:1;transform:translateX(0)}
+  .brand-row{display:flex;align-items:center;gap:13px}
+  .mark{width:40px;height:40px;flex:none;filter:drop-shadow(0 4px 16px rgba(46,128,220,0.4))}
+  .brand{
+    font-size:23px;font-weight:800;letter-spacing:.16em;line-height:1;
+    background:linear-gradient(100deg,#5fe0f5,#7db4ff 50%,#b79cff);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .tagline{margin-top:18px;font-size:13px;line-height:1.6;color:var(--dim)}
 
-  .card-brain{--c:#5ea4f5}
-  .card-reaction{--c:#22d3ee}
-  .card-timeline{--c:#38d97a}
-  .card-speech{--c:#f472b6}
-  .card-energy{--c:#f5a623}
-  .card-body{--c:#a78bfa}
-  .card-walking{--c:#f97316}
-  .card-concepts{--c:#2dd4bf}
+  .live-head{display:flex;align-items:center;gap:9px;margin:30px 0 6px;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)}
+  .dot{width:7px;height:7px;border-radius:50%;background:#38d97a;box-shadow:0 0 9px #38d97a;animation:pulse 1.9s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-  /* ---- footer ---- */
-  .foot{margin-top:clamp(40px,5vw,60px);text-align:center}
-  .spec{font-family:var(--mono);font-size:11px;letter-spacing:.03em;color:var(--dim);line-height:1.85}
-  .links{margin-top:14px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
-  .links a{color:var(--dim);text-decoration:none;transition:color .2s}
-  .links a:hover{color:#7db4ff}
-  .links .sep{color:rgba(120,160,225,0.28);margin:0 9px}
+  .metrics{display:flex;flex-direction:column}
+  .metric{display:flex;align-items:baseline;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid rgba(120,160,225,0.07)}
+  .metric .k{font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+  .metric .v{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--bright);white-space:nowrap}
+  .v.c-blue{color:#7db4ff}.v.c-green{color:#38d97a}.v.c-amber{color:#f5b13a}.v.c-cyan{color:#22d3ee}.v.c-violet{color:#b79cff}
 
-  @media (max-width:720px){
-    .divider{display:none}
-    .stats{gap:18px 26px}
+  .side-foot{margin-top:auto;padding-top:28px;display:flex;flex-direction:column;gap:11px}
+  .side-foot a{font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--dim);text-decoration:none;display:flex;align-items:center;gap:8px;transition:color .2s}
+  .side-foot a:hover{color:var(--bright)}
+  .side-foot a .g{color:var(--faint);transition:transform .2s,color .2s}
+  .side-foot a:hover .g{color:#7db4ff;transform:translateX(2px)}
+
+  /* ---------- main panel ---------- */
+  .main{padding:clamp(34px,4.5vw,60px) clamp(26px,5vw,76px) 48px;min-width:0}
+  .main-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:8px}
+  .main-head h2{font-size:clamp(24px,3.2vw,32px);font-weight:700;letter-spacing:-.015em;color:var(--bright)}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-bottom:10px}
+  .count{font-family:var(--mono);font-size:12px;color:var(--faint);white-space:nowrap}
+
+  .list{margin-top:14px}
+  .row{
+    position:relative;display:grid;grid-template-columns:50px 1fr auto;align-items:center;
+    column-gap:22px;padding:24px 18px;text-decoration:none;color:var(--text);
+    border-radius:12px;transition:background .22s ease;
+  }
+  .row + .row{box-shadow:0 -1px 0 var(--border)}
+  .row::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--c);opacity:0;transition:opacity .22s}
+  .row:hover{background:linear-gradient(90deg, color-mix(in srgb, var(--c) 9%, transparent), transparent 72%)}
+  .row:hover::before{opacity:1}
+
+  .row .num{font-family:var(--mono);font-size:20px;font-weight:600;color:var(--c)}
+  .row .body{min-width:0}
+  .row h3{font-size:18px;font-weight:600;letter-spacing:-.01em;color:var(--bright);margin-bottom:6px}
+  .row p{font-size:13px;line-height:1.6;color:var(--dim);max-width:62ch}
+  .row .tag{display:inline-block;margin-top:11px;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--c);padding:3px 9px;border-radius:999px;background:color-mix(in srgb, var(--c) 13%, transparent);border:1px solid color-mix(in srgb, var(--c) 22%, transparent)}
+  .row .arrow{font-size:18px;color:var(--c);opacity:0;transform:translateX(-6px);transition:opacity .22s,transform .22s;justify-self:end}
+  .row:hover .arrow{opacity:1;transform:translateX(0)}
+
+  .row-brain{--c:#5ea4f5}
+  .row-reaction{--c:#22d3ee}
+  .row-timeline{--c:#38d97a}
+  .row-speech{--c:#f472b6}
+  .row-energy{--c:#f5a623}
+  .row-body{--c:#a78bfa}
+  .row-walking{--c:#f97316}
+  .row-concepts{--c:#2dd4bf}
+
+  .spec{margin-top:40px;padding-top:24px;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;letter-spacing:.03em;color:var(--faint);line-height:1.85}
+
+  /* ---------- responsive ---------- */
+  @media (max-width:900px){
+    .shell{grid-template-columns:1fr}
+    .side{position:static;height:auto;overflow:visible;border-right:none;border-bottom:1px solid var(--border)}
+    .metrics{flex-flow:row wrap;gap:6px 26px}
+    .metric{flex:1 1 120px;border-bottom:none}
+    .side-foot{margin-top:22px;flex-flow:row wrap;gap:18px}
+  }
+  @media (max-width:560px){
+    .row{grid-template-columns:38px 1fr;padding:20px 12px}
+    .row .arrow{display:none}
+    .row p{max-width:none}
   }
 </style>
 </head>
 <body>
-<main class="wrap">
+<div class="shell">
 
-  <header class="hero">
-    <svg class="mark" viewBox="0 0 240 240" aria-hidden="true">
-      <defs>
-        <linearGradient id="lm-edge" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#22d3ee"/><stop offset="0.5" stop-color="#5ea4f5"/><stop offset="1" stop-color="#a78bfa"/>
-        </linearGradient>
-        <radialGradient id="lm-node" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#daf6ff"/><stop offset="1" stop-color="#22d3ee"/></radialGradient>
-        <radialGradient id="lm-fire" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#e9fff2"/><stop offset="1" stop-color="#38d97a"/></radialGradient>
-        <filter id="lm-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-      </defs>
-      <circle cx="120" cy="120" r="106" fill="none" stroke="url(#lm-edge)" stroke-width="2.5" opacity="0.5"/>
-      <g filter="url(#lm-glow)" stroke="url(#lm-edge)" stroke-width="2.4" stroke-linecap="round" opacity="0.9">
-        <line x1="120" y1="56" x2="171" y2="76"/><line x1="171" y1="76" x2="187" y2="122"/><line x1="187" y1="122" x2="162" y2="170"/>
-        <line x1="162" y1="170" x2="110" y2="184"/><line x1="110" y1="184" x2="64" y2="160"/><line x1="64" y1="160" x2="55" y2="102"/>
-        <line x1="55" y1="102" x2="120" y2="56"/><line x1="120" y1="56" x2="116" y2="108"/><line x1="116" y1="108" x2="150" y2="124"/>
-        <line x1="150" y1="124" x2="187" y2="122"/><line x1="116" y1="108" x2="96" y2="142"/><line x1="96" y1="142" x2="64" y2="160"/>
-        <line x1="150" y1="124" x2="137" y2="156"/><line x1="137" y1="156" x2="110" y2="184"/><line x1="96" y1="142" x2="137" y2="156"/>
-        <line x1="171" y1="76" x2="150" y2="124"/><line x1="55" y1="102" x2="116" y2="108"/><line x1="116" y1="108" x2="137" y2="156"/>
-      </g>
-      <g filter="url(#lm-glow)">
-        <circle cx="120" cy="56" r="5" fill="url(#lm-node)"/><circle cx="187" cy="122" r="5" fill="url(#lm-node)"/><circle cx="162" cy="170" r="4.5" fill="url(#lm-node)"/>
-        <circle cx="64" cy="160" r="5" fill="url(#lm-node)"/><circle cx="55" cy="102" r="4.5" fill="url(#lm-node)"/><circle cx="96" cy="142" r="4.5" fill="url(#lm-node)"/>
-        <circle cx="137" cy="156" r="5" fill="url(#lm-node)"/><circle cx="116" cy="108" r="6" fill="url(#lm-node)"/>
-        <circle cx="171" cy="76" r="6.5" fill="url(#lm-fire)"/><circle cx="110" cy="184" r="6" fill="url(#lm-fire)"/><circle cx="150" cy="124" r="7" fill="url(#lm-fire)"/>
-      </g>
-    </svg>
-    <h1 class="brand">ENGRAM</h1>
-    <p class="tagline">A self-aware, continuously-learning neuromorphic AI</p>
-    <div class="chips">
-      <span class="chip"><i class="dot"></i> Interactive Demos</span>
-      <a class="chip" href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener">MIT · Open Source</a>
+  <!-- ===== left rail ===== -->
+  <aside class="side">
+    <div class="brand-row">
+      <svg class="mark" viewBox="0 0 240 240" aria-hidden="true">
+        <defs>
+          <linearGradient id="lm-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.5" stop-color="#5ea4f5"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+          <radialGradient id="lm-node" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#daf6ff"/><stop offset="1" stop-color="#22d3ee"/></radialGradient>
+          <radialGradient id="lm-fire" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#e9fff2"/><stop offset="1" stop-color="#38d97a"/></radialGradient>
+          <filter id="lm-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <circle cx="120" cy="120" r="106" fill="none" stroke="url(#lm-edge)" stroke-width="3" opacity="0.5"/>
+        <g filter="url(#lm-glow)" stroke="url(#lm-edge)" stroke-width="3" stroke-linecap="round" opacity="0.9">
+          <line x1="120" y1="56" x2="171" y2="76"/><line x1="171" y1="76" x2="187" y2="122"/><line x1="187" y1="122" x2="162" y2="170"/>
+          <line x1="162" y1="170" x2="110" y2="184"/><line x1="110" y1="184" x2="64" y2="160"/><line x1="64" y1="160" x2="55" y2="102"/>
+          <line x1="55" y1="102" x2="120" y2="56"/><line x1="120" y1="56" x2="116" y2="108"/><line x1="116" y1="108" x2="150" y2="124"/>
+          <line x1="150" y1="124" x2="187" y2="122"/><line x1="116" y1="108" x2="96" y2="142"/><line x1="96" y1="142" x2="64" y2="160"/>
+          <line x1="150" y1="124" x2="137" y2="156"/><line x1="137" y1="156" x2="110" y2="184"/><line x1="96" y1="142" x2="137" y2="156"/>
+          <line x1="171" y1="76" x2="150" y2="124"/><line x1="55" y1="102" x2="116" y2="108"/><line x1="116" y1="108" x2="137" y2="156"/>
+        </g>
+        <g filter="url(#lm-glow)">
+          <circle cx="120" cy="56" r="6" fill="url(#lm-node)"/><circle cx="187" cy="122" r="6" fill="url(#lm-node)"/><circle cx="162" cy="170" r="5.5" fill="url(#lm-node)"/>
+          <circle cx="64" cy="160" r="6" fill="url(#lm-node)"/><circle cx="55" cy="102" r="5.5" fill="url(#lm-node)"/><circle cx="96" cy="142" r="5.5" fill="url(#lm-node)"/>
+          <circle cx="137" cy="156" r="6" fill="url(#lm-node)"/><circle cx="116" cy="108" r="7" fill="url(#lm-node)"/>
+          <circle cx="171" cy="76" r="8" fill="url(#lm-fire)"/><circle cx="110" cy="184" r="7" fill="url(#lm-fire)"/><circle cx="150" cy="124" r="8.5" fill="url(#lm-fire)"/>
+        </g>
+      </svg>
+      <span class="brand">ENGRAM</span>
     </div>
-  </header>
 
-  <section class="stats" aria-label="Live brain metrics">
-    <div class="stat"><div class="stat-value c-blue"   id="stat-steps">--</div><div class="stat-label">Training Steps</div></div>
-    <span class="divider"></span>
-    <div class="stat"><div class="stat-value c-green"  id="stat-recall">--</div><div class="stat-label">Cross-Modal Recall</div></div>
-    <span class="divider"></span>
-    <div class="stat"><div class="stat-value c-amber"  id="stat-regions">--</div><div class="stat-label">Regions Firing</div></div>
-    <span class="divider"></span>
-    <div class="stat"><div class="stat-value c-cyan"   id="stat-firing">--</div><div class="stat-label">Global Firing Rate</div></div>
-    <span class="divider"></span>
-    <div class="stat"><div class="stat-value c-violet" id="stat-tests">644</div><div class="stat-label">Tests Passing</div></div>
-  </section>
+    <p class="tagline">A self-aware, continuously-learning neuromorphic AI.</p>
 
-  <section class="grid">
+    <div class="live-head"><span class="dot"></span> Live Metrics</div>
+    <div class="metrics">
+      <div class="metric"><span class="k">Training Steps</span><span class="v c-blue"   id="stat-steps">--</span></div>
+      <div class="metric"><span class="k">Cross-Modal Recall</span><span class="v c-green" id="stat-recall">--</span></div>
+      <div class="metric"><span class="k">Regions Firing</span><span class="v c-amber"  id="stat-regions">--</span></div>
+      <div class="metric"><span class="k">Global Firing Rate</span><span class="v c-cyan" id="stat-firing">--</span></div>
+      <div class="metric"><span class="k">Tests Passing</span><span class="v c-violet"   id="stat-tests">644</span></div>
+    </div>
 
-    <a href="../index.html" class="card card-brain">
-      <span class="idx">01</span>
-      <div class="eyebrow">Demo 01</div>
-      <h3>Live Brain Visualization</h3>
-      <p>Real-time 3D brain with 13 regions, 48 synapse groups, lightning-bolt synaptic arcs, and neuromodulator-driven lighting. Connects live to the running brain.</p>
-      <div class="meta"><span class="tag">Three.js / WebGL</span><span class="go">→</span></div>
-    </a>
+    <div class="side-foot">
+      <a href="../index.html"><span class="g">↗</span> Live Brain</a>
+      <a href="/"><span class="g">↗</span> Dashboard</a>
+      <a href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener"><span class="g">↗</span> GitHub · MIT</a>
+    </div>
+  </aside>
 
-    <a href="reaction.html" class="card card-reaction">
-      <span class="idx">02</span>
-      <div class="eyebrow">Demo 02</div>
-      <h3>Brain Reaction Probe</h3>
-      <p>Drop an image or trigger a preset stimulus and watch the neural cascade unfold. See which brain regions activate, in what order, and why.</p>
-      <div class="meta"><span class="tag">Interactive</span><span class="go">→</span></div>
-    </a>
+  <!-- ===== main panel ===== -->
+  <main class="main">
+    <div class="eyebrow">Interactive Demos</div>
+    <div class="main-head">
+      <h2>Explore the brain, live.</h2>
+      <span class="count">08 demos</span>
+    </div>
 
-    <a href="timeline.html" class="card card-timeline">
-      <span class="idx">03</span>
-      <div class="eyebrow">Demo 03</div>
-      <h3>Development Timeline</h3>
-      <p>Timelapse of the brain growing up from birth to maturity. Watch plasticity decrease, concepts form, pruning sculpt connections, and myelination lock in knowledge.</p>
-      <div class="meta"><span class="tag">Timelapse</span><span class="go">→</span></div>
-    </a>
+    <nav class="list">
 
-    <a href="speech.html" class="card card-speech">
-      <span class="idx">04</span>
-      <div class="eyebrow">Demo 04</div>
-      <h3>Speech Motor Output</h3>
-      <p>Live stream from the brain's 3,486 speech motor neurons. Watch the juvenile brain babble — random tokens now, meaningful language after training.</p>
-      <div class="meta"><span class="tag">Live Babble</span><span class="go">→</span></div>
-    </a>
+      <a href="../index.html" class="row row-brain">
+        <span class="num">01</span>
+        <span class="body">
+          <h3>Live Brain Visualization</h3>
+          <p>Real-time 3D brain with 13 regions, 48 synapse groups, lightning-bolt synaptic arcs, and neuromodulator-driven lighting. Connects live to the running brain.</p>
+          <span class="tag">Three.js / WebGL</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
 
-    <a href="energy.html" class="card card-energy">
-      <span class="idx">05</span>
-      <div class="eyebrow">Demo 05</div>
-      <h3>Energy Efficiency</h3>
-      <p>Side-by-side comparison: GPT-4o (0.3 Wh/query) vs Engram on Loihi (0.0003 Wh/step). Neuromorphic hardware is 73–109× more energy efficient than traditional compute.</p>
-      <div class="meta"><span class="tag">Data Comparison</span><span class="go">→</span></div>
-    </a>
+      <a href="reaction.html" class="row row-reaction">
+        <span class="num">02</span>
+        <span class="body">
+          <h3>Brain Reaction Probe</h3>
+          <p>Drop an image or trigger a preset stimulus and watch the neural cascade unfold. See which brain regions activate, in what order, and why.</p>
+          <span class="tag">Interactive</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
 
-    <a href="body.html" class="card card-body">
-      <span class="idx">06</span>
-      <div class="eyebrow">Demo 06</div>
-      <h3>Virtual Body (MuJoCo)</h3>
-      <p>Live 3D view of the brain's MuJoCo humanoid body. Watch motor commands move limbs in real-time — locomotion, manipulation, and head control.</p>
-      <div class="meta"><span class="tag">Three.js / Live</span><span class="go">→</span></div>
-    </a>
+      <a href="timeline.html" class="row row-timeline">
+        <span class="num">03</span>
+        <span class="body">
+          <h3>Development Timeline</h3>
+          <p>Timelapse of the brain growing up from birth to maturity. Watch plasticity decrease, concepts form, pruning sculpt connections, and myelination lock in knowledge.</p>
+          <span class="tag">Timelapse</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
 
-    <a href="walking.html" class="card card-walking">
-      <span class="idx">07</span>
-      <div class="eyebrow">Demo 07</div>
-      <h3>Brain Learning to Walk</h3>
-      <p>Per-joint motor neuron activity across 15 locomotion actuators via population vector decoding. Watch the brain learn individuated joint control from random noise.</p>
-      <div class="meta"><span class="tag">Population Vector / Live</span><span class="go">→</span></div>
-    </a>
+      <a href="speech.html" class="row row-speech">
+        <span class="num">04</span>
+        <span class="body">
+          <h3>Speech Motor Output</h3>
+          <p>Live stream from the brain's 3,486 speech motor neurons. Watch the juvenile brain babble — random tokens now, meaningful language after training.</p>
+          <span class="tag">Live Babble</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
 
-    <a href="concepts.html" class="card card-concepts">
-      <span class="idx">08</span>
-      <div class="eyebrow">Demo 08</div>
-      <h3>Concept Formation</h3>
-      <p>Probe the concept layer with controlled stimuli. See which neurons fire for "dog" vs "cat" vs "car". Cosine similarity matrix reveals learned representations.</p>
-      <div class="meta"><span class="tag">Live Probe</span><span class="go">→</span></div>
-    </a>
+      <a href="energy.html" class="row row-energy">
+        <span class="num">05</span>
+        <span class="body">
+          <h3>Energy Efficiency</h3>
+          <p>Side-by-side comparison: GPT-4o (0.3 Wh/query) vs Engram on Loihi (0.0003 Wh/step). Neuromorphic hardware is 73–109× more energy efficient than traditional compute.</p>
+          <span class="tag">Data Comparison</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
 
-  </section>
+      <a href="body.html" class="row row-body">
+        <span class="num">06</span>
+        <span class="body">
+          <h3>Virtual Body (MuJoCo)</h3>
+          <p>Live 3D view of the brain's MuJoCo humanoid body. Watch motor commands move limbs in real-time — locomotion, manipulation, and head control.</p>
+          <span class="tag">Three.js / Live</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
 
-  <footer class="foot">
-    <p class="spec">1,056,800 neurons &nbsp;·&nbsp; 1.31B synapses &nbsp;·&nbsp; 48 synapse groups &nbsp;·&nbsp; 6 biological learning mechanisms &nbsp;·&nbsp; 29-DOF humanoid body</p>
-    <p class="links">
-      <a href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener">GitHub</a>
-      <span class="sep">·</span>
-      <a href="../index.html">Live Brain</a>
-      <span class="sep">·</span>
-      <a href="/">Dashboard</a>
-    </p>
-  </footer>
+      <a href="walking.html" class="row row-walking">
+        <span class="num">07</span>
+        <span class="body">
+          <h3>Brain Learning to Walk</h3>
+          <p>Per-joint motor neuron activity across 15 locomotion actuators via population vector decoding. Watch the brain learn individuated joint control from random noise.</p>
+          <span class="tag">Population Vector / Live</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
 
-</main>
+      <a href="concepts.html" class="row row-concepts">
+        <span class="num">08</span>
+        <span class="body">
+          <h3>Concept Formation</h3>
+          <p>Probe the concept layer with controlled stimuli. See which neurons fire for "dog" vs "cat" vs "car". Cosine similarity matrix reveals learned representations.</p>
+          <span class="tag">Live Probe</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+    </nav>
+
+    <p class="spec">Engram Neural Architecture &nbsp;·&nbsp; 1,056,800 neurons &nbsp;·&nbsp; 1.31B synapses &nbsp;·&nbsp; 48 synapse groups &nbsp;·&nbsp; 6 biological learning mechanisms &nbsp;·&nbsp; 29-DOF humanoid body</p>
+  </main>
+
+</div>
 
 <script>
 // Fetch live stats from dashboard API
