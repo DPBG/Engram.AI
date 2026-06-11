@@ -22,8 +22,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Only runs when HETZNER_IP secret is configured — forks without it skip this job
-    if: ${{ secrets.HETZNER_IP != '' }}
+    # Only runs on the canonical repo (forks skip). NOTE: the `secrets` context
+    # is NOT allowed in a job-level `if` — using it makes GitHub reject the whole
+    # workflow as an "invalid workflow file", which fails on every push. Use the
+    # `github` context instead.
+    if: ${{ github.repository == 'DPBG/Engram.AI' }}
 
     steps:
       - name: Checkout code
