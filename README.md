@@ -546,6 +546,19 @@ Engram is a research system, and we believe in being honest about its current st
 
 If something doesn't match the docs, please open an issue — accurate docs are a priority.
 
+## Contributing
+
+Contributions are welcome! A few essentials:
+
+- **Open pull requests against the [`dev`](https://github.com/DPBG/Engram.AI/tree/dev) branch**, not `main`. `dev` is the
+  integration branch; `main` is the stable/release branch that `dev` is merged
+  into for releases.
+- Branch from `dev` (`git checkout dev && git checkout -b feature/your-feature`),
+  make your change, and open the PR with **base: `dev`**.
+- Run the tests before pushing — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+  full workflow, code standards, and the architecture invariants in
+  [CLAUDE.md](CLAUDE.md).
+
 ## License
 
 Engram is released under the [MIT License](LICENSE).
