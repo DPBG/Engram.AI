@@ -1,0 +1,94 @@
+node_modules/
+dist/
+.DS_Store
+
+# Env files — ignore all real envs, keep tracked templates
+.env
+.env.*
+!.env.example
+!deploy/.env.cloud
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local launcher runtime (downloaded NATS binary + service data)
+.localrun/
+data/
+
+# Databases (SQLite persistence — never commit runtime state)
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+
+# Model weights / learned state (regenerated at runtime)
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.pkl
+*.h5
+
+# Build artifacts
+*.so
+*.o
+*.tsbuildinfo
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Lock files
+uv.lock
+
+# Large files
+*.mp4
+*.onnx
+*.onnx.data
+*.whl
+
+# Video staging
+staging_videos/*/raw/
+staging_videos/*/compressed/
+staging_videos/compressed/
+
+# Binary docs (use markdown source)
+*.docx
+*.xlsx
+*.pdf
+
+# Sandbox test videos
+sandbox/coherence_test/*.mp4
+
+# Third-party libs (use submodules or package managers)
+lib/
+
+# OS
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
