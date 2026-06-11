@@ -1,19 +1,33 @@
+<div align="center">
+
 # 🧠 Engram
+
+### A self-aware, continuously-learning neuromorphic AI
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-A self-aware, continuously-learning AI system. It detects its environment, learns from every interaction, and improves over time — on whatever machine it runs on.
+<img src="docs/engram-hero.jpg" alt="Engram — a humanoid body and a ~1M-neuron spiking neural network perceiving, moving, and learning in real time" width="100%" />
 
-When you open `localhost:8080`, you see a living system -- a neuromorphic brain learning in a MuJoCo physics simulation, not a dead admin panel.
+<em>A ~1M-neuron spiking neural network and a humanoid body that perceive, move, and learn in real time — developmental, STDP-based learning across 13 brain regions and six biological mechanisms, with no batch training.</em>
+
+<br/>
+
+[Quick Start](#quick-start) · [Architecture](#architecture) · [Dashboard](#dashboard) · [Known Limitations](#known-limitations) · [Contributing](CONTRIBUTING.md)
+
+</div>
+
+---
+
+Engram detects its environment, learns from every interaction, and improves over time — on whatever machine it runs on. Open `localhost:8080` and you see a living system: a neuromorphic brain learning inside a MuJoCo physics simulation, not a static admin panel.
 
 > **Project status:** Engram is an **active research project**, not production-ready
-> software. The architecture is implemented and unit-tested, but it is not yet
-> validated at scale or in real time on physical robots. We released it under the
-> MIT License to invite contributors. See [Known Limitations](#known-limitations)
-> for an honest account of what works and what doesn't yet, and
-> [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
+> software. The architecture is implemented and unit-tested, but not yet validated
+> at scale or in real time on physical robots. It is released under the MIT License
+> to invite contributors — see [Known Limitations](#known-limitations) for an honest
+> account of what works and what doesn't yet, and [CONTRIBUTING.md](CONTRIBUTING.md)
+> to get involved.
 
 ---
 
