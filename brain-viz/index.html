@@ -333,17 +333,14 @@
         <span class="status-text">CONNECTING...</span>
     </div>
 
+    <!-- Three.js is loaded from a CDN. The repo's .gitignore excludes lib/, so the
+         vendored ./lib/*.js files are absent on a fresh clone; the CDN prefix
+         mapping resolves "three" and all "three/addons/..." imports. -->
     <script type="importmap">
     {
         "imports": {
-            "three": "./lib/three.module.min.js",
-            "three/addons/controls/OrbitControls.js": "./lib/OrbitControls.js",
-            "three/addons/postprocessing/EffectComposer.js": "./lib/EffectComposer.js",
-            "three/addons/postprocessing/RenderPass.js": "./lib/RenderPass.js",
-            "three/addons/postprocessing/UnrealBloomPass.js": "./lib/UnrealBloomPass.js",
-            "three/addons/postprocessing/ShaderPass.js": "./lib/ShaderPass.js",
-            "three/addons/shaders/CopyShader.js": "./lib/CopyShader.js",
-            "three/addons/shaders/LuminosityHighPassShader.js": "./lib/LuminosityHighPassShader.js"
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
         }
     }
     </script>
