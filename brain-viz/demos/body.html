@@ -341,11 +341,13 @@ body {
 }
 </style>
 
+<!-- Three.js from CDN: the repo .gitignore excludes lib/, so ../lib/*.js is
+     absent on a fresh clone. The prefix mapping resolves three + addons. -->
 <script type="importmap">
 {
     "imports": {
-        "three": "../lib/three.module.min.js",
-        "three/addons/controls/OrbitControls.js": "../lib/OrbitControls.js"
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
     }
 }
 </script>
