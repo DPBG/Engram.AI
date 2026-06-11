@@ -4,89 +4,120 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Engram — Concept Formation</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --eg-bg:#070b15;
+  --eg-text:#cdd6e6; --eg-dim:#7a8699; --eg-faint:#525d70; --eg-bright:#eef2fb;
+  --eg-border:rgba(120,160,225,0.12); --eg-border-2:rgba(120,160,225,0.22);
+  --eg-panel-1:rgba(148,178,225,0.05); --eg-panel-2:rgba(148,178,225,0.012);
+  --eg-sans:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --eg-mono:'JetBrains Mono','SF Mono', ui-monospace, monospace;
+  --eg-accent:#2dd4bf;
+}
+body{
+  font-family:var(--eg-sans); color:var(--eg-text);
+  background:
+    radial-gradient(1000px 560px at 18% -6%, rgba(36,92,170,0.16), transparent 60%),
+    radial-gradient(760px 460px at 100% 8%, rgba(124,92,222,0.10), transparent 60%),
+    var(--eg-bg) !important;
+  background-attachment:fixed;
+}
+.eg-topbar{position:fixed;inset:0 0 auto 0;height:54px;z-index:9000;display:flex;align-items:center;gap:14px;padding:0 18px;background:rgba(8,12,22,0.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--eg-border);font-family:var(--eg-mono)}
+.eg-topbar a{text-decoration:none}
+.eg-back{display:inline-flex;align-items:center;gap:7px;font-size:12px;letter-spacing:.05em;color:var(--eg-dim);transition:color .2s}
+.eg-back:hover{color:var(--eg-bright)}
+.eg-brandwrap{display:flex;align-items:center;gap:9px;font-size:12.5px;letter-spacing:.07em}
+.eg-mark{width:22px;height:22px;flex:none}
+.eg-name{font-weight:700;background:linear-gradient(100deg,#5fe0f5,#7db4ff,#b79cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.eg-sep{color:var(--eg-faint)}
+.eg-page{color:var(--eg-accent)}
+.eg-right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;letter-spacing:.05em}
+.eg-right a{color:var(--eg-dim);transition:color .2s}
+.eg-right a:hover{color:#7db4ff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(120,160,225,0.18);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+</style>
 <style>
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 :root {
-    --bg: #060a14; --panel: #0a0e1a; --border: rgba(94,164,245,0.12);
-    --accent: #5ea4f5; --text: #c8d0e0; --text-dim: #5a6478;
-    --text-bright: #e8ecf4; --green: #38d97a; --amber: #f5a623;
+    --bg: var(--eg-bg); --panel: var(--eg-panel-1); --border: var(--eg-border);
+    --accent: var(--eg-accent); --text: var(--eg-text); --text-dim: var(--eg-dim);
+    --text-bright: var(--eg-bright); --green: #38d97a; --amber: #f5a623;
     --cyan: #22d3ee; --purple: #a78bfa; --pink: #f472b6;
-    --mono: 'JetBrains Mono','SF Mono','Fira Code',monospace;
+    --mono: var(--eg-mono);
 }
-body { background:var(--bg); color:var(--text); font-family:var(--mono); font-size:12px; overflow-x:hidden; }
-
-/* ── Top bar ─────────────────────────── */
-#top-bar { display:flex; align-items:center; gap:16px; padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--border); }
-#top-bar a { color:var(--accent); text-decoration:none; }
-#top-bar .title { color:var(--green); font-weight:600; font-size:14px; flex:1; }
-#top-bar .patent { color:var(--text-dim); font-size:10px; }
+body { color:var(--text); font-family:var(--eg-sans); font-size:12px; overflow-x:hidden; padding-top:54px; }
 
 /* ── Layout ──────────────────────────── */
-#main { display:grid; grid-template-columns:280px 1fr 320px; gap:0; height:calc(100vh - 42px); }
-#stimuli-panel, #results-panel { background:var(--panel); border-right:1px solid var(--border); padding:16px; overflow-y:auto; }
+#main { display:grid; grid-template-columns:280px 1fr 320px; gap:0; height:calc(100vh - 54px); }
+#stimuli-panel, #results-panel { background:var(--eg-panel-2); border-right:1px solid var(--border); padding:16px; overflow-y:auto; }
 #results-panel { border-right:none; border-left:1px solid var(--border); }
 #viz-area { padding:16px; overflow-y:auto; }
 
-.section-title { color:var(--accent); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; }
+.section-title { color:var(--accent); font-family:var(--eg-mono); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; }
 
 /* ── Stimulus buttons ────────────────── */
 .stim-group { margin-bottom:16px; }
-.stim-group-label { color:var(--text-dim); font-size:10px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
-.stim-btn { display:block; width:100%; padding:8px 12px; margin-bottom:4px; background:rgba(94,164,245,0.06);
-    border:1px solid var(--border); border-radius:4px; color:var(--text); font-family:var(--mono);
+.stim-group-label { color:var(--text-dim); font-family:var(--eg-mono); font-size:10px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
+.stim-btn { display:block; width:100%; padding:8px 12px; margin-bottom:4px; background:var(--eg-panel-1);
+    border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--eg-sans);
     font-size:11px; cursor:pointer; text-align:left; transition:all 0.15s; }
-.stim-btn:hover { background:rgba(94,164,245,0.12); border-color:var(--accent); }
-.stim-btn.active { background:rgba(94,164,245,0.15); border-color:var(--accent); color:var(--accent); }
+.stim-btn:hover { background:var(--eg-panel-1); border-color:var(--accent); }
+.stim-btn.active { background:rgba(45,212,191,0.12); border-color:var(--accent); color:var(--accent); }
 .stim-btn .stim-label { font-weight:500; }
 .stim-btn .stim-desc { color:var(--text-dim); font-size:10px; margin-top:2px; }
 
 /* ── Config ──────────────────────────── */
 .config-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.config-row label { color:var(--text-dim); font-size:10px; min-width:80px; }
-.config-row input, .config-row select { background:var(--bg); border:1px solid var(--border); color:var(--text);
-    font-family:var(--mono); font-size:11px; padding:4px 8px; border-radius:3px; width:60px; }
+.config-row label { color:var(--text-dim); font-family:var(--eg-mono); font-size:10px; min-width:80px; }
+.config-row input, .config-row select { background:var(--eg-panel-1); border:1px solid var(--border); color:var(--text);
+    font-family:var(--eg-mono); font-size:11px; padding:4px 8px; border-radius:8px; width:60px; }
+.config-row input:focus, .config-row select:focus { outline:none; border-color:var(--accent); }
 
-#probe-btn { width:100%; padding:10px; margin-top:12px; background:rgba(56,217,122,0.15); border:1px solid var(--green);
-    color:var(--green); font-family:var(--mono); font-size:12px; font-weight:600; cursor:pointer; border-radius:4px; transition:all 0.15s; }
-#probe-btn:hover { background:rgba(56,217,122,0.25); }
+#probe-btn { width:100%; padding:10px; margin-top:12px; background:rgba(45,212,191,0.12); border:1px solid var(--accent);
+    color:var(--accent); font-family:var(--eg-mono); font-size:12px; font-weight:600; cursor:pointer; border-radius:8px; transition:all 0.15s; }
+#probe-btn:hover { background:rgba(45,212,191,0.22); }
 #probe-btn:disabled { opacity:0.4; cursor:not-allowed; }
 
-#clear-btn { width:100%; padding:6px; margin-top:6px; background:none; border:1px solid var(--border);
-    color:var(--text-dim); font-family:var(--mono); font-size:10px; cursor:pointer; border-radius:4px; }
-#clear-btn:hover { border-color:var(--pink); color:var(--pink); }
+#clear-btn { width:100%; padding:6px; margin-top:6px; background:var(--eg-panel-1); border:1px solid var(--border);
+    color:var(--text-dim); font-family:var(--eg-mono); font-size:10px; cursor:pointer; border-radius:8px; transition:all 0.15s; }
+#clear-btn:hover { border-color:var(--accent); color:var(--accent); }
 
-#status { color:var(--text-dim); font-size:10px; margin-top:8px; min-height:14px; }
+#status { color:var(--text-dim); font-family:var(--eg-mono); font-size:10px; margin-top:8px; min-height:14px; }
 
 /* ── Heatmap ─────────────────────────── */
 .viz-section { margin-bottom:24px; }
-.viz-section-title { color:var(--cyan); font-size:11px; font-weight:600; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
+.viz-section-title { color:var(--eg-bright); font-family:var(--eg-mono); font-size:11px; font-weight:600; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
 
-#heatmap-container { position:relative; }
-#heatmap-canvas { display:block; border:1px solid var(--border); border-radius:4px; image-rendering:pixelated; }
-#heatmap-label { position:absolute; top:6px; left:8px; color:var(--text-dim); font-size:10px; pointer-events:none; }
-#heatmap-stats { color:var(--text-dim); font-size:10px; margin-top:4px; }
+#heatmap-container { position:relative; background:var(--eg-panel-1); border:1px solid var(--border); border-radius:12px; padding:8px; }
+#heatmap-canvas { display:block; border:1px solid var(--border); border-radius:8px; image-rendering:pixelated; }
+#heatmap-label { position:absolute; top:14px; left:16px; color:var(--text-dim); font-family:var(--eg-mono); font-size:10px; pointer-events:none; }
+#heatmap-stats { color:var(--text-dim); font-family:var(--eg-mono); font-size:10px; margin-top:6px; }
 
 /* ── Similarity matrix ───────────────── */
-#similarity-container { position:relative; }
-#similarity-canvas { display:block; border:1px solid var(--border); border-radius:4px; image-rendering:pixelated; }
+#similarity-container { position:relative; background:var(--eg-panel-1); border:1px solid var(--border); border-radius:12px; padding:8px; }
+#similarity-canvas { display:block; border:1px solid var(--border); border-radius:8px; image-rendering:pixelated; }
 
 /* ── Results list ────────────────────── */
-.result-item { padding:8px; margin-bottom:6px; background:rgba(94,164,245,0.04); border:1px solid var(--border);
-    border-radius:4px; cursor:pointer; transition:all 0.15s; }
+.result-item { padding:8px; margin-bottom:6px; background:var(--eg-panel-1); border:1px solid var(--border);
+    border-radius:8px; cursor:pointer; transition:all 0.15s; }
 .result-item:hover { border-color:var(--accent); }
-.result-item.selected { border-color:var(--cyan); background:rgba(34,211,238,0.08); }
-.result-label { font-weight:500; color:var(--text-bright); font-size:11px; }
-.result-meta { color:var(--text-dim); font-size:10px; margin-top:2px; }
+.result-item.selected { border-color:var(--accent); background:rgba(45,212,191,0.08); }
+.result-label { font-weight:600; color:var(--text-bright); font-size:11px; }
+.result-meta { color:var(--text-dim); font-family:var(--eg-mono); font-size:10px; margin-top:2px; }
 .result-bar { height:3px; background:var(--border); border-radius:2px; margin-top:4px; overflow:hidden; }
 .result-bar-fill { height:100%; border-radius:2px; transition:width 0.3s; }
 
 /* ── Region rates bar chart ──────────── */
 .region-bar-row { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
-.region-bar-label { color:var(--text-dim); font-size:9px; min-width:90px; text-align:right; }
-.region-bar-track { flex:1; height:8px; background:rgba(255,255,255,0.03); border-radius:2px; overflow:hidden; }
-.region-bar-fill { height:100%; border-radius:2px; transition:width 0.3s; }
-.region-bar-value { color:var(--text-dim); font-size:9px; min-width:40px; }
+.region-bar-label { color:var(--text-dim); font-family:var(--eg-mono); font-size:9px; min-width:90px; text-align:right; }
+.region-bar-track { flex:1; height:8px; background:var(--eg-panel-1); border-radius:4px; overflow:hidden; }
+.region-bar-fill { height:100%; border-radius:4px; transition:width 0.3s; }
+.region-bar-value { color:var(--text-dim); font-family:var(--eg-mono); font-size:9px; min-width:40px; }
 
 /* ── Mobile responsive ──────────────── */
 @media (max-width: 768px) {
@@ -109,11 +140,29 @@ body { background:var(--bg); color:var(--text); font-family:var(--mono); font-si
 </head>
 <body>
 
-<div id="top-bar">
-    <a href="index.html">demos</a>
-    <div class="title">Concept Formation Probe</div>
-    <div class="patent">MIT License</div>
-</div>
+<header class="eg-topbar">
+  <a class="eg-back" href="index.html">&larr; Demos</a>
+  <div class="eg-brandwrap">
+    <svg class="eg-mark" viewBox="0 0 240 240" aria-hidden="true">
+      <defs>
+        <linearGradient id="egm-e" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.5" stop-color="#5ea4f5"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+        <radialGradient id="egm-n" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#daf6ff"/><stop offset="1" stop-color="#22d3ee"/></radialGradient>
+        <radialGradient id="egm-f" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#e9fff2"/><stop offset="1" stop-color="#38d97a"/></radialGradient>
+      </defs>
+      <circle cx="120" cy="120" r="106" fill="none" stroke="url(#egm-e)" stroke-width="4" opacity="0.5"/>
+      <g stroke="url(#egm-e)" stroke-width="4" stroke-linecap="round" opacity="0.9">
+        <line x1="120" y1="56" x2="171" y2="76"/><line x1="171" y1="76" x2="187" y2="122"/><line x1="187" y1="122" x2="162" y2="170"/><line x1="162" y1="170" x2="110" y2="184"/><line x1="110" y1="184" x2="64" y2="160"/><line x1="64" y1="160" x2="55" y2="102"/><line x1="55" y1="102" x2="120" y2="56"/><line x1="120" y1="56" x2="116" y2="108"/><line x1="116" y1="108" x2="150" y2="124"/><line x1="150" y1="124" x2="187" y2="122"/><line x1="116" y1="108" x2="96" y2="142"/><line x1="96" y1="142" x2="64" y2="160"/><line x1="150" y1="124" x2="137" y2="156"/><line x1="137" y1="156" x2="110" y2="184"/><line x1="96" y1="142" x2="137" y2="156"/><line x1="171" y1="76" x2="150" y2="124"/><line x1="55" y1="102" x2="116" y2="108"/><line x1="116" y1="108" x2="137" y2="156"/>
+      </g>
+      <g>
+        <circle cx="120" cy="56" r="7" fill="url(#egm-n)"/><circle cx="187" cy="122" r="7" fill="url(#egm-n)"/><circle cx="64" cy="160" r="7" fill="url(#egm-n)"/><circle cx="55" cy="102" r="6" fill="url(#egm-n)"/><circle cx="116" cy="108" r="8" fill="url(#egm-n)"/><circle cx="171" cy="76" r="9" fill="url(#egm-f)"/><circle cx="110" cy="184" r="8" fill="url(#egm-f)"/><circle cx="150" cy="124" r="10" fill="url(#egm-f)"/>
+      </g>
+    </svg>
+    <span class="eg-name">ENGRAM</span>
+    <span class="eg-sep">/</span>
+    <span class="eg-page">Concept Formation</span>
+  </div>
+  <div class="eg-right"><a href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener">GitHub</a></div>
+</header>
 
 <div id="main">
     <!-- Left: Stimulus selection -->
