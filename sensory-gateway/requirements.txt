@@ -1,0 +1,8 @@
+# Runtime deps for the sensory-gateway container (headless video mode).
+# The full hardware install (camera/mic/serial) lives in pyproject.toml extras;
+# audio/serial libs are optional and the gateway degrades gracefully without them.
+nats-py>=2.6.0
+numpy>=1.26.0
+opencv-python-headless>=4.8.0
+python-speech-features>=0.6
+yt-dlp>=2025.1.0

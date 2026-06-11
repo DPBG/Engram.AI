@@ -1,0 +1,20 @@
+# Repo-wide Ruff configuration (matches the per-service [tool.ruff] settings).
+# CI enforces a small "real bug" subset as blocking (E9,F63,F7,F82) and runs the
+# full rule set as advisory until the legacy backlog is cleared. See
+# .github/workflows/test.yml and ROADMAP.md P0.5 / P5.
+line-length = 100
+target-version = "py311"
+
+extend-exclude = [
+    ".venv",
+    ".localrun",
+    "data",
+    "staging_videos",
+    "brain-viz",
+    "node_modules",
+    "sdk/examples",
+]
+
+[lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]

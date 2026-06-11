@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 # Monitor training progress on cloud server
 #
 # Usage:

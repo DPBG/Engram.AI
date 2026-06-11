@@ -305,15 +305,19 @@ class ActuatorPlugin(ABC, Generic[T]):
         else:
             self._bus = bus
 
-        # Subscribe to decisions for this actuator
-        subject = f"outcome.{self.actuator_id}"
+        # Observe execution outcomes. Outcomes are published per-trace as
+        # `outcome.{trace_id}` (see execute() and planner.service), so an
+        # actuator that wants to watch outcomes must subscribe to the wildcard
+        # rather than to its own id — the previous `outcome.{actuator_id}`
+        # subscription could never match a per-trace publish.
+        subject = "outcome.*"
         await self._bus.subscribe(subject, self._handle_outcome)
         logger.info(f"Actuator {self.actuator_id} started")
 
     async def stop(self) -> None:
         """Stop the actuator."""
         if self._bus is not None:
-            await self._bus.unsubscribe(f"outcome.{self.actuator_id}")
+            await self._bus.unsubscribe("outcome.*")
         logger.info(f"Actuator {self.actuator_id} stopped")
 
     async def execute(self, proposal: ActionProposal[T]) -> Outcome[T]:

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 # Backup brain state (SQLite) from cloud to local machine
 #
 # Usage:

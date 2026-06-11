@@ -9,7 +9,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from activelearning import BaseService
 from activelearning.core import generate_trace_id
@@ -20,6 +20,9 @@ from neuromorphic.encoding import _resolve_modality
 from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.persistence import NeuromorphicPersistence
 from neuromorphic.watchdog import NeuralWatchdog, WatchdogConfig, WatchdogStatus, AlertLevel
+
+if TYPE_CHECKING:
+    from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
 
 logger = logging.getLogger(__name__)
 

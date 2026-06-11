@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 # Download phase-appropriate training videos for 1M neuron PoC.
 #
 # Videos are organized in 3 tiers matching developmental phases:

@@ -11,6 +11,7 @@ Uses Ollama's embedding models to generate text embeddings for:
 import hashlib
 import logging
 import os
+from collections import OrderedDict
 from typing import Optional
 
 import aiohttp
@@ -43,7 +44,9 @@ class EmbeddingService:
         )
         self.model = model
         self.dimensions = dimensions
-        self._cache: dict[str, list[float]] = {}
+        # Insertion-ordered map used as a true LRU: a cache hit promotes the
+        # key to the most-recently-used end, and eviction drops the LRU front.
+        self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._cache_max_size = 10000  # Max cached embeddings
 
     async def embed_text(self, text: str) -> list[float]:
@@ -60,6 +63,7 @@ class EmbeddingService:
         cache_key = self._cache_key(text)
         if cache_key in self._cache:
             logger.debug(f"Embedding cache hit for key {cache_key[:8]}...")
+            self._cache.move_to_end(cache_key)  # mark most-recently-used
             return self._cache[cache_key]
 
         # Call Ollama embedding endpoint
@@ -104,12 +108,13 @@ class EmbeddingService:
         return hashlib.sha256(text.encode()).hexdigest()[:16]
 
     def _add_to_cache(self, key: str, embedding: list[float]) -> None:
-        """Add embedding to cache with LRU eviction."""
-        if len(self._cache) >= self._cache_max_size:
-            # Remove oldest entry (first key)
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
+        """Add an embedding to the cache with true LRU eviction."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
         self._cache[key] = embedding
+        if len(self._cache) > self._cache_max_size:
+            # Evict the least-recently-used entry (front of the OrderedDict).
+            self._cache.popitem(last=False)
 
     def clear_cache(self) -> None:
         """Clear the embedding cache."""

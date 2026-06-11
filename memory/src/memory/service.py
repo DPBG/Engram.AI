@@ -60,7 +60,7 @@ class MemoryService(BaseService):
         collection_names = [c.name for c in collections.collections]
 
         if COLLECTION_NAME not in collection_names:
-            logger.info(f"Creating Qdrant collection: {COLLECTION_NAME}")
+            self.logger.info(f"Creating Qdrant collection: {COLLECTION_NAME}")
             await self._qdrant.create_collection(
                 collection_name=COLLECTION_NAME,
                 vectors_config=VectorParams(
