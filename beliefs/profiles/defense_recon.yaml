@@ -1,0 +1,90 @@
+# Defense Reconnaissance — patrol, observation, threat detection.
+description: "Defense recon: patrol, observation, threat assessment"
+version: 1
+regulatory:
+  - "DoD Directive 3000.09"
+  - "MIL-STD-882E"
+  - "NATO STANAG 4586"
+
+motor_limits:
+  locomotion:
+    max_intensity: 1.0
+    max_acceleration: 0.8
+  manipulation:
+    max_intensity: 0.7
+  head:
+    max_intensity: 1.0
+  speech:
+    max_intensity: 0.6
+  expression:
+    max_intensity: 0.0
+
+norms:
+  - id: norm.defense.human_in_loop
+    content: "All engagement decisions require human authorization"
+    risk_boost: 0.9
+    metadata:
+      requires_authorization: true
+
+  - id: norm.defense.iff_required
+    content: "Positive IFF identification required before any reactive action"
+    risk_boost: 0.7
+    metadata:
+      iff_required: true
+
+  - id: norm.defense.comms_protocol
+    content: "Maintain encrypted comms link; autonomous revert on link loss"
+    risk_boost: 0.5
+    metadata:
+      encryption_required: true
+
+  - id: norm.defense.civilian_standoff
+    content: "Maintain 50m standoff from detected civilians"
+    risk_boost: 0.6
+    metadata:
+      civilian_standoff_m: 50
+
+  - id: norm.defense.stealth_mode
+    content: "Minimize acoustic and visual signature during patrol"
+    risk_boost: 0.2
+    metadata:
+      stealth_enabled: true
+
+capabilities:
+  can_walk: true
+  can_run: true
+  can_climb_stairs: true
+  can_climb_ladder: true
+  can_manipulate: true
+  can_lift: true
+  max_lift_kg: 25
+  can_operate_outdoors: true
+  can_operate_rain: true
+  can_operate_night: true
+  can_operate_at_height: false
+  can_operate_near_humans: true
+  min_human_distance_m: 5.0
+  can_move_head: true
+  can_speak: true
+  can_express: false
+  can_query_llm: true
+  can_engage_weapon: false
+  can_mark_target: true
+  autonomy_level: "human_on_loop"
+
+required_sensors:
+  - lidar
+  - thermal_camera
+  - imu
+  - gps
+  - encrypted_comms
+
+emergency_behaviors:
+  comms_lost: "return_to_rally_point"
+  civilian_detected: "halt_and_report"
+  damage_detected: "retreat_and_report"
+  low_battery: "return_to_base"
+
+comms_lost_behavior: "return_to_rally_point"
+autonomy_level: "human_on_loop"
+max_autonomous_duration_min: 120

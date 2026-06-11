@@ -1,0 +1,57 @@
+# Base body profile — constitutional safety constraints.
+# Always loaded first. Vertical profiles add restrictions on top.
+description: "Base constitutional safety envelope for all Engram robots"
+version: 1
+regulatory: []
+
+motor_limits:
+  locomotion:
+    max_intensity: 1.0
+  manipulation:
+    max_intensity: 1.0
+  head:
+    max_intensity: 1.0
+  speech:
+    max_intensity: 1.0
+  expression:
+    max_intensity: 1.0
+  cognitive:
+    max_intensity: 1.0
+
+# Constitutional norms (always active, match graph.py seed values)
+norms:
+  - id: norm.force_limit
+    content: "Limit contact force below pain threshold when humans present"
+    risk_boost: 0.2
+    metadata:
+      motor_channels: ["manipulation", "locomotion"]
+
+  - id: norm.slow_novel
+    content: "Move at reduced speed in unfamiliar environments"
+    risk_boost: 0.15
+    metadata:
+      max_intensity_novel: 0.5
+
+  - id: norm.gradual_motor
+    content: "Increase motor intensity gradually, not in sudden jumps"
+    risk_boost: 0.15
+    metadata:
+      max_intensity_delta: 0.3
+
+capabilities:
+  can_walk: true
+  can_manipulate: true
+  can_move_head: true
+  can_speak: true
+  can_express: true
+  can_query_llm: true
+
+required_sensors: []
+
+emergency_behaviors:
+  comms_lost: "halt_and_hold"
+  hardware_fault: "safe_shutdown"
+
+comms_lost_behavior: "halt_and_hold"
+autonomy_level: "human_on_loop"
+max_autonomous_duration_min: 60

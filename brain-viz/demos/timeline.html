@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engram — Brain Development Timeline</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #060a14;
+            --panel: #0a0e1a;
+            --border: rgba(94, 164, 245, 0.12);
+            --accent: #5ea4f5;
+            --text: #c8d0e0;
+            --text-dim: #5a6478;
+            --text-bright: #e8ecf4;
+            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+            --infant: #f472b6;
+            --toddler: #22d3ee;
+            --juvenile: #38d97a;
+            --adolescent: #f5a623;
+            --mature: #5ea4f5;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--mono);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* ── Top bar ─────────────────────────────────────────── */
+        .topbar {
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        .topbar-logo { font-size: 13px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); }
+        .topbar-sep { width: 1px; height: 16px; background: var(--border); }
+        .topbar-title { font-size: 11px; font-weight: 400; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+        .demo-badge { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; padding: 3px 10px; border-radius: 3px; background: rgba(245,166,35,0.15); color: var(--adolescent); border: 1px solid rgba(245,166,35,0.3); text-transform: uppercase; }
+
+        /* ── Main layout ─────────────────────────────────────── */
+        .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* ── Brain viewport ──────────────────────────────────── */
+        .viewport {
+            flex: 1;
+            position: relative;
+            background: var(--bg);
+        }
+        .viewport iframe { width: 100%; height: 100%; border: none; display: block; }
+
+        /* ── Phase indicator overlay ─────────────────────────── */
+        .phase-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            text-align: center;
+            pointer-events: none;
+        }
+        .phase-name {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: 6px;
+            text-transform: uppercase;
+            transition: color 0.8s ease;
+            text-shadow: 0 0 40px currentColor;
+        }
+        .phase-age {
+            font-size: 11px;
+            color: var(--text-dim);
+            letter-spacing: 2px;
+            margin-top: 4px;
+        }
+
+        /* ── Step counter overlay ────────────────────────────── */
+        .step-overlay {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            text-align: right;
+            pointer-events: none;
+        }
+        .step-count {
+            font-size: 22px;
+            font-weight: 300;
+            color: var(--text-bright);
+            letter-spacing: 1px;
+        }
+        .step-label {
+            font-size: 9px;
+            color: var(--text-dim);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        /* ── Stats overlay (left side) ───────────────────────── */
+        .stats-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .stat-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+            font-size: 10px;
+        }
+        .stat-label {
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+            width: 80px;
+        }
+        .stat-bar {
+            width: 80px;
+            height: 4px;
+            background: rgba(255,255,255,0.04);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .stat-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+        .stat-val {
+            font-size: 9px;
+            font-weight: 500;
+            color: var(--text);
+            width: 40px;
+        }
+
+        /* ── Event popup ─────────────────────────────────────── */
+        .event-popup {
+            position: absolute;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            padding: 10px 20px;
+            background: rgba(10, 14, 26, 0.9);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+            max-width: 500px;
+            text-align: center;
+        }
+        .event-popup.visible { opacity: 1; }
+        .event-text {
+            font-size: 11px;
+            color: var(--text);
+            line-height: 1.5;
+        }
+        .event-label {
+            font-size: 8px;
+            color: var(--text-dim);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        /* ── Timeline scrubber ───────────────────────────────── */
+        .timeline-bar {
+            height: 80px;
+            background: var(--panel);
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 8px 20px 12px;
+            flex-shrink: 0;
+        }
+        .timeline-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+        .btn-play {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: rgba(255,255,255,0.03);
+            color: var(--text);
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .btn-play:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-speed {
+            padding: 4px 10px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            background: transparent;
+            color: var(--text-dim);
+            font-family: var(--mono);
+            font-size: 9px;
+            cursor: pointer;
+            transition: all 0.2s;
+            letter-spacing: 0.5px;
+        }
+        .btn-speed:hover, .btn-speed.active { border-color: var(--accent); color: var(--accent); }
+        .timeline-time {
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-left: auto;
+            letter-spacing: 0.5px;
+        }
+
+        .timeline-track {
+            flex: 1;
+            position: relative;
+            cursor: pointer;
+        }
+        .timeline-bg {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            left: 0;
+            right: 0;
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            display: flex;
+        }
+        .timeline-segment {
+            height: 100%;
+            position: relative;
+        }
+        .timeline-segment-label {
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 8px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            white-space: nowrap;
+            opacity: 0.6;
+        }
+        .timeline-progress {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            left: 0;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255,255,255,0.15);
+            pointer-events: none;
+        }
+        .timeline-thumb {
+            position: absolute;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 2px solid var(--text-bright);
+            box-shadow: 0 0 10px rgba(94, 164, 245, 0.4);
+            pointer-events: none;
+            transition: left 0.1s linear;
+        }
+
+        /* ── Bottom bar ──────────────────────────────────────── */
+        .bottombar {
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            background: var(--panel);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .bottombar-item { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+        .bottombar-item strong { color: var(--text); font-weight: 500; }
+        .bottombar-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--text-dim); opacity: 0.4; }
+
+        /* ── Mobile responsive ──────────────────────────────────── */
+        @media (max-width: 768px) {
+            .phase-overlay {
+                top: auto;
+                bottom: 90px;
+            }
+            .phase-name {
+                font-size: 18px;
+                letter-spacing: 3px;
+            }
+            .step-overlay {
+                top: 12px;
+                right: 12px;
+            }
+            .step-count {
+                font-size: 16px;
+            }
+            .stats-overlay {
+                top: 12px;
+                left: 12px;
+            }
+            .stat-label {
+                width: 60px;
+                font-size: 8px;
+            }
+            .stat-bar {
+                width: 50px;
+            }
+            .stat-row {
+                font-size: 8px;
+                gap: 4px;
+                margin-bottom: 4px;
+            }
+            .stat-val {
+                font-size: 8px;
+                width: 32px;
+            }
+            .event-popup {
+                max-width: calc(100vw - 40px);
+                bottom: 100px;
+            }
+            .timeline-bar {
+                height: auto;
+                padding: 8px 12px 10px;
+            }
+            .timeline-controls {
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+            .btn-play {
+                min-width: 44px;
+                min-height: 44px;
+                touch-action: manipulation;
+            }
+            .btn-speed {
+                min-height: 36px;
+                padding: 6px 12px;
+                touch-action: manipulation;
+            }
+            .timeline-time {
+                font-size: 9px;
+                width: 100%;
+                text-align: center;
+                margin-left: 0;
+            }
+            .timeline-thumb {
+                width: 20px;
+                height: 20px;
+            }
+            .bottombar {
+                flex-wrap: wrap;
+                height: auto;
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-left">
+        <span class="topbar-logo">Engram</span>
+        <span class="topbar-sep"></span>
+        <span class="topbar-title">Development Timeline</span>
+    </div>
+    <span class="demo-badge">Timelapse</span>
+</div>
+
+<div class="main">
+    <div class="viewport">
+        <iframe id="brain-frame"></iframe>
+        <script>
+        // Build iframe src, passing through live/ws params from parent URL
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var src = '../index.html?embed=true&labels=false';
+            if (params.get('mode')) src += '&mode=' + params.get('mode');
+            if (params.get('ws')) src += '&ws=' + encodeURIComponent(params.get('ws'));
+            document.getElementById('brain-frame').src = src;
+        })();
+        </script>
+
+        <!-- Phase name overlay -->
+        <div class="phase-overlay">
+            <div class="phase-name" id="phase-name">Infant</div>
+            <div class="phase-age" id="phase-age">Step 0 — Birth</div>
+        </div>
+
+        <!-- Step counter -->
+        <div class="step-overlay">
+            <div class="step-count" id="step-count">0</div>
+            <div class="step-label">Simulation Steps</div>
+        </div>
+
+        <!-- Stats (left side) -->
+        <div class="stats-overlay" id="stats-overlay"></div>
+
+        <!-- Event popup -->
+        <div class="event-popup" id="event-popup">
+            <div class="event-label" id="event-label">Milestone</div>
+            <div class="event-text" id="event-text"></div>
+        </div>
+    </div>
+
+    <!-- Timeline scrubber -->
+    <div class="timeline-bar">
+        <div class="timeline-controls">
+            <button class="btn-play" id="btn-play" title="Play/Pause">&#9654;</button>
+            <button class="btn-speed" data-speed="1" title="1x speed">1x</button>
+            <button class="btn-speed active" data-speed="5" title="5x speed">5x</button>
+            <button class="btn-speed" data-speed="20" title="20x speed">20x</button>
+            <button class="btn-speed" data-speed="100" title="100x speed">100x</button>
+            <span class="timeline-time" id="timeline-time">0 / 5,000,000 steps</span>
+        </div>
+        <div class="timeline-track" id="timeline-track">
+            <div class="timeline-bg" id="timeline-bg"></div>
+            <div class="timeline-progress" id="timeline-progress"></div>
+            <div class="timeline-thumb" id="timeline-thumb" style="left: 0%"></div>
+        </div>
+    </div>
+</div>
+
+<div class="bottombar">
+    <span class="bottombar-item"><strong>Engram</strong> Neural Architecture</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item">MIT License</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item"><strong>1,056,800</strong> neurons</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item"><strong>1.31B</strong> synapses</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Engram Brain Development Timeline
+// ═══════════════════════════════════════════════════════════════════
+
+const TOTAL_STEPS = 5000000; // Full developmental arc through mature phase
+
+const PHASES = [
+    { id: 'infant',     label: 'Infant',      color: '#f472b6', start: 0,       end: 60000 },
+    { id: 'toddler',    label: 'Toddler',     color: '#22d3ee', start: 60000,   end: 360000 },
+    { id: 'juvenile',   label: 'Juvenile',     color: '#38d97a', start: 360000,  end: 2160000 },
+    { id: 'adolescent', label: 'Adolescent',   color: '#f5a623', start: 2160000, end: 3500000 },
+    { id: 'mature',     label: 'Mature',       color: '#5ea4f5', start: 3500000, end: TOTAL_STEPS },
+];
+
+const EVENTS = [
+    { step: 0,       label: 'Birth', text: 'Network initialized with random weights. Maximum plasticity. All experiences are new.' },
+    { step: 5000,    label: 'First Spikes', text: 'Sensory cortex begins responding to visual input. Random patterns, no meaning yet.' },
+    { step: 20000,   label: 'Habituation', text: 'Brain begins ignoring static backgrounds. Instinctual novelty gain kicks in.' },
+    { step: 60000,   label: 'Phase Transition', text: 'Entering TODDLER phase. Neuromodulator baselines shift. Learning rate begins decreasing.' },
+    { step: 81000,   label: 'Eligibility Traces', text: 'Three-factor learning enabled on all 21 plastic groups. STDP now deposits traces, not direct weight changes.' },
+    { step: 160000,  label: 'Neuromod Floors', text: 'DA/ACh/5-HT floors fixed to non-zero. Three-factor learning actually engaging for the first time.' },
+    { step: 360000,  label: 'Phase Transition', text: 'Entering JUVENILE phase. Plasticity reduced to 0.48x. Adolescent entry checks begin.' },
+    { step: 927000,  label: 'Embodiment', text: 'MuJoCo virtual body deployed. 29-DOF humanoid, 50Hz physics. Motor feedback loop begins.' },
+    { step: 1590000, label: 'Loop Closed', text: 'Sensorimotor loop fully closed. Brain fires motor -> physics -> proprioceptive feedback -> STDP learns.' },
+    { step: 1790000, label: 'All Regions Active', text: 'Silent downstream regions fixed. All 13 brain regions now firing. Feature 19%, association 18%.' },
+    { step: 1840000, label: 'Cross-Modal Recall', text: 'First benchmark: 34.2% auditory-to-visual recall. Cross-modal binding is forming through STDP.' },
+    { step: 2160000, label: 'Adolescent Entry', text: 'Experience-dependent transition: concept differentiation + sensory stability + STDP decline criteria all met.' },
+    { step: 2200000, label: 'Pruning Begins', text: 'Weak synapses being eliminated (max 5% per round). 1.31B synapses being sculpted.' },
+    { step: 2500000, label: 'Myelination', text: 'Strong stable connections getting "insulated" -- plasticity reduced to 10%. Permanent pathways forming.' },
+    { step: 3000000, label: 'Identity Tagging', text: 'Core connections locked at 1% plasticity. These are the brain\'s permanent skills and knowledge.' },
+    { step: 3500000, label: 'Maturity', text: 'Entering MATURE phase. Low global plasticity. Stable, efficient. Still learns via DA-gated eligibility traces.' },
+    { step: 4500000, label: 'Continual Learning', text: 'Adult brain: reward-gated learning. New experiences modify weights, but core knowledge is preserved.' },
+];
+
+// ── Simulated metrics by step ───────────────────────────────
+function metricsAtStep(step) {
+    const phase = PHASES.find(p => step >= p.start && step < p.end) || PHASES[PHASES.length - 1];
+    const phaseProgress = (step - phase.start) / (phase.end - phase.start);
+    const globalProgress = step / TOTAL_STEPS;
+
+    // Plasticity decreases over development
+    const plasticity = phase.id === 'infant' ? 1.8 :
+                       phase.id === 'toddler' ? 0.9 :
+                       phase.id === 'juvenile' ? 0.48 :
+                       phase.id === 'adolescent' ? 0.3 :
+                       0.15;
+
+    // STDP magnitude decreases as brain matures
+    const stdpMag = Math.max(0.0001, 0.005 * (1 - globalProgress * 0.8) + Math.sin(step * 0.00003) * 0.001);
+
+    // Firing rates evolve: start chaotic, become structured
+    const baseRate = 0.02;
+    const structureBonus = globalProgress * 0.02;
+    const chaos = Math.max(0, (1 - globalProgress) * 0.02);
+
+    const t = step * 0.0001;
+    const firingRates = {
+        sensory_cortex:     baseRate + structureBonus + Math.sin(t * 1.1) * chaos + 0.01,
+        brainstem:          0.03 + Math.sin(t * 0.3) * 0.005,
+        reflex_arc:         0.01 + Math.sin(t * 0.5) * chaos * 0.5,
+        feature_layer:      baseRate + (globalProgress > 0.05 ? structureBonus * 1.2 : 0) + Math.sin(t * 0.8) * chaos,
+        association_cortex: baseRate + (globalProgress > 0.1 ? structureBonus * 1.5 : 0) + Math.sin(t * 0.6) * chaos,
+        predictive_layer:   baseRate + (globalProgress > 0.2 ? structureBonus * 0.8 : 0) + Math.sin(t * 0.9) * chaos,
+        cerebellum:         baseRate + Math.sin(t * 0.4) * chaos * 0.5,
+        working_memory:     baseRate + (globalProgress > 0.15 ? structureBonus * 0.6 : 0) + Math.sin(t * 0.7) * chaos,
+        concept_layer:      (globalProgress > 0.2 ? baseRate + structureBonus * 0.4 : 0.005) + Math.sin(t * 1.0) * chaos * 0.3,
+        meta_controller:    (globalProgress > 0.3 ? baseRate * 0.8 : 0.005) + Math.sin(t * 0.5) * chaos * 0.2,
+        motor_cortex:       baseRate + (globalProgress > 0.3 ? structureBonus : 0) + Math.sin(t * 0.8) * chaos,
+    };
+
+    // Neuromodulators shift across development
+    const da = phase.id === 'infant' ? 2.0 :
+               phase.id === 'toddler' ? 1.5 :
+               phase.id === 'juvenile' ? 1.2 :
+               phase.id === 'adolescent' ? 1.8 :
+               0.8;
+    const ach = phase.id === 'infant' ? 1.8 :
+               phase.id === 'adolescent' ? 1.5 :
+               1.2;
+    const ne = phase.id === 'infant' ? 1.5 : 1.2;
+    const serotonin = phase.id === 'mature' ? 1.3 :
+                      phase.id === 'adolescent' ? 0.6 :
+                      0.8;
+
+    return {
+        phase,
+        firingRates,
+        neuromodulation: {
+            phase: phase.id,
+            da: da + Math.sin(t * 0.2) * 0.15,
+            ach: ach + Math.sin(t * 0.15) * 0.1,
+            ne: ne + Math.sin(t * 0.25) * 0.12,
+            serotonin: serotonin + Math.sin(t * 0.1) * 0.08,
+            plasticity_multiplier: plasticity,
+        },
+        stats: {
+            plasticity,
+            stdpMag,
+            predictionError: Math.max(0.05, 0.8 * (1 - globalProgress * 0.7) + Math.sin(t * 0.3) * 0.1),
+            conceptCount: Math.floor(Math.min(5000, globalProgress * 8000)),
+            synapseCount: phase.id === 'adolescent' ? 1.31e9 * (1 - phaseProgress * 0.05) : 1.31e9,
+        },
+    };
+}
+
+// ── DOM refs ────────────────────────────────────────────────
+const brainFrame = document.getElementById('brain-frame');
+const phaseName = document.getElementById('phase-name');
+const phaseAge = document.getElementById('phase-age');
+const stepCount = document.getElementById('step-count');
+const statsOverlay = document.getElementById('stats-overlay');
+const eventPopup = document.getElementById('event-popup');
+const eventLabel = document.getElementById('event-label');
+const eventText = document.getElementById('event-text');
+const btnPlay = document.getElementById('btn-play');
+const timelineTime = document.getElementById('timeline-time');
+const timelineProgress = document.getElementById('timeline-progress');
+const timelineThumb = document.getElementById('timeline-thumb');
+const timelineTrack = document.getElementById('timeline-track');
+const timelineBg = document.getElementById('timeline-bg');
+
+// Build timeline segments
+PHASES.forEach(p => {
+    const seg = document.createElement('div');
+    seg.className = 'timeline-segment';
+    seg.style.flex = (p.end - p.start) / TOTAL_STEPS;
+    seg.style.background = p.color;
+    seg.style.opacity = '0.25';
+    const label = document.createElement('div');
+    label.className = 'timeline-segment-label';
+    label.style.color = p.color;
+    label.textContent = p.label;
+    seg.appendChild(label);
+    timelineBg.appendChild(seg);
+});
+
+// Build stats rows
+const STAT_DEFS = [
+    { id: 'plasticity', label: 'Plasticity', color: '#f5a623', max: 2.0 },
+    { id: 'stdpMag',    label: 'STDP Delta', color: '#22d3ee', max: 0.006 },
+    { id: 'predictionError', label: 'Pred Error', color: '#a78bfa', max: 1.0 },
+    { id: 'conceptCount',    label: 'Concepts', color: '#f5ba26', max: 5000 },
+];
+STAT_DEFS.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    row.innerHTML = `
+        <span class="stat-label">${s.label}</span>
+        <div class="stat-bar"><div class="stat-bar-fill" id="stat-${s.id}" style="background:${s.color}; width:0%"></div></div>
+        <span class="stat-val" id="stat-val-${s.id}">0</span>
+    `;
+    statsOverlay.appendChild(row);
+});
+
+// ── Playback state ──────────────────────────────────────────
+let currentStep = 0;
+let playing = false;
+let speed = 5;
+let lastFrameTime = 0;
+let eventTimeout = null;
+
+btnPlay.addEventListener('click', () => {
+    playing = !playing;
+    btnPlay.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
+    if (playing) lastFrameTime = performance.now();
+});
+
+document.querySelectorAll('.btn-speed').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.btn-speed').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        speed = parseInt(btn.dataset.speed);
+    });
+});
+
+// Click on timeline to seek
+timelineTrack.addEventListener('click', (e) => {
+    const rect = timelineTrack.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    currentStep = Math.floor(pct * TOTAL_STEPS);
+    updateDisplay(currentStep);
+});
+
+// Touch drag support for timeline
+timelineTrack.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = timelineTrack.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+    currentStep = Math.floor(pct * TOTAL_STEPS);
+    updateDisplay(currentStep);
+}, { passive: false });
+timelineTrack.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = timelineTrack.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+    currentStep = Math.floor(pct * TOTAL_STEPS);
+    updateDisplay(currentStep);
+}, { passive: false });
+
+// ── Main loop ───────────────────────────────────────────────
+function animate(now) {
+    requestAnimationFrame(animate);
+
+    if (playing) {
+        const dt = (now - lastFrameTime) / 1000;
+        lastFrameTime = now;
+        const stepsPerFrame = speed * 1000 * dt; // speed * 1000 steps/sec * dt
+        currentStep = Math.min(TOTAL_STEPS, currentStep + stepsPerFrame);
+
+        if (currentStep >= TOTAL_STEPS) {
+            playing = false;
+            btnPlay.innerHTML = '&#9654;';
+            currentStep = TOTAL_STEPS;
+        }
+    }
+
+    updateDisplay(Math.floor(currentStep));
+}
+
+let lastDisplayStep = -1;
+function updateDisplay(step) {
+    // Throttle updates to every ~100 steps to reduce overhead
+    if (Math.abs(step - lastDisplayStep) < 50 && step !== 0 && step !== TOTAL_STEPS) return;
+    lastDisplayStep = step;
+
+    const metrics = metricsAtStep(step);
+    const pct = step / TOTAL_STEPS;
+
+    // Phase name
+    phaseName.textContent = metrics.phase.label;
+    phaseName.style.color = metrics.phase.color;
+
+    // Phase age description
+    const phaseDescs = {
+        infant: 'Maximal plasticity — everything is new',
+        toddler: 'Basic patterns forming — sensorimotor exploration',
+        juvenile: 'Deep learning — concepts and predictions emerging',
+        adolescent: 'Structural remodeling — pruning, myelination, identity',
+        mature: 'Stable intelligence — reward-gated continual learning',
+    };
+    phaseAge.textContent = `Step ${step.toLocaleString()} — ${phaseDescs[metrics.phase.id]}`;
+
+    // Step counter
+    stepCount.textContent = step.toLocaleString();
+
+    // Timeline position
+    timelineThumb.style.left = (pct * 100) + '%';
+    timelineProgress.style.width = (pct * 100) + '%';
+    timelineTime.textContent = `${step.toLocaleString()} / ${TOTAL_STEPS.toLocaleString()} steps`;
+
+    // Stats bars
+    const stats = metrics.stats;
+    document.getElementById('stat-plasticity').style.width = (stats.plasticity / 2.0 * 100) + '%';
+    document.getElementById('stat-val-plasticity').textContent = stats.plasticity.toFixed(2) + 'x';
+    document.getElementById('stat-stdpMag').style.width = (stats.stdpMag / 0.006 * 100) + '%';
+    document.getElementById('stat-val-stdpMag').textContent = stats.stdpMag.toFixed(4);
+    document.getElementById('stat-predictionError').style.width = (stats.predictionError * 100) + '%';
+    document.getElementById('stat-val-predictionError').textContent = stats.predictionError.toFixed(2);
+    document.getElementById('stat-conceptCount').style.width = (stats.conceptCount / 5000 * 100) + '%';
+    document.getElementById('stat-val-conceptCount').textContent = stats.conceptCount.toLocaleString();
+
+    // Send to brain iframe
+    if (brainFrame.contentWindow) {
+        brainFrame.contentWindow.postMessage({
+            type: 'demo_reaction',
+            firingRates: metrics.firingRates,
+            neuromodulation: metrics.neuromodulation,
+        }, '*');
+    }
+
+    // Check for events
+    checkEvents(step);
+}
+
+let lastEventIdx = -1;
+function checkEvents(step) {
+    const idx = EVENTS.findLastIndex(e => step >= e.step);
+    if (idx !== lastEventIdx && idx >= 0) {
+        lastEventIdx = idx;
+        const ev = EVENTS[idx];
+        eventLabel.textContent = ev.label;
+        eventText.textContent = ev.text;
+        eventPopup.classList.add('visible');
+
+        if (eventTimeout) clearTimeout(eventTimeout);
+        eventTimeout = setTimeout(() => eventPopup.classList.remove('visible'), 3000);
+    }
+}
+
+// Initial display
+updateDisplay(0);
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

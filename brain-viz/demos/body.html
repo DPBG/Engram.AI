@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engram — Virtual Body</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #0a0e1a;
+    color: #c8d6e5;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    overflow: hidden;
+    height: 100vh;
+}
+
+/* ── Header bar ─────────────────────────────────────── */
+.topbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 48px;
+    display: flex; align-items: center;
+    padding: 0 20px;
+    background: rgba(10, 14, 26, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(34, 211, 238, 0.15);
+    z-index: 100;
+    gap: 16px;
+}
+.topbar a.back {
+    color: #22d3ee; text-decoration: none; font-size: 13px;
+    opacity: 0.7; transition: opacity 0.2s;
+}
+.topbar a.back:hover { opacity: 1; }
+.topbar .title {
+    font-size: 15px; font-weight: 600;
+    background: linear-gradient(135deg, #22d3ee, #38d97a);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.topbar .patent {
+    font-size: 10px; opacity: 0.4; margin-left: auto;
+}
+
+/* ── HUD panel ──────────────────────────────────────── */
+.hud {
+    position: fixed; top: 60px; left: 16px;
+    width: 220px;
+    background: rgba(10, 14, 26, 0.75);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(34, 211, 238, 0.12);
+    border-radius: 8px;
+    padding: 14px;
+    z-index: 90;
+    font-size: 12px;
+    line-height: 1.8;
+}
+.hud .label { color: #6b7c93; }
+.hud .value { color: #22d3ee; font-weight: 600; }
+.hud .channel-locomotion { color: #22aaff; }
+.hud .channel-manipulation { color: #38d97a; }
+.hud .channel-head { color: #f5c842; }
+.hud .divider {
+    border: none; border-top: 1px solid rgba(255,255,255,0.06);
+    margin: 6px 0;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.status-dot.live { background: #38d97a; box-shadow: 0 0 6px #38d97a; }
+.status-dot.simulated { background: #f5c842; }
+.status-dot.idle { background: #6b7c93; }
+
+/* ── Legend ──────────────────────────────────────────── */
+.legend {
+    position: fixed; bottom: 16px; left: 16px;
+    background: rgba(10, 14, 26, 0.75);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(34, 211, 238, 0.12);
+    border-radius: 8px;
+    padding: 10px 14px;
+    z-index: 90;
+    font-size: 11px;
+    display: flex; gap: 14px;
+}
+.legend-item {
+    display: flex; align-items: center; gap: 5px;
+}
+.legend-swatch {
+    width: 10px; height: 10px; border-radius: 2px;
+}
+
+/* ── Pulse buttons ──────────────────────────────────── */
+.pulse-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--c, #6b7c93);
+    border-radius: 4px;
+    color: var(--c, #c8d6e5);
+    font-family: inherit;
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.pulse-btn:hover { background: rgba(255,255,255,0.12); }
+.pulse-btn:active { transform: scale(0.95); }
+
+/* ── Self-view panel ───────────────────────────────── */
+.self-view {
+    position: fixed; bottom: 16px; right: 16px;
+    background: rgba(10, 14, 26, 0.80);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(34, 211, 238, 0.12);
+    border-radius: 8px;
+    padding: 10px;
+    z-index: 90;
+    text-align: center;
+}
+.self-view-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: #22d3ee;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+.self-view canvas {
+    width: 128px; height: 128px;
+    border: 1px solid rgba(34, 211, 238, 0.15);
+    border-radius: 4px;
+    image-rendering: pixelated;
+}
+.self-view .no-feed {
+    width: 128px; height: 128px;
+    display: flex; align-items: center; justify-content: center;
+    color: #6b7c93; font-size: 10px;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px;
+}
+
+/* ── 3D viewport ────────────────────────────────────── */
+#viewport {
+    position: fixed;
+    top: 48px; left: 0; right: 0; bottom: 0;
+}
+
+/* ── Guide panel (right side) ──────────────────────── */
+#guide-panel {
+    position: fixed; top: 60px; right: 16px;
+    width: 260px;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    background: rgba(10, 14, 26, 0.80);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(34, 211, 238, 0.12);
+    border-radius: 8px;
+    padding: 12px;
+    z-index: 90;
+    font-size: 12px;
+}
+#guide-panel::-webkit-scrollbar { width: 4px; }
+#guide-panel::-webkit-scrollbar-thumb { background: rgba(34,211,238,0.2); border-radius: 2px; }
+
+.guide-section { margin-bottom: 10px; }
+.guide-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #22d3ee;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(34,211,238,0.10);
+}
+
+.guide-btn-row {
+    display: flex; flex-wrap: wrap; gap: 4px;
+}
+.guide-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    color: #c8d6e5;
+    font-family: inherit;
+    font-size: 10px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.guide-btn:hover { background: rgba(255,255,255,0.12); }
+.guide-btn:active { transform: scale(0.95); }
+.guide-btn.preset { border-color: rgba(139,92,246,0.4); color: #a78bfa; }
+.guide-btn.preset:hover { background: rgba(139,92,246,0.15); }
+.guide-btn.push { border-color: rgba(245,158,11,0.4); color: #fbbf24; }
+.guide-btn.push:hover { background: rgba(245,158,11,0.15); }
+.guide-btn.reward-good { border-color: rgba(56,217,122,0.4); color: #38d97a; }
+.guide-btn.reward-good:hover { background: rgba(56,217,122,0.15); }
+.guide-btn.reward-bad { border-color: rgba(239,68,68,0.4); color: #ef4444; }
+.guide-btn.reward-bad:hover { background: rgba(239,68,68,0.15); }
+.guide-btn.reset-btn {
+    width: 100%; margin-top: 6px;
+    border-color: rgba(107,124,147,0.4);
+    color: #6b7c93;
+    padding: 6px;
+}
+
+.guide-sliders { display: flex; flex-direction: column; gap: 4px; }
+.slider-row {
+    display: flex; align-items: center; gap: 6px;
+}
+.slider-label {
+    width: 70px; font-size: 10px; color: #6b7c93;
+    text-transform: capitalize; flex-shrink: 0;
+}
+.slider-input {
+    flex: 1; height: 4px;
+    -webkit-appearance: none; appearance: none;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px; outline: none;
+}
+.slider-input::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px;
+    background: #22d3ee; border-radius: 50%;
+    cursor: pointer;
+}
+.slider-val {
+    width: 28px; text-align: right;
+    font-size: 10px; color: #22d3ee;
+}
+
+/* ── Mobile responsive ─────────────────────────────── */
+@media (max-width: 768px) {
+    body {
+        overflow-y: auto;
+        height: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .topbar {
+        position: sticky;
+        top: 0;
+        padding: 0 12px;
+        gap: 10px;
+    }
+    .topbar .title { font-size: 13px; }
+    .topbar .patent { font-size: 9px; }
+
+    #viewport {
+        position: relative;
+        top: auto; left: auto; right: auto; bottom: auto;
+        width: 100%;
+        height: 50vh;
+    }
+
+    .hud {
+        position: relative;
+        top: auto; left: auto;
+        width: 100%;
+        border-radius: 0;
+        padding: 10px 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        align-items: center;
+        line-height: 1.4;
+        -webkit-overflow-scrolling: touch;
+    }
+    .hud > div { white-space: nowrap; }
+    .hud .divider {
+        display: none;
+    }
+    .hud > div:last-child {
+        width: 100%;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+    }
+
+    #guide-panel {
+        position: relative;
+        top: auto; right: auto;
+        width: 100%;
+        max-height: none;
+        border-radius: 0;
+        padding: 12px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .legend {
+        position: relative;
+        bottom: auto; left: auto;
+        width: 100%;
+        border-radius: 0;
+        justify-content: center;
+        flex-wrap: wrap;
+        padding: 10px 12px;
+    }
+
+    .self-view {
+        position: relative;
+        bottom: auto; right: auto;
+        width: 100%;
+        border-radius: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 10px 12px;
+    }
+    .self-view canvas {
+        width: 96px; height: 96px;
+    }
+    .self-view .no-feed {
+        width: 96px; height: 96px;
+    }
+
+    .pulse-btn,
+    .guide-btn {
+        min-height: 44px;
+        padding: 8px 12px;
+        font-size: 12px;
+        touch-action: manipulation;
+    }
+    .guide-btn.reset-btn {
+        min-height: 44px;
+        padding: 10px;
+        touch-action: manipulation;
+    }
+
+    .slider-input {
+        height: 8px;
+        touch-action: manipulation;
+    }
+    .slider-input::-webkit-slider-thumb {
+        width: 22px; height: 22px;
+    }
+}
+</style>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "../lib/three.module.min.js",
+        "three/addons/controls/OrbitControls.js": "../lib/OrbitControls.js"
+    }
+}
+</script>
+</head>
+
+<body>
+
+<div class="topbar">
+    <a class="back" href="index.html">demos</a>
+    <div class="title">Virtual Body (MuJoCo)</div>
+    <div class="patent">MIT License</div>
+</div>
+
+<div id="viewport"></div>
+
+<div class="hud" id="hud">
+    <div><span class="label">Status </span><span id="hud-status"><span class="status-dot idle"></span>idle</span></div>
+    <div><span class="label">Channel </span><span class="value" id="hud-channel">--</span></div>
+    <div><span class="label">Outcome </span><span class="value" id="hud-outcome">--</span></div>
+    <hr class="divider">
+    <div><span class="label">Torso H </span><span class="value" id="hud-height">--</span></div>
+    <div><span class="label">Contacts </span><span class="value" id="hud-contacts">--</span></div>
+    <div><span class="label">Sim Time </span><span class="value" id="hud-simtime">--</span></div>
+    <hr class="divider">
+    <div><span class="label">Frames </span><span class="value" id="hud-frames">0</span></div>
+    <hr class="divider">
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
+        <button class="pulse-btn" data-ch="locomotion" style="--c:#22aaff">Walk</button>
+        <button class="pulse-btn" data-ch="manipulation" style="--c:#38d97a">Reach</button>
+        <button class="pulse-btn" data-ch="head" style="--c:#f5c842">Look</button>
+    </div>
+</div>
+
+<div class="legend">
+    <div class="legend-item"><div class="legend-swatch" style="background:#22aaff"></div>Locomotion</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#38d97a"></div>Manipulation</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#f5c842"></div>Head</div>
+</div>
+
+<div id="guide-panel"></div>
+
+<div class="self-view" id="self-view-panel">
+    <div class="self-view-title">Brain's Eye View</div>
+    <div class="no-feed" id="self-view-placeholder">Waiting for feed...</div>
+    <canvas id="self-view-canvas" width="128" height="128" style="display:none;"></canvas>
+</div>
+
+<script type="module">
+import { BodyScene } from './body-scene.js';
+import { BodyData } from './body-data.js';
+import { BodyGuide } from './body-guide.js';
+
+// Detect dashboard URL
+const params = new URLSearchParams(window.location.search);
+const host = params.get('host') || window.location.hostname || 'localhost';
+const isProxied = host === 'demo.engram.ai';
+const port = params.get('port') || window.location.port || (isProxied ? '' : '8080');
+const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const portSuffix = port ? `:${port}` : '';
+const wsUrl = params.get('ws') || `${proto}//${host}${portSuffix}/ws`;
+const apiBase = params.get('api') || `${window.location.protocol}//${host}${portSuffix}`;
+
+// HUD elements
+const hudStatus   = document.getElementById('hud-status');
+const hudChannel  = document.getElementById('hud-channel');
+const hudOutcome  = document.getElementById('hud-outcome');
+const hudHeight   = document.getElementById('hud-height');
+const hudContacts = document.getElementById('hud-contacts');
+const hudSimtime  = document.getElementById('hud-simtime');
+const hudFrames   = document.getElementById('hud-frames');
+
+// Init scene
+const viewport = document.getElementById('viewport');
+const scene = new BodyScene(viewport);
+
+// Init data bridge
+const data = new BodyData();
+
+data.onTestPulse = ({ channel, success }) => {
+    scene.applyTestPose(channel, success);
+};
+
+data.onUpdate = (state) => {
+    if (state.bodies) scene.updateBodies(state.bodies, state.activeChannel, state.success);
+    // Motor activation overlay — color joints by velocity-derived channel intensity
+    if (state.motorRates) scene.updateMotorActivation(state.motorRates);
+
+    // Update HUD
+    const ch = state.activeChannel || '--';
+    const chClass = state.activeChannel ? `channel-${state.activeChannel}` : '';
+    hudChannel.className = 'value ' + chClass;
+    hudChannel.textContent = ch;
+    hudOutcome.textContent = state.activeChannel
+        ? (state.success ? 'SUCCESS' : 'FAIL')
+        : '--';
+    hudOutcome.style.color = state.activeChannel
+        ? (state.success ? '#38d97a' : '#ef4444')
+        : '#22d3ee';
+    hudHeight.textContent = state.torsoHeight.toFixed(3) + ' m';
+    hudContacts.textContent = state.numContacts;
+    hudSimtime.textContent = state.simTime.toFixed(1) + ' s';
+    hudFrames.textContent = state.liveCount;
+};
+
+data.onStatus = (status) => {
+    const dotClass = status.mode;
+    const labels = { live: 'live', simulated: 'idle sim', idle: 'disconnected' };
+    const label = labels[status.mode] || status.mode;
+    hudStatus.innerHTML = `<span class="status-dot ${dotClass}"></span>${label}`;
+};
+
+// Pulse buttons — simulate a motor command locally for testing
+document.querySelectorAll('.pulse-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        data.sendTestPulse(btn.dataset.ch);
+    });
+});
+
+// Init guide panel — sends commands via WS or REST fallback
+const guidePanel = document.getElementById('guide-panel');
+const guide = new BodyGuide(guidePanel, (cmdData) => {
+    // Try WebSocket first, fall back to REST
+    if (data._ws && data._ws.readyState === WebSocket.OPEN) {
+        data._ws.send(JSON.stringify({ type: 'mujoco_guide', data: cmdData }));
+    } else {
+        fetch(apiBase + '/api/mujoco/guide', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cmdData),
+        }).catch(e => console.warn('Guide REST fallback failed:', e));
+    }
+});
+
+// Instant client-side preview when guide buttons are pressed
+guide.onPreview = (channel) => {
+    data.pauseSim(15000);  // hold preview for 15s (server response may take ~10s)
+    scene.applyTestPose(channel, true);
+    // Update HUD to reflect the preview
+    hudChannel.textContent = channel;
+    hudChannel.className = 'value channel-' + channel;
+    hudOutcome.textContent = 'PREVIEW';
+    hudOutcome.style.color = '#a78bfa';
+};
+
+// Self-view canvas — shows what the brain's body camera sees (64x64 grayscale)
+const selfViewCanvas = document.getElementById('self-view-canvas');
+const selfViewCtx = selfViewCanvas.getContext('2d');
+const selfViewPlaceholder = document.getElementById('self-view-placeholder');
+
+data.onSelfView = ({ pixels, width, height }) => {
+    // Show canvas, hide placeholder on first frame
+    if (selfViewPlaceholder.style.display !== 'none') {
+        selfViewPlaceholder.style.display = 'none';
+        selfViewCanvas.style.display = 'block';
+    }
+    // Draw grayscale pixels onto 128x128 canvas (2x upscale, pixelated via CSS)
+    const imgData = selfViewCtx.createImageData(width, height);
+    for (let i = 0; i < pixels.length; i++) {
+        const v = pixels[i];
+        imgData.data[i * 4]     = v;  // R
+        imgData.data[i * 4 + 1] = v;  // G
+        imgData.data[i * 4 + 2] = v;  // B
+        imgData.data[i * 4 + 3] = 255; // A
+    }
+    // Draw at native 64x64 then CSS scales to 128x128 with pixelated rendering
+    selfViewCanvas.width = width;
+    selfViewCanvas.height = height;
+    selfViewCtx.putImageData(imgData, 0, 0);
+};
+
+// Start
+(async () => {
+    await data.start(wsUrl, apiBase);
+    // Always build the robot — use live geometry if available, otherwise procedural
+    scene.setModelGeometry(data.getModelGeoms() || []);
+    // Start guide (fetches joint info from API)
+    guide.start(apiBase);
+})();
+</script>
+</body>
+</html>

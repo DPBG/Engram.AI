@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuromorphic"
+version = "0.1.0"
+description = "Neuromorphic Cognitive Core — spiking neural network with STDP learning"
+requires-python = ">=3.11"
+dependencies = [
+    "nats-py>=2.6.0",
+    "pydantic>=2.5.0",
+    "aiosqlite>=0.19.0",
+    "numpy>=1.26.0",
+    "scipy>=1.12.0",
+    "mujoco>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "opencv-python-headless",
+]

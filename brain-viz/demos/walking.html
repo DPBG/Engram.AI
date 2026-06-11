@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engram — Brain Learning to Walk</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #0a0e1a;
+    color: #c8d6e5;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.topbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 48px;
+    display: flex; align-items: center;
+    padding: 0 20px;
+    background: rgba(10, 14, 26, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(34, 211, 238, 0.15);
+    z-index: 100;
+    gap: 16px;
+}
+.topbar a.back {
+    color: #22d3ee; text-decoration: none; font-size: 13px;
+    opacity: 0.7; transition: opacity 0.2s;
+}
+.topbar a.back:hover { opacity: 1; }
+.topbar .title {
+    font-size: 15px; font-weight: 600;
+    background: linear-gradient(135deg, #f97316, #fbbf24);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.topbar .patent {
+    font-size: 10px; opacity: 0.4; margin-left: auto;
+}
+
+.main {
+    display: flex;
+    margin-top: 48px;
+    height: calc(100vh - 48px);
+}
+
+/* Left: 3D body */
+.body-panel {
+    flex: 1;
+    position: relative;
+}
+#body-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* Right: motor activity bars + guide */
+.motor-panel {
+    width: 380px;
+    background: rgba(10, 14, 26, 0.75);
+    border-left: 1px solid rgba(34, 211, 238, 0.12);
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #f97316;
+    margin-bottom: 16px;
+}
+
+.channel-section {
+    margin-bottom: 20px;
+}
+.channel-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #5a6478;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+}
+.channel-label .count { color: #c8d6e5; }
+
+.actuator-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 4px;
+    gap: 8px;
+}
+.actuator-name {
+    font-size: 9px;
+    width: 110px;
+    text-align: right;
+    color: #5a6478;
+    flex-shrink: 0;
+}
+.bar-track {
+    flex: 1;
+    height: 14px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+}
+.bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease, background 0.3s ease;
+    min-width: 1px;
+}
+.bar-value {
+    font-size: 9px;
+    width: 36px;
+    text-align: right;
+    color: #5a6478;
+    flex-shrink: 0;
+}
+/* Center line at 0.5 (neutral) */
+.bar-track::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(255,255,255,0.1);
+}
+
+/* Channel colors */
+.locomotion .bar-fill { background: linear-gradient(90deg, #1a6aff, #22aaff); }
+.manipulation .bar-fill { background: linear-gradient(90deg, #1a8a4a, #38d97a); }
+.head .bar-fill { background: linear-gradient(90deg, #b8860b, #f5c842); }
+
+/* Stats HUD */
+.stats-hud {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    background: rgba(10, 14, 26, 0.8);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(34, 211, 238, 0.12);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    gap: 24px;
+    font-size: 10px;
+}
+.stat-item { text-align: center; }
+.stat-item .val {
+    font-size: 16px; font-weight: 600; color: #f97316;
+}
+.stat-item .lbl {
+    font-size: 8px; color: #5a6478; letter-spacing: 1px;
+    text-transform: uppercase; margin-top: 2px;
+}
+
+.connection-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; margin-right: 6px;
+}
+.connection-dot.live { background: #38d97a; box-shadow: 0 0 6px #38d97a; }
+.connection-dot.offline { background: #ef4444; }
+.connection-dot.sim { background: #f5c842; }
+
+/* ── Guide panel (below motor bars) ──────────────────── */
+#guide-panel {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(34, 211, 238, 0.12);
+}
+.guide-section { margin-bottom: 10px; }
+.guide-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #22d3ee;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(34,211,238,0.10);
+}
+.guide-btn-row {
+    display: flex; flex-wrap: wrap; gap: 4px;
+}
+.guide-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    color: #c8d6e5;
+    font-family: inherit;
+    font-size: 10px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.guide-btn:hover { background: rgba(255,255,255,0.12); }
+.guide-btn:active { transform: scale(0.95); }
+.guide-btn.preset { border-color: rgba(139,92,246,0.4); color: #a78bfa; }
+.guide-btn.preset:hover { background: rgba(139,92,246,0.15); }
+.guide-btn.push { border-color: rgba(245,158,11,0.4); color: #fbbf24; }
+.guide-btn.push:hover { background: rgba(245,158,11,0.15); }
+.guide-btn.reward-good { border-color: rgba(56,217,122,0.4); color: #38d97a; }
+.guide-btn.reward-good:hover { background: rgba(56,217,122,0.15); }
+.guide-btn.reward-bad { border-color: rgba(239,68,68,0.4); color: #ef4444; }
+.guide-btn.reward-bad:hover { background: rgba(239,68,68,0.15); }
+.guide-btn.reset-btn {
+    width: 100%; margin-top: 6px;
+    border-color: rgba(107,124,147,0.4);
+    color: #6b7c93;
+    padding: 6px;
+}
+.guide-sliders { display: flex; flex-direction: column; gap: 4px; }
+.slider-row {
+    display: flex; align-items: center; gap: 6px;
+}
+.slider-label {
+    width: 70px; font-size: 10px; color: #6b7c93;
+    text-transform: capitalize; flex-shrink: 0;
+}
+.slider-input {
+    flex: 1; height: 4px;
+    -webkit-appearance: none; appearance: none;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px; outline: none;
+}
+.slider-input::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px;
+    background: #22d3ee; border-radius: 50%;
+    cursor: pointer;
+}
+.slider-val {
+    width: 28px; text-align: right;
+    font-size: 10px; color: #22d3ee;
+}
+.teach-toggle.active {
+    background: rgba(34,211,238,0.15);
+    border-color: rgba(34,211,238,0.5);
+    color: #22d3ee;
+}
+.guide-select {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    color: #c8d6e5;
+    font-family: inherit;
+    font-size: 10px;
+    padding: 2px 4px;
+}
+
+/* ── Mobile layout ─────────────────────────────────────── */
+@media (max-width: 768px) {
+    body {
+        overflow-y: auto;
+        height: auto;
+    }
+    .topbar {
+        font-size: 13px;
+    }
+    .topbar .title {
+        font-size: 13px;
+    }
+    .topbar .patent {
+        display: none;
+    }
+    .main {
+        flex-direction: column;
+        margin-top: 48px;
+        height: auto;
+    }
+    .body-panel {
+        height: 300px;
+        flex-shrink: 0;
+        width: 100%;
+    }
+    #body-container {
+        height: 300px;
+    }
+    .motor-panel {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid rgba(34, 211, 238, 0.12);
+    }
+    .stats-hud {
+        position: relative;
+        width: 100%;
+        bottom: auto;
+        left: auto;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: center;
+        border-radius: 0;
+        margin: 0;
+    }
+    .actuator-name {
+        width: 90px;
+    }
+    /* Touch targets */
+    .topbar a.back,
+    .topbar .title,
+    .bar-track,
+    .stat-item {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+    }
+    .topbar a.back {
+        touch-action: manipulation;
+    }
+    .bar-track {
+        touch-action: manipulation;
+    }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <a href="index.html" class="back">&larr; Demos</a>
+    <span class="title">Brain Learning to Walk</span>
+    <span id="conn-status"><span class="connection-dot"></span>Connecting...</span>
+    <span class="patent">MIT License</span>
+</div>
+
+<div class="main">
+    <div class="body-panel">
+        <div id="body-container"></div>
+    </div>
+
+    <div class="motor-panel">
+        <div class="panel-title">Per-Joint Motor Activity</div>
+
+        <div class="channel-section locomotion">
+            <div class="channel-label">
+                Locomotion <span class="count" id="loc-count">15 actuators</span>
+            </div>
+            <div id="loc-bars"></div>
+        </div>
+
+        <div class="channel-section manipulation">
+            <div class="channel-label">
+                Manipulation <span class="count" id="man-count">12 actuators</span>
+            </div>
+            <div id="man-bars"></div>
+        </div>
+
+        <div class="channel-section head">
+            <div class="channel-label">
+                Head <span class="count" id="head-count">2 actuators</span>
+            </div>
+            <div id="head-bars"></div>
+        </div>
+
+        <div id="guide-panel"></div>
+    </div>
+</div>
+
+<div class="stats-hud">
+    <div class="stat-item">
+        <div class="val" id="torso-height">0.92</div>
+        <div class="lbl">Torso Height (m)</div>
+    </div>
+    <div class="stat-item">
+        <div class="val" id="task-name">Stand</div>
+        <div class="lbl">Current Task</div>
+    </div>
+    <div class="stat-item">
+        <div class="val" id="motor-rate">0.0%</div>
+        <div class="lbl">Motor Firing Rate</div>
+    </div>
+    <div class="stat-item">
+        <div class="val" id="fall-count">0</div>
+        <div class="lbl">Falls</div>
+    </div>
+</div>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+    }
+}
+</script>
+
+<script type="module">
+import { BodyScene } from './body-scene.js';
+import { BodyData } from './body-data.js';
+import { BodyGuide } from './body-guide.js';
+
+// ── Channel -> actuator names ──────────────────────────────────────
+const CHANNEL_ACTUATORS = {
+    locomotion: [
+        'waist_yaw_m', 'waist_roll_m', 'waist_pitch_m',
+        'r_hip_yaw_m', 'r_hip_roll_m', 'r_hip_pitch_m',
+        'r_knee_m', 'r_ankle_pitch_m', 'r_ankle_roll_m',
+        'l_hip_yaw_m', 'l_hip_roll_m', 'l_hip_pitch_m',
+        'l_knee_m', 'l_ankle_pitch_m', 'l_ankle_roll_m',
+    ],
+    manipulation: [
+        'r_shoulder_pitch_m', 'r_shoulder_roll_m', 'r_shoulder_yaw_m',
+        'r_elbow_m', 'r_wrist_pitch_m', 'r_wrist_yaw_m',
+        'l_shoulder_pitch_m', 'l_shoulder_roll_m', 'l_shoulder_yaw_m',
+        'l_elbow_m', 'l_wrist_pitch_m', 'l_wrist_yaw_m',
+    ],
+    head: ['neck_pitch_m', 'neck_yaw_m'],
+};
+
+// Joint velocity index -> actuator name mapping (qvel layout after 6-DOF freejoint)
+// [6-8]=waist(3), [9-10]=neck(2), [11-16]=r_arm(6), [17-22]=l_arm(6),
+// [23-28]=r_leg(6), [29-34]=l_leg(6)
+const QVEL_ACTUATOR_MAP = [
+    // idx 6-8: waist
+    { idx: 6, name: 'waist_yaw_m' },
+    { idx: 7, name: 'waist_roll_m' },
+    { idx: 8, name: 'waist_pitch_m' },
+    // idx 9-10: neck
+    { idx: 9, name: 'neck_pitch_m' },
+    { idx: 10, name: 'neck_yaw_m' },
+    // idx 11-16: right arm
+    { idx: 11, name: 'r_shoulder_pitch_m' },
+    { idx: 12, name: 'r_shoulder_roll_m' },
+    { idx: 13, name: 'r_shoulder_yaw_m' },
+    { idx: 14, name: 'r_elbow_m' },
+    { idx: 15, name: 'r_wrist_pitch_m' },
+    { idx: 16, name: 'r_wrist_yaw_m' },
+    // idx 17-22: left arm
+    { idx: 17, name: 'l_shoulder_pitch_m' },
+    { idx: 18, name: 'l_shoulder_roll_m' },
+    { idx: 19, name: 'l_shoulder_yaw_m' },
+    { idx: 20, name: 'l_elbow_m' },
+    { idx: 21, name: 'l_wrist_pitch_m' },
+    { idx: 22, name: 'l_wrist_yaw_m' },
+    // idx 23-28: right leg
+    { idx: 23, name: 'r_hip_yaw_m' },
+    { idx: 24, name: 'r_hip_roll_m' },
+    { idx: 25, name: 'r_hip_pitch_m' },
+    { idx: 26, name: 'r_knee_m' },
+    { idx: 27, name: 'r_ankle_pitch_m' },
+    { idx: 28, name: 'r_ankle_roll_m' },
+    // idx 29-34: left leg
+    { idx: 29, name: 'l_hip_yaw_m' },
+    { idx: 30, name: 'l_hip_roll_m' },
+    { idx: 31, name: 'l_hip_pitch_m' },
+    { idx: 32, name: 'l_knee_m' },
+    { idx: 33, name: 'l_ankle_pitch_m' },
+    { idx: 34, name: 'l_ankle_roll_m' },
+];
+
+// ── Build bar UI ──────────────────────────────────────────────────
+const barElements = {};  // actuator_name -> { fill, value }
+
+function buildBars(containerId, actuators) {
+    const container = document.getElementById(containerId);
+    actuators.forEach(name => {
+        const row = document.createElement('div');
+        row.className = 'actuator-row';
+
+        const label = document.createElement('span');
+        label.className = 'actuator-name';
+        label.textContent = name.replace(/_m$/, '').replace(/_/g, ' ');
+
+        const track = document.createElement('div');
+        track.className = 'bar-track';
+        const fill = document.createElement('div');
+        fill.className = 'bar-fill';
+        fill.style.width = '0%';
+        track.appendChild(fill);
+
+        const val = document.createElement('span');
+        val.className = 'bar-value';
+        val.textContent = '0.00';
+
+        row.appendChild(label);
+        row.appendChild(track);
+        row.appendChild(val);
+        container.appendChild(row);
+
+        barElements[name] = { fill, value: val };
+    });
+}
+
+buildBars('loc-bars', CHANNEL_ACTUATORS.locomotion);
+buildBars('man-bars', CHANNEL_ACTUATORS.manipulation);
+buildBars('head-bars', CHANNEL_ACTUATORS.head);
+
+// ── Update bars from data ─────────────────────────────────────────
+function updateBars(actuatorIntensities) {
+    for (const [name, intensity] of Object.entries(actuatorIntensities)) {
+        const el = barElements[name];
+        if (!el) continue;
+        const clamped = Math.max(0, Math.min(1, intensity));
+        const pct = clamped * 100;
+        el.fill.style.width = pct + '%';
+        const hue = (1 - clamped) * 120; // 120=green, 0=red
+        el.fill.style.background = `hsl(${hue}, 70%, 50%)`;
+        el.value.textContent = clamped.toFixed(2);
+    }
+}
+
+/**
+ * Derive per-actuator intensities from joint_velocities array.
+ * Maps each qvel index to its actuator name. Scale: 2 rad/s = full intensity.
+ */
+function intensitiesFromJointVelocities(jv) {
+    const intensities = {};
+    const scale = 0.5; // 1/(2 rad/s)
+    for (const entry of QVEL_ACTUATOR_MAP) {
+        if (entry.idx < jv.length) {
+            intensities[entry.name] = Math.min(1.0, Math.abs(jv[entry.idx]) * scale);
+        }
+    }
+    return intensities;
+}
+
+// ── Simulated walking data (fallback when no live server) ─────────
+let fallCount = 0;
+let simStep = 0;
+const SIM_FALL_INTERVAL = 600;  // ~30s at 20fps
+
+function generateSimData() {
+    simStep++;
+    const t = simStep * 0.05;
+    const falling = (simStep % SIM_FALL_INTERVAL) > (SIM_FALL_INTERVAL - 40);
+
+    if (simStep % SIM_FALL_INTERVAL === 0) fallCount++;
+
+    const intensities = {};
+    for (const [ch, actuators] of Object.entries(CHANNEL_ACTUATORS)) {
+        actuators.forEach((name, i) => {
+            if (falling) {
+                intensities[name] = Math.random() * 0.3;
+            } else {
+                intensities[name] = Math.max(0, Math.min(1,
+                    0.3 + 0.15 * Math.sin(t + i * 0.7) +
+                    (Math.random() - 0.5) * 0.1));
+            }
+        });
+    }
+
+    const torsoH = falling ?
+        0.92 - 0.5 * ((simStep % SIM_FALL_INTERVAL) - (SIM_FALL_INTERVAL - 40)) / 40 :
+        0.92 + 0.02 * Math.sin(t * 0.3);
+
+    return {
+        actuator_intensities: intensities,
+        torso_height: Math.max(0.2, torsoH),
+        motor_rate: (2.6 + Math.random() * 0.5).toFixed(1),
+        task: 'Stand',
+        falls: fallCount,
+    };
+}
+
+// ── Initialize 3D scene ───────────────────────────────────────────
+const container = document.getElementById('body-container');
+const scene = new BodyScene(container);
+
+// Auto-detect dashboard URL
+const _wHost = window.location.hostname;
+const _isProxied = _wHost === 'demo.engram.ai';
+const _wPort = window.location.port || (_isProxied ? '' : '8080');
+const _wPortSuffix = _wPort ? `:${_wPort}` : '';
+const dashboardUrl = localStorage.getItem('dashboardUrl') || `${window.location.protocol}//${_wHost}${_wPortSuffix}`;
+
+// ── Data bridge ───────────────────────────────────────────────────
+const data = new BodyData();
+
+// Track falls from live data client-side
+let liveFallCount = 0;
+let lastTorsoHeight = 1.0;
+const FALL_THRESHOLD = 0.5; // meters
+
+data.onUpdate = (state) => {
+    // Update 3D body pose (always -- both live and sim fallback provide bodies)
+    if (state.bodies) {
+        scene.updateBodies(state.bodies, state.activeChannel, state.success);
+    }
+
+    // Only update HUD and bars from live MuJoCo data.
+    // When not live, the animate() loop drives HUD via generateSimData().
+    if (data.mode !== 'live') return;
+
+    // Motor activation glow on 3D body
+    if (state.motorRates) {
+        scene.updateMotorActivation(state.motorRates);
+    }
+
+    // Update HUD: torso height
+    const height = state.torsoHeight || 0;
+    document.getElementById('torso-height').textContent = height.toFixed(2);
+
+    // Update HUD: task name
+    document.getElementById('task-name').textContent =
+        state.activeChannel || 'Stand';
+
+    // Update HUD: motor firing rate (average across channels)
+    if (state.motorRates) {
+        const rates = state.motorRates;
+        const avg = ((rates.locomotion || 0) + (rates.manipulation || 0) +
+                     (rates.head || 0)) / 3;
+        document.getElementById('motor-rate').textContent =
+            (avg * 100).toFixed(1) + '%';
+    }
+
+    // Client-side fall detection
+    if (lastTorsoHeight > FALL_THRESHOLD && height < FALL_THRESHOLD && height > 0) {
+        liveFallCount++;
+        document.getElementById('fall-count').textContent = liveFallCount;
+    }
+    lastTorsoHeight = height;
+
+    // Per-joint bars from joint velocities (true per-actuator data)
+    if (state.jointVelocities && state.jointVelocities.length >= 35) {
+        updateBars(intensitiesFromJointVelocities(state.jointVelocities));
+    } else if (state.motorRates) {
+        // Fallback: distribute channel rates to actuators with slight variation
+        const intensities = {};
+        for (const [ch, actuators] of Object.entries(CHANNEL_ACTUATORS)) {
+            const rate = state.motorRates[ch] || 0;
+            actuators.forEach((name, i) => {
+                intensities[name] = Math.max(0, Math.min(1,
+                    rate + (Math.random() - 0.5) * rate * 0.3));
+            });
+        }
+        updateBars(intensities);
+    }
+};
+
+// Connection status callback
+data.onStatus = (status) => {
+    const el = document.getElementById('conn-status');
+    const dot = el.querySelector('.connection-dot');
+    // Build innerHTML to avoid fragile childNodes indexing
+    if (status.mode === 'live') {
+        dot.className = 'connection-dot live';
+        dot.nextSibling.textContent = 'Live Simulation';
+    } else if (status.connected) {
+        dot.className = 'connection-dot sim';
+        dot.nextSibling.textContent = 'Simulated';
+    } else {
+        dot.className = 'connection-dot offline';
+        dot.nextSibling.textContent = 'Demo Mode';
+    }
+};
+
+// Test pulse callback (from guide preview)
+data.onTestPulse = ({ channel, success }) => {
+    scene.applyTestPose(channel, success);
+};
+
+// ── Guide panel ──────────────────────────────────────────────────
+const guidePanel = document.getElementById('guide-panel');
+const guide = new BodyGuide(guidePanel, (cmdData) => {
+    // Try WebSocket first, fall back to REST
+    if (data._ws && data._ws.readyState === WebSocket.OPEN) {
+        data._ws.send(JSON.stringify({ type: 'mujoco_guide', data: cmdData }));
+    } else {
+        fetch(dashboardUrl + '/api/mujoco/guide', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cmdData),
+        }).catch(e => console.warn('Guide REST fallback failed:', e));
+    }
+});
+
+guide.onPreview = (channel) => {
+    data.pauseSim(15000);
+    scene.applyTestPose(channel, true);
+    document.getElementById('task-name').textContent = channel;
+};
+
+// ── WebSocket connection ─────────────────────────────────────────
+const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsHost = `${wsProto}//${_wHost}${_wPortSuffix}`;
+
+(async () => {
+    await data.start(wsHost + '/ws', dashboardUrl);
+    // Always build the robot -- use live geometry if available, otherwise procedural
+    scene.setModelGeometry(data.getModelGeoms() || []);
+    // Start guide panel (fetches joint info from API)
+    guide.start(dashboardUrl);
+})();
+
+// ── Render loop ───────────────────────────────────────────────────
+function animate() {
+    requestAnimationFrame(animate);
+
+    // Only run simulated walking data when NOT receiving live MuJoCo data
+    if (data.mode !== 'live') {
+        const sim = generateSimData();
+        updateBars(sim.actuator_intensities);
+        document.getElementById('torso-height').textContent = sim.torso_height.toFixed(2);
+        document.getElementById('motor-rate').textContent = sim.motor_rate + '%';
+        document.getElementById('task-name').textContent = sim.task;
+        document.getElementById('fall-count').textContent = sim.falls;
+    }
+}
+animate();
+</script>
+</body>
+</html>

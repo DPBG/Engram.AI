@@ -1,0 +1,14 @@
+{
+  "name": "humanoid-active-learning-ai-sdk",
+  "version": "0.1.0",
+  "description": "Open SDK for Humanoid Active Learning AI",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "echo \"No tests specified\""
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

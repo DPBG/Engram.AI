@@ -1,0 +1,66 @@
+name: Feature Request
+description: Suggest an idea or enhancement for Engram
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement. Engram is a neuromorphic research
+        system, so please tell us how your idea fits the architecture.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the system would this affect?
+      options:
+        - neuromorphic (spiking neural network core)
+        - sdk (activelearning package)
+        - dashboard
+        - sensory-gateway
+        - kernel / safety-supervisor (safety layer)
+        - coordinator / meta-programmer / beliefs
+        - brain-viz
+        - deploy / tooling
+        - docs
+        - other / cross-cutting
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What problem does this solve? What is the use case?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the feature or change you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Other approaches you considered, and why you prefer this one.
+    validations:
+      required: false
+  - type: textarea
+    id: patent
+    attributes:
+      label: Patent / Architecture Alignment
+      description: >
+        For changes to the neuromorphic core, note which of the 6 patent claims
+        (see CLAUDE.md) the change relates to and how it preserves them. Leave
+        blank if not applicable.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true

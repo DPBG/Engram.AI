@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engram — Concept Formation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+<style>
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+:root {
+    --bg: #060a14; --panel: #0a0e1a; --border: rgba(94,164,245,0.12);
+    --accent: #5ea4f5; --text: #c8d0e0; --text-dim: #5a6478;
+    --text-bright: #e8ecf4; --green: #38d97a; --amber: #f5a623;
+    --cyan: #22d3ee; --purple: #a78bfa; --pink: #f472b6;
+    --mono: 'JetBrains Mono','SF Mono','Fira Code',monospace;
+}
+body { background:var(--bg); color:var(--text); font-family:var(--mono); font-size:12px; overflow-x:hidden; }
+
+/* ── Top bar ─────────────────────────── */
+#top-bar { display:flex; align-items:center; gap:16px; padding:10px 20px; background:var(--panel); border-bottom:1px solid var(--border); }
+#top-bar a { color:var(--accent); text-decoration:none; }
+#top-bar .title { color:var(--green); font-weight:600; font-size:14px; flex:1; }
+#top-bar .patent { color:var(--text-dim); font-size:10px; }
+
+/* ── Layout ──────────────────────────── */
+#main { display:grid; grid-template-columns:280px 1fr 320px; gap:0; height:calc(100vh - 42px); }
+#stimuli-panel, #results-panel { background:var(--panel); border-right:1px solid var(--border); padding:16px; overflow-y:auto; }
+#results-panel { border-right:none; border-left:1px solid var(--border); }
+#viz-area { padding:16px; overflow-y:auto; }
+
+.section-title { color:var(--accent); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; }
+
+/* ── Stimulus buttons ────────────────── */
+.stim-group { margin-bottom:16px; }
+.stim-group-label { color:var(--text-dim); font-size:10px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
+.stim-btn { display:block; width:100%; padding:8px 12px; margin-bottom:4px; background:rgba(94,164,245,0.06);
+    border:1px solid var(--border); border-radius:4px; color:var(--text); font-family:var(--mono);
+    font-size:11px; cursor:pointer; text-align:left; transition:all 0.15s; }
+.stim-btn:hover { background:rgba(94,164,245,0.12); border-color:var(--accent); }
+.stim-btn.active { background:rgba(94,164,245,0.15); border-color:var(--accent); color:var(--accent); }
+.stim-btn .stim-label { font-weight:500; }
+.stim-btn .stim-desc { color:var(--text-dim); font-size:10px; margin-top:2px; }
+
+/* ── Config ──────────────────────────── */
+.config-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.config-row label { color:var(--text-dim); font-size:10px; min-width:80px; }
+.config-row input, .config-row select { background:var(--bg); border:1px solid var(--border); color:var(--text);
+    font-family:var(--mono); font-size:11px; padding:4px 8px; border-radius:3px; width:60px; }
+
+#probe-btn { width:100%; padding:10px; margin-top:12px; background:rgba(56,217,122,0.15); border:1px solid var(--green);
+    color:var(--green); font-family:var(--mono); font-size:12px; font-weight:600; cursor:pointer; border-radius:4px; transition:all 0.15s; }
+#probe-btn:hover { background:rgba(56,217,122,0.25); }
+#probe-btn:disabled { opacity:0.4; cursor:not-allowed; }
+
+#clear-btn { width:100%; padding:6px; margin-top:6px; background:none; border:1px solid var(--border);
+    color:var(--text-dim); font-family:var(--mono); font-size:10px; cursor:pointer; border-radius:4px; }
+#clear-btn:hover { border-color:var(--pink); color:var(--pink); }
+
+#status { color:var(--text-dim); font-size:10px; margin-top:8px; min-height:14px; }
+
+/* ── Heatmap ─────────────────────────── */
+.viz-section { margin-bottom:24px; }
+.viz-section-title { color:var(--cyan); font-size:11px; font-weight:600; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
+
+#heatmap-container { position:relative; }
+#heatmap-canvas { display:block; border:1px solid var(--border); border-radius:4px; image-rendering:pixelated; }
+#heatmap-label { position:absolute; top:6px; left:8px; color:var(--text-dim); font-size:10px; pointer-events:none; }
+#heatmap-stats { color:var(--text-dim); font-size:10px; margin-top:4px; }
+
+/* ── Similarity matrix ───────────────── */
+#similarity-container { position:relative; }
+#similarity-canvas { display:block; border:1px solid var(--border); border-radius:4px; image-rendering:pixelated; }
+
+/* ── Results list ────────────────────── */
+.result-item { padding:8px; margin-bottom:6px; background:rgba(94,164,245,0.04); border:1px solid var(--border);
+    border-radius:4px; cursor:pointer; transition:all 0.15s; }
+.result-item:hover { border-color:var(--accent); }
+.result-item.selected { border-color:var(--cyan); background:rgba(34,211,238,0.08); }
+.result-label { font-weight:500; color:var(--text-bright); font-size:11px; }
+.result-meta { color:var(--text-dim); font-size:10px; margin-top:2px; }
+.result-bar { height:3px; background:var(--border); border-radius:2px; margin-top:4px; overflow:hidden; }
+.result-bar-fill { height:100%; border-radius:2px; transition:width 0.3s; }
+
+/* ── Region rates bar chart ──────────── */
+.region-bar-row { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+.region-bar-label { color:var(--text-dim); font-size:9px; min-width:90px; text-align:right; }
+.region-bar-track { flex:1; height:8px; background:rgba(255,255,255,0.03); border-radius:2px; overflow:hidden; }
+.region-bar-fill { height:100%; border-radius:2px; transition:width 0.3s; }
+.region-bar-value { color:var(--text-dim); font-size:9px; min-width:40px; }
+
+/* ── Mobile responsive ──────────────── */
+@media (max-width: 768px) {
+    body { overflow-y:auto; }
+    #main { grid-template-columns:1fr; height:auto; }
+    #stimuli-panel { width:100%; border-right:none; border-bottom:1px solid var(--border); }
+    .stim-group { display:flex; flex-wrap:wrap; gap:8px; }
+    .stim-group-label { width:100%; }
+    .stim-btn { display:inline-block; width:auto; flex:1 1 auto; min-width:100px; min-height:44px; touch-action:manipulation; }
+    #probe-btn { min-height:44px; touch-action:manipulation; }
+    #clear-btn { min-height:44px; touch-action:manipulation; }
+    .config-row input, .config-row select { min-height:44px; }
+    #viz-area { width:100%; padding:12px; }
+    #heatmap-canvas, #similarity-canvas { width:100%; height:auto; max-width:100%; }
+    #results-panel { width:100%; border-left:none; border-top:1px solid var(--border); }
+    .result-item { min-height:44px; display:flex; flex-direction:column; justify-content:center; }
+    .region-bar-label { min-width:70px; font-size:8px; }
+}
+</style>
+</head>
+<body>
+
+<div id="top-bar">
+    <a href="index.html">demos</a>
+    <div class="title">Concept Formation Probe</div>
+    <div class="patent">MIT License</div>
+</div>
+
+<div id="main">
+    <!-- Left: Stimulus selection -->
+    <div id="stimuli-panel">
+        <div class="section-title">Stimuli</div>
+
+        <div class="stim-group">
+            <div class="stim-group-label">Text (Language)</div>
+            <button class="stim-btn" data-prov="observation.text" data-data="dog" data-label="text:dog">
+                <div class="stim-label">dog</div>
+                <div class="stim-desc">Common animal word</div>
+            </button>
+            <button class="stim-btn" data-prov="observation.text" data-data="cat" data-label="text:cat">
+                <div class="stim-label">cat</div>
+                <div class="stim-desc">Common animal word</div>
+            </button>
+            <button class="stim-btn" data-prov="observation.text" data-data="car" data-label="text:car">
+                <div class="stim-label">car</div>
+                <div class="stim-desc">Vehicle / object</div>
+            </button>
+            <button class="stim-btn" data-prov="observation.text" data-data="hello" data-label="text:hello">
+                <div class="stim-label">hello</div>
+                <div class="stim-desc">Greeting / social</div>
+            </button>
+            <button class="stim-btn" data-prov="observation.text" data-data="walk" data-label="text:walk">
+                <div class="stim-label">walk</div>
+                <div class="stim-desc">Motor action word</div>
+            </button>
+            <button class="stim-btn" data-prov="observation.text" data-data="music" data-label="text:music">
+                <div class="stim-label">music</div>
+                <div class="stim-desc">Auditory concept</div>
+            </button>
+        </div>
+
+        <div class="stim-group">
+            <div class="stim-group-label">Noise / Control</div>
+            <button class="stim-btn" data-prov="observation.text" data-data="xyzqw" data-label="noise:random">
+                <div class="stim-label">xyzqw</div>
+                <div class="stim-desc">Nonsense (control)</div>
+            </button>
+            <button class="stim-btn" data-prov="observation.text" data-data="" data-label="noise:empty">
+                <div class="stim-label">[empty]</div>
+                <div class="stim-desc">No stimulus (baseline)</div>
+            </button>
+        </div>
+
+        <hr style="border:none; border-top:1px solid var(--border); margin:16px 0;">
+
+        <div class="section-title">Config</div>
+        <div class="config-row">
+            <label>Steps</label>
+            <input type="number" id="cfg-steps" value="10" min="1" max="50">
+        </div>
+
+        <button id="probe-btn">Run Probe</button>
+        <button id="clear-btn">Clear All Results</button>
+        <div id="status"></div>
+    </div>
+
+    <!-- Center: Visualizations -->
+    <div id="viz-area">
+        <div class="viz-section">
+            <div class="viz-section-title">Concept Layer Heatmap</div>
+            <div id="heatmap-container">
+                <canvas id="heatmap-canvas" width="464" height="464"></canvas>
+                <div id="heatmap-label">5,000 neurons (71 x 71 grid)</div>
+            </div>
+            <div id="heatmap-stats">Select a stimulus and run probe</div>
+        </div>
+
+        <div class="viz-section">
+            <div class="viz-section-title">Similarity Matrix (Cosine)</div>
+            <div id="similarity-container">
+                <canvas id="similarity-canvas" width="464" height="464"></canvas>
+            </div>
+        </div>
+
+        <div class="viz-section">
+            <div class="viz-section-title">Region Activity</div>
+            <div id="region-bars"></div>
+        </div>
+    </div>
+
+    <!-- Right: Results history -->
+    <div id="results-panel">
+        <div class="section-title">Probe Results</div>
+        <div id="results-list"></div>
+    </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────
+const _host = window.location.hostname;
+const _isProxied = _host === 'demo.engram.ai';
+const _port = _isProxied ? '' : `:${window.location.port || '8080'}`;
+const API = `${window.location.protocol}//${_host}${_port}`;
+const _wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = `${_wsProto}//${_host}${_port}/ws`;
+
+let results = [];         // [{label, active_indices, rates, ...}]
+let selectedIdx = null;   // index in results[] being viewed
+let selectedStim = null;  // currently selected stimulus button
+let ws = null;
+
+// ── WebSocket ──────────────────────────────────
+function connectWS() {
+    ws = new WebSocket(WS_URL);
+    ws.onmessage = (e) => {
+        try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'concept_probe_result') {
+                handleProbeResult(msg.data);
+            }
+        } catch {}
+    };
+    ws.onclose = () => setTimeout(connectWS, 3000);
+    ws.onerror = () => {};
+}
+connectWS();
+
+// ── Stimulus selection ─────────────────────────
+document.querySelectorAll('.stim-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.stim-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedStim = {
+            provenance: btn.dataset.prov,
+            data: btn.dataset.data,
+            label: btn.dataset.label,
+        };
+    });
+});
+
+// ── Probe button ───────────────────────────────
+const probeBtn = document.getElementById('probe-btn');
+const statusEl = document.getElementById('status');
+
+probeBtn.addEventListener('click', async () => {
+    if (!selectedStim) {
+        statusEl.textContent = 'Select a stimulus first';
+        return;
+    }
+    probeBtn.disabled = true;
+    statusEl.textContent = 'Probing...';
+
+    const steps = parseInt(document.getElementById('cfg-steps').value) || 10;
+
+    try {
+        const resp = await fetch(`${API}/api/concept-probe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                stimulus: { provenance: selectedStim.provenance, data: selectedStim.data },
+                propagation_steps: steps,
+                label: selectedStim.label,
+            }),
+        });
+        const data = await resp.json();
+        if (!data.ok) {
+            statusEl.textContent = `Error: ${data.error || 'unknown'}`;
+        } else {
+            statusEl.textContent = 'Waiting for result...';
+        }
+    } catch (e) {
+        statusEl.textContent = `Fetch error: ${e.message}`;
+    }
+
+    // Timeout: if no result after 15s, show error
+    if (window._probeTimeout) clearTimeout(window._probeTimeout);
+    window._probeTimeout = setTimeout(() => {
+        if (statusEl.textContent === 'Waiting for result...') {
+            statusEl.textContent = 'Probe timed out -- brain may be busy or disconnected';
+        }
+        probeBtn.disabled = false;
+    }, 15000);
+    setTimeout(() => { probeBtn.disabled = false; }, 2000);
+});
+
+// ── Clear button ───────────────────────────────
+document.getElementById('clear-btn').addEventListener('click', async () => {
+    results = [];
+    selectedIdx = null;
+    renderResults();
+    drawHeatmap(null);
+    drawSimilarity();
+    drawRegionBars(null);
+    statusEl.textContent = 'Cleared';
+    try { await fetch(`${API}/api/concept-probe/results`, { method: 'DELETE' }); } catch {}
+});
+
+// ── Handle probe result ────────────────────────
+function handleProbeResult(data) {
+    if (window._probeTimeout) clearTimeout(window._probeTimeout);
+    if (!data || (!data.active_indices && !data.error)) {
+        statusEl.textContent = 'Invalid probe result received';
+        return;
+    }
+    if (data.error) {
+        statusEl.textContent = `Error: ${data.error}`;
+        return;
+    }
+    results.push(data);
+    selectedIdx = results.length - 1;
+    // Update heatmap label with actual neuron count
+    if (data.total_concept_neurons) {
+        const gs = Math.ceil(Math.sqrt(data.total_concept_neurons));
+        document.getElementById('heatmap-label').textContent =
+            `${data.total_concept_neurons.toLocaleString()} neurons (${gs} x ${gs} grid)`;
+    }
+    statusEl.textContent = `${data.label}: ${data.active_count} neurons fired`;
+    renderResults();
+    drawHeatmap(data);
+    drawSimilarity();
+    drawRegionBars(data);
+    probeBtn.disabled = false;
+}
+
+// ── Render results list ────────────────────────
+function renderResults() {
+    const el = document.getElementById('results-list');
+    el.innerHTML = '';
+    results.forEach((r, i) => {
+        const item = document.createElement('div');
+        item.className = 'result-item' + (i === selectedIdx ? ' selected' : '');
+        const pct = ((r.active_count / r.total_concept_neurons) * 100).toFixed(1);
+        const color = labelColor(r.label);
+        item.innerHTML = `
+            <div class="result-label" style="color:${color}">${r.label}</div>
+            <div class="result-meta">${r.active_count} / ${r.total_concept_neurons} neurons (${pct}%) &middot; steps ${r.step_range[0]}-${r.step_range[1]}</div>
+            <div class="result-bar"><div class="result-bar-fill" style="width:${Math.min(pct * 2, 100)}%; background:${color}"></div></div>
+        `;
+        item.addEventListener('click', () => {
+            selectedIdx = i;
+            renderResults();
+            drawHeatmap(r);
+            drawRegionBars(r);
+        });
+        el.appendChild(item);
+    });
+    // Scroll to bottom
+    el.scrollTop = el.scrollHeight;
+}
+
+// ── Label → color mapping ──────────────────────
+const LABEL_COLORS = {
+    'text:dog': '#f5a623', 'text:cat': '#38d97a', 'text:car': '#5ea4f5',
+    'text:hello': '#f472b6', 'text:walk': '#22d3ee', 'text:music': '#a78bfa',
+    'noise:random': '#5a6478', 'noise:empty': '#3a3f4a',
+};
+function labelColor(label) {
+    return LABEL_COLORS[label] || '#c8d0e0';
+}
+
+// ── Draw concept heatmap ───────────────────────
+function drawHeatmap(data) {
+    const canvas = document.getElementById('heatmap-canvas');
+    const ctx = canvas.getContext('2d');
+    const totalN = data.total_concept_neurons || 5000;
+    const gridSize = Math.ceil(Math.sqrt(totalN));
+    const scale = Math.floor(canvas.width / gridSize);
+
+    ctx.fillStyle = '#060a14';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (!data) {
+        document.getElementById('heatmap-stats').textContent = 'No data';
+        return;
+    }
+
+    // Build rate map from sparse data
+    const rateMap = new Float32Array(gridSize * gridSize);
+    const indices = data.active_indices;
+    const rates = data.rates;
+    let maxRate = 0;
+    for (let i = 0; i < indices.length; i++) {
+        const idx = indices[i];
+        const rate = rates[i];
+        if (idx < rateMap.length) {
+            rateMap[idx] = rate;
+            if (rate > maxRate) maxRate = rate;
+        }
+    }
+
+    // Draw pixels
+    const color = labelColor(data.label);
+    const [cr, cg, cb] = hexToRGB(color);
+
+    for (let i = 0; i < gridSize * gridSize; i++) {
+        if (rateMap[i] <= 0) continue;
+        const x = (i % gridSize) * scale;
+        const y = Math.floor(i / gridSize) * scale;
+        const intensity = maxRate > 0 ? rateMap[i] / maxRate : 0;
+        const alpha = 0.15 + intensity * 0.85;
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha})`;
+        ctx.fillRect(x, y, scale, scale);
+    }
+
+    const pct = ((data.active_count / data.total_concept_neurons) * 100).toFixed(2);
+    document.getElementById('heatmap-stats').textContent =
+        `${data.label}: ${data.active_count} active (${pct}%) | max rate: ${maxRate.toFixed(2)} | ${data.propagation_steps} steps`;
+}
+
+// ── Draw similarity matrix ─────────────────────
+function drawSimilarity() {
+    const canvas = document.getElementById('similarity-canvas');
+    const ctx = canvas.getContext('2d');
+    const n = results.length;
+
+    ctx.fillStyle = '#060a14';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (n < 2) {
+        ctx.fillStyle = '#5a6478';
+        ctx.font = '11px JetBrains Mono';
+        ctx.fillText('Need 2+ probes for similarity', 20, 30);
+        return;
+    }
+
+    // Build dense vectors for cosine similarity
+    const totalN = results[0].total_concept_neurons;
+    const vectors = results.map(r => {
+        const v = new Float32Array(totalN);
+        for (let i = 0; i < r.active_indices.length; i++) {
+            v[r.active_indices[i]] = r.rates[i];
+        }
+        return v;
+    });
+
+    // Compute cosine similarity matrix
+    const simMatrix = [];
+    for (let i = 0; i < n; i++) {
+        simMatrix[i] = [];
+        for (let j = 0; j < n; j++) {
+            simMatrix[i][j] = cosineSim(vectors[i], vectors[j]);
+        }
+    }
+
+    // Draw
+    const cellSize = Math.min(Math.floor((canvas.width - 80) / n), 60);
+    const offsetX = 80;
+    const offsetY = 80;
+
+    // Labels
+    ctx.font = '10px JetBrains Mono';
+    ctx.textAlign = 'right';
+    for (let i = 0; i < n; i++) {
+        ctx.fillStyle = labelColor(results[i].label);
+        ctx.fillText(results[i].label.substring(0, 12), offsetX - 4, offsetY + i * cellSize + cellSize / 2 + 3);
+    }
+    ctx.textAlign = 'center';
+    for (let j = 0; j < n; j++) {
+        ctx.save();
+        ctx.translate(offsetX + j * cellSize + cellSize / 2, offsetY - 4);
+        ctx.rotate(-Math.PI / 4);
+        ctx.fillStyle = labelColor(results[j].label);
+        ctx.fillText(results[j].label.substring(0, 12), 0, 0);
+        ctx.restore();
+    }
+
+    // Cells
+    for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+            const sim = simMatrix[i][j];
+            const x = offsetX + j * cellSize;
+            const y = offsetY + i * cellSize;
+
+            // Color: blue(0) → white(0.5) → green(1)
+            if (sim >= 0.5) {
+                const t = (sim - 0.5) * 2;
+                ctx.fillStyle = `rgb(${Math.round(56 + (255 - 56) * (1 - t))}, ${Math.round(217 + (255 - 217) * (1 - t))}, ${Math.round(122 + (255 - 122) * (1 - t))})`;
+            } else {
+                const t = sim * 2;
+                ctx.fillStyle = `rgb(${Math.round(30 + 64 * t)}, ${Math.round(60 + 104 * t)}, ${Math.round(180 + 75 * t)})`;
+            }
+            ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+
+            // Value text
+            ctx.fillStyle = sim > 0.6 ? '#060a14' : '#c8d0e0';
+            ctx.font = '9px JetBrains Mono';
+            ctx.textAlign = 'center';
+            ctx.fillText(sim.toFixed(2), x + cellSize / 2, y + cellSize / 2 + 3);
+        }
+    }
+}
+
+// ── Draw region activity bars ──────────────────
+function drawRegionBars(data) {
+    const el = document.getElementById('region-bars');
+    if (!data || !data.region_rates) {
+        el.innerHTML = '<div style="color:var(--text-dim)">No data</div>';
+        return;
+    }
+
+    const rates = data.region_rates;
+    const sorted = Object.entries(rates).sort((a, b) => b[1] - a[1]);
+    const maxRate = Math.max(...sorted.map(s => s[1]), 0.001);
+
+    el.innerHTML = sorted.map(([region, rate]) => {
+        const pct = (rate / maxRate * 100).toFixed(0);
+        const color = region.includes('concept') ? 'var(--cyan)' :
+                      region.includes('sensory') ? 'var(--green)' :
+                      region.includes('motor') ? 'var(--amber)' :
+                      region.includes('association') ? 'var(--purple)' :
+                      region.includes('predictive') ? 'var(--pink)' : 'var(--accent)';
+        return `<div class="region-bar-row">
+            <div class="region-bar-label">${region}</div>
+            <div class="region-bar-track"><div class="region-bar-fill" style="width:${pct}%; background:${color}"></div></div>
+            <div class="region-bar-value">${(rate * 100).toFixed(1)}%</div>
+        </div>`;
+    }).join('');
+}
+
+// ── Utilities ──────────────────────────────────
+function hexToRGB(hex) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return [r, g, b];
+}
+
+function cosineSim(a, b) {
+    let dot = 0, magA = 0, magB = 0;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        magA += a[i] * a[i];
+        magB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(magA) * Math.sqrt(magB);
+    return denom > 0 ? dot / denom : 0;
+}
+
+// ── Load existing results on page load ─────────
+(async () => {
+    try {
+        const resp = await fetch(`${API}/api/concept-probe/results`);
+        const data = await resp.json();
+        if (data.results && data.results.length > 0) {
+            results = data.results;
+            selectedIdx = results.length - 1;
+            renderResults();
+            drawHeatmap(results[selectedIdx]);
+            drawSimilarity();
+            drawRegionBars(results[selectedIdx]);
+            statusEl.textContent = `Loaded ${results.length} previous results`;
+        }
+    } catch {}
+})();
+
+// Responsive canvas sizing
+function resizeCanvases() {
+    if (window.innerWidth <= 768) {
+        const w = document.getElementById('viz-area').clientWidth - 32;
+        ['heatmap-canvas', 'similarity-canvas'].forEach(id => {
+            const c = document.getElementById(id);
+            c.width = w; c.height = w;
+            c.style.width = w + 'px'; c.style.height = w + 'px';
+        });
+    }
+}
+window.addEventListener('resize', resizeCanvases);
+resizeCanvases();
+</script>
+</body>
+</html>

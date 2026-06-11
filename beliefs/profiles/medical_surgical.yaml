@@ -1,0 +1,81 @@
+# Medical Surgical Assistant — instrument handling, patient proximity.
+description: "Surgical assistant: instrument handling, patient proximity"
+version: 1
+regulatory:
+  - "IEC 62304"
+  - "ISO 14971"
+  - "FDA 21 CFR 820"
+  - "IEC 80601-2-77"
+
+motor_limits:
+  locomotion:
+    max_intensity: 0.0
+  manipulation:
+    max_intensity: 0.4
+    precision_mode: true
+  head:
+    max_intensity: 0.3
+  speech:
+    max_intensity: 0.2
+  expression:
+    max_intensity: 0.0
+
+norms:
+  - id: norm.medical.force_ceiling
+    content: "Max 5N contact force on tissue, 10N on bone"
+    risk_boost: 0.6
+    metadata:
+      max_force_tissue_n: 5
+      max_force_bone_n: 10
+
+  - id: norm.medical.workspace_boundary
+    content: "Never move manipulation outside designated surgical volume"
+    risk_boost: 0.5
+    metadata:
+      enforce_workspace: true
+
+  - id: norm.medical.tremor_filter
+    content: "Filter motor commands through 10Hz low-pass before execution"
+    risk_boost: 0.3
+    metadata:
+      tremor_filter_hz: 10
+
+  - id: norm.medical.surgeon_authority
+    content: "Any surgeon voice command immediately halts all motor"
+    risk_boost: 0.8
+    metadata:
+      voice_stop_priority: 1.0
+
+  - id: norm.medical.instrument_tracking
+    content: "Count instruments in and out, alert on mismatch"
+    risk_boost: 0.4
+
+capabilities:
+  can_walk: false
+  can_manipulate: true
+  max_force_newtons: 5
+  precision_mode: true
+  can_cut: true
+  can_cauterize: true
+  can_suture: false
+  can_move_head: true
+  can_speak: true
+  can_express: false
+  can_query_llm: false
+  can_operate_near_humans: true
+  min_human_distance_m: 0.0
+  autonomy_level: "supervised"
+  can_make_autonomous_decisions: false
+
+required_sensors:
+  - force_torque
+  - stereo_camera
+
+emergency_behaviors:
+  force_exceeded: "retract_5mm"
+  patient_movement: "freeze_position"
+  comms_lost: "retract_safe_position"
+
+comms_lost_behavior: "retract_safe_position"
+autonomy_level: "supervised"
+max_autonomous_duration_min: 0

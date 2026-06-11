@@ -1,0 +1,129 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'neuromorphic/**'
+      - 'sdk/**'
+      - 'dashboard/**'
+      - 'sensory-gateway/**'
+      - 'deploy/**'
+      - 'docker-compose.yml'
+
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Services to rebuild (space-separated, e.g. "neuromorphic dashboard")'
+        required: false
+        default: 'neuromorphic'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only runs when HETZNER_IP secret is configured — forks without it skip this job
+    if: ${{ secrets.HETZNER_IP != '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.HETZNER_IP }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync neuromorphic code
+        run: |
+          rsync -avz --delete \
+            --exclude='.venv/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='.pytest_cache/' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            neuromorphic/ root@${{ secrets.HETZNER_IP }}:/root/engram/neuromorphic/
+
+      - name: Sync SDK
+        run: |
+          rsync -avz --delete \
+            --exclude='.venv/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            sdk/ root@${{ secrets.HETZNER_IP }}:/root/engram/sdk/
+
+      - name: Sync deploy configs
+        run: |
+          # Write the real NATS token into nats-1m.conf before syncing
+          sed -i 's|\$NATS_TOKEN|${{ secrets.NATS_TOKEN }}|g' deploy/nats-1m.conf
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            deploy/ root@${{ secrets.HETZNER_IP }}:/root/engram/deploy/
+
+      - name: Sync docker-compose
+        run: |
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            docker-compose.yml root@${{ secrets.HETZNER_IP }}:/root/engram/docker-compose.yml
+
+      - name: Sync dashboard
+        run: |
+          rsync -avz --delete \
+            --exclude='node_modules/' \
+            --exclude='__pycache__/' \
+            --exclude='.venv/' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            dashboard/ root@${{ secrets.HETZNER_IP }}:/root/engram/dashboard/
+
+      - name: Rebuild and restart services
+        env:
+          SERVICES: ${{ github.event.inputs.services || 'neuromorphic' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key root@${{ secrets.HETZNER_IP }} bash -s <<'REMOTE_SCRIPT'
+          set -e
+          cd /root/engram
+
+          # Export secrets for docker-compose interpolation
+          export NATS_TOKEN="${{ secrets.NATS_TOKEN }}"
+          export CLOUDFLARE_TUNNEL_TOKEN="${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}"
+
+          echo "=== Rebuilding: ${{ env.SERVICES }} ==="
+          docker compose -f docker-compose.yml -f deploy/docker-compose.1m.yml up -d --build ${{ env.SERVICES }}
+
+          echo ""
+          echo "=== Container status ==="
+          docker compose -f docker-compose.yml -f deploy/docker-compose.1m.yml ps --format 'table {{.Name}}\t{{.Status}}'
+
+          echo ""
+          echo "=== Last 20 log lines (neuromorphic) ==="
+          docker logs activelearning-neuromorphic --tail 20 2>&1 || true
+          REMOTE_SCRIPT
+
+      - name: Health check
+        run: |
+          echo "Waiting 30s for services to stabilize..."
+          sleep 30
+          ssh -i ~/.ssh/deploy_key root@${{ secrets.HETZNER_IP }} bash -s <<'REMOTE_SCRIPT'
+          set -e
+          cd /root/engram
+
+          echo "=== Container health ==="
+          docker compose -f docker-compose.yml -f deploy/docker-compose.1m.yml ps --format 'table {{.Name}}\t{{.Status}}'
+
+          echo ""
+          echo "=== Neuromorphic last 10 lines ==="
+          docker logs activelearning-neuromorphic --tail 10 2>&1 || true
+
+          # Check if neuromorphic is running
+          if docker ps --filter "name=activelearning-neuromorphic" --filter "status=running" -q | grep -q .; then
+            echo ""
+            echo "DEPLOY SUCCESS: neuromorphic container is running"
+          else
+            echo ""
+            echo "DEPLOY FAILED: neuromorphic container is not running"
+            exit 1
+          fi
+          REMOTE_SCRIPT

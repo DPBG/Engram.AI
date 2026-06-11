@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engram</title>
+    <link rel="stylesheet" href="/static/style.css?v=3">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+</head>
+<body>
+    <!-- ─── Header ────────────────────────────────────────────────── -->
+    <header class="topbar">
+        <div class="topbar-left">
+            <button class="hamburger" id="hamburger" aria-label="Menu">
+                <span></span><span></span><span></span>
+            </button>
+            <div class="brain-pulse" id="brain-pulse"></div>
+            <h1>Engram</h1>
+            <span class="subtitle">Detect · Learn · Improve</span>
+        </div>
+        <div class="topbar-right">
+            <div class="topbar-stats">
+                <div class="stat-chip"><span class="chip-label">Skills</span><span class="chip-val" id="stat-skills">0</span></div>
+                <div class="stat-chip"><span class="chip-label">Calls</span><span class="chip-val" id="stat-calls">0</span></div>
+                <div class="stat-chip"><span class="chip-label">Knowledge</span><span class="chip-val" id="stat-knowledge">0</span></div>
+            </div>
+            <div class="connection-badge" id="conn-badge">
+                <span class="conn-dot" id="conn-dot"></span>
+                <span id="conn-text">Connecting…</span>
+            </div>
+            <span class="uptime" id="uptime"></span>
+        </div>
+    </header>
+
+    <!-- ─── Mobile Drawer ──────────────────────────────────────────── -->
+    <div class="drawer-overlay" id="drawer-overlay"></div>
+    <nav class="drawer" id="drawer">
+        <div class="drawer-header">
+            <div class="brain-pulse"></div>
+            <h2>Engram Dashboard</h2>
+            <button class="drawer-close" id="drawer-close">&times;</button>
+        </div>
+        <div class="drawer-stats">
+            <div class="drawer-stat"><span class="drawer-stat-val" id="m-stat-skills">0</span><span class="drawer-stat-label">Skills</span></div>
+            <div class="drawer-stat"><span class="drawer-stat-val" id="m-stat-calls">0</span><span class="drawer-stat-label">Calls</span></div>
+            <div class="drawer-stat"><span class="drawer-stat-val" id="m-stat-knowledge">0</span><span class="drawer-stat-label">Knowledge</span></div>
+        </div>
+        <div class="drawer-section-label">Navigation</div>
+        <a href="/brain-viz/demos/index.html" class="drawer-link">All Demos</a>
+        <a href="/brain-viz/index.html" class="drawer-link">Live Brain 3D</a>
+        <a href="/brain-viz/demos/body.html" class="drawer-link">Virtual Body</a>
+        <a href="/brain-viz/demos/reaction.html" class="drawer-link">Reaction Probe</a>
+        <a href="/brain-viz/demos/speech.html" class="drawer-link">Speech Output</a>
+        <a href="/brain-viz/demos/timeline.html" class="drawer-link">Dev Timeline</a>
+        <a href="/brain-viz/demos/energy.html" class="drawer-link">Energy Comparison</a>
+        <a href="/brain-viz/demos/walking.html" class="drawer-link">Learning to Walk</a>
+        <a href="/brain-viz/demos/concepts.html" class="drawer-link">Concept Formation</a>
+        <div class="drawer-section-label">System</div>
+        <div class="drawer-sys" id="drawer-sys">
+            <div class="drawer-gauge"><label>CPU</label><div class="bar-track"><div class="bar-fill" id="m-gauge-cpu" style="width:0%"></div></div><span class="bar-val" id="m-gauge-cpu-val">--</span></div>
+            <div class="drawer-gauge"><label>Memory</label><div class="bar-track"><div class="bar-fill" id="m-gauge-mem" style="width:0%"></div></div><span class="bar-val" id="m-gauge-mem-val">--</span></div>
+            <div class="drawer-gauge"><label>Disk</label><div class="bar-track"><div class="bar-fill" id="m-gauge-disk" style="width:0%"></div></div><span class="bar-val" id="m-gauge-disk-val">--</span></div>
+        </div>
+        <div class="drawer-section-label">Connection</div>
+        <div class="drawer-conn">
+            <span class="conn-dot" id="m-conn-dot"></span>
+            <span id="m-conn-text">Connecting...</span>
+            <span class="uptime" id="m-uptime"></span>
+        </div>
+    </nav>
+
+    <!-- ─── Main Layout ───────────────────────────────────────────── -->
+    <div class="layout">
+
+        <!-- ═══ Left: Brain State ═══ -->
+        <aside class="sidebar">
+
+            <!-- System Awareness -->
+            <section class="panel">
+                <h2><span class="panel-icon">🔍</span> System Awareness</h2>
+                <div class="sys-grid" id="sys-info">
+                    <div class="sys-loading">Detecting environment…</div>
+                </div>
+            </section>
+
+            <!-- Resource Gauges -->
+            <section class="panel">
+                <h2><span class="panel-icon">📊</span> Resources</h2>
+                <div class="gauges">
+                    <div class="gauge-row">
+                        <label>CPU</label>
+                        <div class="bar-track"><div class="bar-fill" id="gauge-cpu" style="width:0%"></div></div>
+                        <span class="bar-val" id="gauge-cpu-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Memory</label>
+                        <div class="bar-track"><div class="bar-fill" id="gauge-mem" style="width:0%"></div></div>
+                        <span class="bar-val" id="gauge-mem-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Disk</label>
+                        <div class="bar-track"><div class="bar-fill" id="gauge-disk" style="width:0%"></div></div>
+                        <span class="bar-val" id="gauge-disk-val">—</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Neuromorphic Cognitive Core -->
+            <section class="panel neuro-panel" id="neuro-panel">
+                <h2><span class="panel-icon">🧬</span> Cognitive Core</h2>
+                <div class="neuro-stats-row" id="neuro-header-stats">
+                    <span class="neuro-chip"><span class="neuro-chip-label">Step</span><span class="neuro-chip-val" id="neuro-step">—</span></span>
+                    <span class="neuro-chip"><span class="neuro-chip-label">Neurons</span><span class="neuro-chip-val" id="neuro-total">—</span></span>
+                </div>
+                <div class="neuro-section-label">Firing Rates</div>
+                <div class="neuro-regions" id="neuro-regions">
+                    <div class="sys-loading">Waiting for cognitive core…</div>
+                </div>
+                <div class="neuro-section-label">Homeostatic Drives</div>
+                <div class="neuro-drives" id="neuro-drives">
+                    <div class="neuro-drive-row"><label>Energy</label><div class="bar-track"><div class="bar-fill neuro-bar-energy" id="neuro-drive-energy" style="width:100%"></div></div><span class="bar-val" id="neuro-drive-energy-val">—</span></div>
+                    <div class="neuro-drive-row"><label>Damage</label><div class="bar-track"><div class="bar-fill neuro-bar-damage" id="neuro-drive-damage" style="width:0%"></div></div><span class="bar-val" id="neuro-drive-damage-val">—</span></div>
+                    <div class="neuro-drive-row"><label>Temp</label><div class="bar-track"><div class="bar-fill neuro-bar-temp" id="neuro-drive-temp" style="width:50%"></div></div><span class="bar-val" id="neuro-drive-temp-val">—</span></div>
+                    <div class="neuro-drive-row"><label>Fatigue</label><div class="bar-track"><div class="bar-fill neuro-bar-fatigue" id="neuro-drive-fatigue" style="width:0%"></div></div><span class="bar-val" id="neuro-drive-fatigue-val">—</span></div>
+                </div>
+                <div class="neuro-section-label">STDP Learning</div>
+                <div class="neuro-stdp" id="neuro-stdp">
+                    <div class="sys-loading">Waiting for STDP data…</div>
+                </div>
+            </section>
+
+            <!-- Sensory Gateway -->
+            <section class="panel" id="gateway-panel">
+                <div class="gateway-header">
+                    <h2><span class="panel-icon">📡</span> Sensory Gateway</h2>
+                    <div class="gateway-controls" id="gw-controls" style="display:none">
+                        <button class="btn-icon" id="gw-start-all" title="Start All">▶</button>
+                        <button class="btn-icon" id="gw-stop-all" title="Stop All">⏹</button>
+                    </div>
+                </div>
+                <div class="gateway-status" id="gw-status">
+                    <span class="gw-badge offline">Offline</span>
+                </div>
+                <div class="gateway-sensors" id="gw-sensors">
+                    <div class="gw-offline-hint">
+                        Gateway not running. Start it on the host:<br>
+                        <code>cd sensory-gateway && uv run python gateway.py</code>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Video Training -->
+            <section class="panel" id="video-panel">
+                <h2><span class="panel-icon">🎬</span> Video Training</h2>
+                <div class="vt-form" id="vt-form">
+                    <input type="text" id="vt-url" class="vt-input" placeholder="YouTube URL or file path..." autocomplete="off">
+                    <div class="vt-options">
+                        <label class="vt-opt"><span>FPS</span>
+                            <select id="vt-fps">
+                                <option value="1">1</option>
+                                <option value="2" selected>2</option>
+                                <option value="3">3</option>
+                                <option value="5">5</option>
+                            </select>
+                        </label>
+                        <label class="vt-opt"><span>Loops</span>
+                            <select id="vt-loops">
+                                <option value="3">3</option>
+                                <option value="5" selected>5</option>
+                                <option value="10">10</option>
+                                <option value="20">20</option>
+                                <option value="50">50</option>
+                                <option value="0">Infinite</option>
+                            </select>
+                        </label>
+                        <label class="vt-opt"><span>Category</span>
+                            <select id="vt-category">
+                                <option value="">None</option>
+                                <option value="objects">Objects</option>
+                                <option value="animals">Animals</option>
+                                <option value="colors">Colors</option>
+                                <option value="actions">Actions</option>
+                                <option value="words">Words</option>
+                                <option value="shapes">Shapes</option>
+                                <option value="transport">Transport</option>
+                                <option value="food">Food</option>
+                            </select>
+                        </label>
+                        <label class="vt-opt vt-check"><input type="checkbox" id="vt-transcript"><span>STT</span></label>
+                    </div>
+                    <button class="vt-submit" id="vt-submit">+ Add to Queue</button>
+                </div>
+
+                <!-- Now Playing -->
+                <div class="vt-now-playing" id="vt-now-playing" style="display:none">
+                    <div class="vt-np-header">
+                        <span class="vt-np-label">Now Training</span>
+                        <div class="vt-np-actions">
+                            <button class="vt-blacklist-btn" id="vt-blacklist" title="Blacklist this video (bad data)">Ban</button>
+                            <button class="vt-skip-btn" id="vt-skip" title="Skip to next">Next ⏭</button>
+                        </div>
+                    </div>
+                    <div class="vt-np-title" id="vt-np-title"></div>
+                    <div class="vt-np-meta" id="vt-np-meta"></div>
+                    <div class="vt-progress-track"><div class="vt-progress-fill" id="vt-np-progress" style="width:0%"></div></div>
+                    <div class="vt-progress-label" id="vt-np-progress-label"></div>
+                    <div class="vt-learning-metrics" id="vt-learning-metrics" style="display:none">
+                        <div class="vt-lm-row">
+                            <span class="vt-lm-label">STDP Score</span>
+                            <span class="vt-lm-value" id="vt-lm-score">0</span>
+                        </div>
+                        <div class="vt-lm-row">
+                            <span class="vt-lm-label">Avg Rate</span>
+                            <span class="vt-lm-value" id="vt-lm-rate">0</span>
+                        </div>
+                    </div>
+                    <div class="vt-convergence" id="vt-convergence" style="display:none">
+                        <div class="vt-conv-row">
+                            <span class="vt-conv-label">Learning</span>
+                            <span class="vt-conv-badge" id="vt-conv-badge">Adapting</span>
+                        </div>
+                        <div class="vt-conv-bar-track"><div class="vt-conv-bar-fill" id="vt-conv-progress" style="width:0%"></div></div>
+                        <div class="vt-conv-delta" id="vt-conv-delta"></div>
+                    </div>
+                </div>
+
+                <!-- Queue -->
+                <div class="vt-queue-header" id="vt-queue-header" style="display:none">
+                    <span class="vt-queue-label">Queue (<span id="vt-queue-count">0</span>)</span>
+                    <button class="vt-clear-btn" id="vt-clear-queue" title="Clear queue">Clear</button>
+                </div>
+                <div class="vt-queue" id="vt-queue"></div>
+
+                <!-- Completed -->
+                <div class="vt-completed-header" id="vt-completed-header" style="display:none">
+                    <span class="vt-completed-label">Completed</span>
+                </div>
+                <div class="vt-completed" id="vt-completed"></div>
+
+                <div class="vt-summary" id="vt-summary"></div>
+            </section>
+
+            <!-- Data Flywheel -->
+            <section class="panel flywheel-panel">
+                <h2><span class="panel-icon">🔄</span> Data Flywheel</h2>
+                <div class="flywheel-ring" id="flywheel-ring">
+                    <svg viewBox="0 0 200 200" class="flywheel-svg">
+                        <!-- Outer ring segments -->
+                        <circle cx="100" cy="100" r="85" fill="none" stroke="var(--border)" stroke-width="3"/>
+                        <!-- Flywheel arcs (filled by JS) -->
+                        <path id="fw-arc-teleop" class="fw-arc teleop" d="" />
+                        <path id="fw-arc-observe" class="fw-arc observe" d="" />
+                        <path id="fw-arc-deploy" class="fw-arc deploy" d="" />
+                        <path id="fw-arc-sim" class="fw-arc sim" d="" />
+                        <!-- Center -->
+                        <circle cx="100" cy="100" r="40" fill="var(--bg-2)" stroke="var(--border)" stroke-width="2"/>
+                        <text x="100" y="93" text-anchor="middle" fill="var(--text-0)" font-size="20">🧠</text>
+                        <text x="100" y="112" text-anchor="middle" fill="var(--text-2)" font-size="10" id="fw-total">0</text>
+                    </svg>
+                </div>
+                <div class="flywheel-legend">
+                    <div class="fw-legend-item"><span class="fw-dot teleop"></span>Teleoperation <span class="fw-count" id="fw-teleop">0</span></div>
+                    <div class="fw-legend-item"><span class="fw-dot observe"></span>Observation <span class="fw-count" id="fw-observe">0</span></div>
+                    <div class="fw-legend-item"><span class="fw-dot deploy"></span>Deployment <span class="fw-count" id="fw-deploy">0</span></div>
+                    <div class="fw-legend-item"><span class="fw-dot sim"></span>Simulation <span class="fw-count" id="fw-sim">0</span></div>
+                </div>
+            </section>
+
+            <!-- Insights -->
+            <section class="panel">
+                <h2><span class="panel-icon">⚡</span> Insights</h2>
+                <div class="insight-list" id="insight-list">
+                    <div class="insight-item info">Brain initializing…</div>
+                </div>
+            </section>
+        </aside>
+
+        <!-- ═══ Center: Chat (Teleoperation Channel) ═══ -->
+        <main class="chat-area">
+            <div class="chat-header">
+                <div>
+                    <h2>💬 Teleoperation</h2>
+                    <span class="chat-subtitle">Human guidance channel — every message trains the brain</span>
+                </div>
+                <span class="chat-model" id="chat-model">—</span>
+            </div>
+            <div class="neural-toast-container" id="neural-toasts"></div>
+            <div class="chat-messages" id="chat-messages">
+                <div class="msg assistant">
+                    <div class="msg-avatar">🧠</div>
+                    <div class="msg-body">
+                        <div class="msg-content">
+                            I'm the voice of <strong>Engram</strong> — a neuromorphic brain built on spiking neural networks.<br><br>
+                            The brain learns through sensory experience (video, audio, proprioception) using STDP,
+                            not from text prompts. I'm an LLM interface that translates its state into language.<br><br>
+                            Ask me about the brain's state, teach it words, or interact with its virtual body.
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <form class="chat-input" id="chat-form">
+                <input type="text" id="chat-input" placeholder="Talk to the brain…" autocomplete="off" autofocus>
+                <button type="submit" id="chat-send">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+                    </svg>
+                </button>
+            </form>
+        </main>
+
+        <!-- ═══ Right: Skills + Environment ═══ -->
+        <aside class="sidebar sidebar-right">
+
+            <!-- Skill Registry -->
+            <section class="panel">
+                <h2><span class="panel-icon">🎯</span> Skill Registry</h2>
+                <div class="skill-categories" id="skill-list">
+                    <div class="sys-loading">Loading skills…</div>
+                </div>
+            </section>
+
+            <!-- Virtual Body -->
+            <section class="panel" id="body-panel">
+                <h2><span class="panel-icon">🤖</span> Virtual Body</h2>
+                <div style="font-size:12px; color:var(--text-2); margin-bottom:8px;">
+                    29-DOF humanoid (MuJoCo simulation)
+                </div>
+                <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap;">
+                    <div style="flex-shrink:0;">
+                        <div style="font-size:9px; color:var(--text-3); text-transform:uppercase;
+                                    letter-spacing:0.5px; margin-bottom:4px;">Brain's Eye View</div>
+                        <div id="body-selfview-placeholder"
+                             style="width:64px; height:64px; display:flex; align-items:center;
+                                    justify-content:center; border:1px solid rgba(255,255,255,0.06);
+                                    border-radius:4px; font-size:9px; color:var(--text-3);">
+                            No feed
+                        </div>
+                        <canvas id="body-selfview-canvas" width="64" height="64"
+                                style="display:none; width:64px; height:64px; border:1px solid rgba(34,211,238,0.15);
+                                       border-radius:4px; image-rendering:pixelated;"></canvas>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <a href="/brain-viz/demos/body.html" target="_blank"
+                           style="display:inline-flex; align-items:center; gap:4px; padding:6px 12px;
+                                  background:rgba(56,217,122,0.08); border:1px solid rgba(56,217,122,0.25);
+                                  border-radius:var(--radius-sm); color:var(--accent);
+                                  text-decoration:none; font-size:12px; font-weight:500;
+                                  transition:all 0.15s;">
+                            Open 3D View
+                        </a>
+                        <a href="/brain-viz/demos/index.html" target="_blank"
+                           style="display:inline-flex; align-items:center; gap:4px; padding:6px 12px;
+                                  background:rgba(94,164,245,0.08); border:1px solid rgba(94,164,245,0.25);
+                                  border-radius:var(--radius-sm); color:var(--blue);
+                                  text-decoration:none; font-size:12px; font-weight:500;
+                                  transition:all 0.15s;">
+                            All Demos
+                        </a>
+                    </div>
+                </div>
+                <div id="body-status" style="margin-top:8px; font-size:11px; color:var(--text-3);"></div>
+            </section>
+
+            <!-- Containers -->
+            <section class="panel">
+                <h2><span class="panel-icon">🐳</span> Containers</h2>
+                <div class="container-list" id="container-list">
+                    <div class="sys-loading">Scanning…</div>
+                </div>
+            </section>
+
+            <!-- NATS Feed -->
+            <section class="panel panel-grow">
+                <div class="nats-header">
+                    <h2><span class="panel-icon">📡</span> Message Bus</h2>
+                    <div class="nats-controls">
+                        <button class="btn-icon" id="nats-pause" title="Pause">⏸</button>
+                        <button class="btn-icon" id="nats-clear" title="Clear">🗑</button>
+                    </div>
+                </div>
+                <div class="nats-feed" id="nats-feed">
+                    <div class="nats-empty">Listening…</div>
+                </div>
+            </section>
+        </aside>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

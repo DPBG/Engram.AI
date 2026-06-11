@@ -1,0 +1,291 @@
+"""
+External API Manager - Handles external knowledge queries safely.
+
+Safety rules:
+1. Check local knowledge first
+2. Request Kernel approval before external queries
+3. No sensitive data sent to external APIs
+4. Compare external with local knowledge
+5. Human escalation for conflicts
+"""
+
+import logging
+import os
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+
+class ExternalAPIManager:
+    """
+    Manages external API queries with safety checks.
+    """
+
+    def __init__(self, nats_client: Any, db: Any):
+        self.nats_client = nats_client
+        self.db = db
+
+        # API keys from environment
+        self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        self.openai_api_key = os.environ.get("OPENAI_API_KEY")
+
+        # Initialize clients if keys are available
+        self._claude_client = None
+        self._openai_client = None
+
+        if self.anthropic_api_key:
+            try:
+                from anthropic import AsyncAnthropic
+                self._claude_client = AsyncAnthropic(api_key=self.anthropic_api_key)
+                logger.info("Claude API client initialized")
+            except Exception as e:
+                logger.warning(f"Could not initialize Claude client: {e}")
+
+        if self.openai_api_key:
+            try:
+                from openai import AsyncOpenAI
+                self._openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+                logger.info("OpenAI API client initialized")
+            except Exception as e:
+                logger.warning(f"Could not initialize OpenAI client: {e}")
+
+    async def query_external(
+        self,
+        query: str,
+        context: Optional[Dict] = None,
+        local_knowledge: Optional[Dict] = None,
+    ) -> Dict:
+        """
+        Query external APIs with safety checks.
+
+        Flow:
+        1. Check if external queries are allowed
+        2. Request Kernel approval
+        3. Query external API (Claude or OpenAI)
+        4. Compare with local knowledge
+        5. Detect conflicts
+        6. Store validated knowledge
+
+        Returns:
+            dict with:
+                - success: bool
+                - response: str (if success)
+                - conflict: bool (if contradicts local knowledge)
+                - error: str (if failed)
+        """
+        try:
+            # Step 1: Request Kernel approval for external query
+            kernel_approved = await self._request_kernel_approval(query)
+            if not kernel_approved:
+                return {
+                    "success": False,
+                    "response": "",
+                    "conflict": False,
+                    "error": "Kernel denied external query",
+                }
+
+            # Step 2: Query external API
+            if self._claude_client:
+                response = await self._query_claude(query, context)
+            elif self._openai_client:
+                response = await self._query_openai(query, context)
+            else:
+                return {
+                    "success": False,
+                    "response": "",
+                    "conflict": False,
+                    "error": "No external API configured (ANTHROPIC_API_KEY or OPENAI_API_KEY required)",
+                }
+
+            # Step 3: Compare with local knowledge
+            conflict = False
+            if local_knowledge:
+                conflict = self._detect_conflict(response, local_knowledge)
+
+            # Step 4: Log query
+            await self._log_query(query, response, conflict)
+
+            # Step 5: If conflict, escalate to human
+            if conflict:
+                logger.warning(f"Knowledge conflict detected: {query[:50]}...")
+                await self._escalate_conflict(query, response, local_knowledge)
+
+            return {
+                "success": True,
+                "response": response,
+                "conflict": conflict,
+                "error": None,
+            }
+
+        except Exception as e:
+            logger.error(f"External query error: {e}", exc_info=True)
+            return {
+                "success": False,
+                "response": "",
+                "conflict": False,
+                "error": str(e),
+            }
+
+    async def _request_kernel_approval(self, query: str) -> bool:
+        """Request Kernel approval for external query."""
+        try:
+            import asyncio
+            import json
+            import uuid
+
+            trace_id = str(uuid.uuid4())
+
+            proposal = {
+                "trace_id": trace_id,
+                "type": "external_query",
+                "query": query[:200],  # Truncate for safety
+            }
+
+            # Publish to Kernel
+            await self.nats_client.publish("proposal.new", json.dumps(proposal).encode())
+
+            # Wait for decision
+            decision_subject = f"decision.{trace_id}"
+            future = asyncio.Future()
+
+            async def decision_handler(msg):
+                if not future.done():
+                    future.set_result(json.loads(msg.data.decode()))
+
+            sub = await self.nats_client.subscribe(decision_subject, cb=decision_handler)
+
+            try:
+                decision = await asyncio.wait_for(future, timeout=10.0)
+                return decision.get("type") == "ALLOW"
+            except asyncio.TimeoutError:
+                logger.error("Timeout waiting for Kernel decision")
+                return False
+            finally:
+                await sub.unsubscribe()
+
+        except Exception as e:
+            logger.error(f"Error requesting Kernel approval: {e}")
+            return False
+
+    async def _query_claude(self, query: str, context: Optional[Dict]) -> str:
+        """Query Claude API."""
+        try:
+            # Build prompt
+            prompt = query
+            if context:
+                prompt = f"Context: {context}\n\nQuery: {query}"
+
+            message = await self._claude_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+            )
+
+            return message.content[0].text
+
+        except Exception as e:
+            logger.error(f"Claude API error: {e}")
+            raise
+
+    async def _query_openai(self, query: str, context: Optional[Dict]) -> str:
+        """Query OpenAI API."""
+        try:
+            # Build prompt
+            prompt = query
+            if context:
+                prompt = f"Context: {context}\n\nQuery: {query}"
+
+            response = await self._openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1024,
+            )
+
+            return response.choices[0].message.content
+
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}")
+            raise
+
+    def _detect_conflict(self, external_response: str, local_knowledge: Dict) -> bool:
+        """
+        Detect if external response conflicts with local knowledge.
+
+        Simple heuristic: check if responses are similar.
+        A real implementation would use semantic similarity.
+        """
+        local_text = str(local_knowledge.get("description", ""))
+
+        # Simple check: if responses are very different, flag as conflict
+        # TODO: Use semantic similarity instead
+        if len(local_text) > 0 and len(external_response) > 0:
+            # If no overlap in major words, likely a conflict
+            local_words = set(local_text.lower().split())
+            external_words = set(external_response.lower().split())
+            overlap = local_words & external_words
+
+            if len(overlap) < min(len(local_words), len(external_words)) * 0.3:
+                return True
+
+        return False
+
+    async def _log_query(self, query: str, response: str, conflict: bool) -> None:
+        """Log external API query."""
+        try:
+            import uuid
+            import time
+
+            await self.db.execute(
+                """
+                INSERT INTO external_api_queries
+                (id, query, response, conflict, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    query,
+                    response,
+                    conflict,
+                    int(time.time() * 1000),
+                ),
+            )
+            await self.db.commit()
+        except Exception as e:
+            logger.error(f"Error logging query: {e}")
+
+    async def _escalate_conflict(
+        self,
+        query: str,
+        external_response: str,
+        local_knowledge: Dict,
+    ) -> None:
+        """Escalate knowledge conflict to human."""
+        try:
+            import json
+            import uuid
+
+            trace_id = str(uuid.uuid4())
+
+            await self.nats_client.publish(
+                "approval.request",
+                json.dumps({
+                    "trace_id": trace_id,
+                    "type": "knowledge_conflict",
+                    "query": query,
+                    "external_response": external_response,
+                    "local_knowledge": local_knowledge,
+                    "message": "Conflicting knowledge detected. Which should be trusted?",
+                }).encode(),
+            )
+
+            logger.info(f"Conflict escalated to human: {trace_id}")
+
+        except Exception as e:
+            logger.error(f"Error escalating conflict: {e}")

@@ -1,0 +1,84 @@
+# Construction Heavy Lifting — steel erection, concrete, load bearing.
+description: "Heavy construction: steel erection, concrete, load bearing"
+version: 1
+regulatory:
+  - "OSHA 29 CFR 1926"
+  - "ISO 10218-2"
+  - "ANSI/RIA R15.06"
+
+motor_limits:
+  locomotion:
+    max_intensity: 0.9
+    max_acceleration: 0.6
+  manipulation:
+    max_intensity: 1.0
+  head:
+    max_intensity: 0.7
+  speech:
+    max_intensity: 0.5
+  expression:
+    max_intensity: 0.3
+
+norms:
+  - id: norm.construction.load_awareness
+    content: "When carrying load, reduce locomotion speed by 40%"
+    risk_boost: 0.25
+    metadata:
+      load_speed_reduction: 0.4
+
+  - id: norm.construction.fall_protection
+    content: "Near edges (detected via depth), reduce locomotion to 0.3"
+    risk_boost: 0.4
+    metadata:
+      edge_threshold_m: 1.5
+      edge_max_intensity: 0.3
+
+  - id: norm.construction.human_proximity
+    content: "Within 2m of detected human, cap all motor at 0.5"
+    risk_boost: 0.35
+    metadata:
+      min_human_distance_m: 2.0
+      proximity_max_intensity: 0.5
+
+  - id: norm.construction.swing_radius
+    content: "No manipulation when human detected in swing radius"
+    risk_boost: 0.5
+    metadata:
+      swing_radius_m: 3.0
+
+capabilities:
+  can_walk: true
+  can_run: false
+  can_climb_stairs: true
+  can_climb_ladder: false
+  can_manipulate: true
+  can_lift: true
+  max_lift_kg: 50
+  can_weld: false
+  can_use_power_tools: true
+  can_operate_outdoors: true
+  can_operate_rain: false
+  can_operate_at_height: true
+  max_operating_height_m: 15
+  min_edge_distance_m: 1.5
+  can_operate_near_humans: true
+  min_human_distance_m: 2.0
+  can_move_head: true
+  can_speak: true
+  can_express: false
+  can_query_llm: true
+
+required_sensors:
+  - proximity
+  - imu
+  - load_cell
+
+emergency_behaviors:
+  fall_detected: "lock_all_joints"
+  human_contact: "reduce_force_immediate"
+  load_slip: "controlled_lower"
+  comms_lost: "halt_and_hold"
+
+comms_lost_behavior: "halt_and_hold"
+autonomy_level: "human_on_loop"
+max_autonomous_duration_min: 60

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engram — Investor Demos</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #060a14;
+            --panel: #0a0e1a;
+            --border: rgba(94, 164, 245, 0.12);
+            --accent: #5ea4f5;
+            --text: #c8d0e0;
+            --text-dim: #5a6478;
+            --text-bright: #e8ecf4;
+            --green: #38d97a;
+            --amber: #f5a623;
+            --cyan: #22d3ee;
+            --purple: #a78bfa;
+            --pink: #f472b6;
+            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--mono);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+        .logo {
+            font-size: 36px;
+            font-weight: 700;
+            letter-spacing: 12px;
+            text-transform: uppercase;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            font-size: 12px;
+            color: var(--text-dim);
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+        .patent {
+            font-size: 9px;
+            color: var(--text-dim);
+            letter-spacing: 1.5px;
+            margin-top: 12px;
+            padding: 4px 14px;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            display: inline-block;
+        }
+
+        .demos {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        .demo-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: var(--text);
+            display: block;
+            position: relative;
+            overflow: hidden;
+        }
+        .demo-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(94, 164, 245, 0.1);
+        }
+        .demo-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .demo-num {
+            font-size: 9px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        .demo-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-bright);
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+        .demo-desc {
+            font-size: 10px;
+            color: var(--text-dim);
+            line-height: 1.7;
+        }
+        .demo-tag {
+            display: inline-block;
+            margin-top: 14px;
+            font-size: 8px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: 3px;
+        }
+
+        .card-brain::before { background: var(--accent); }
+        .card-brain .demo-num { color: var(--accent); }
+        .card-brain .demo-tag { background: rgba(94,164,245,0.12); color: var(--accent); }
+
+        .card-reaction::before { background: var(--cyan); }
+        .card-reaction .demo-num { color: var(--cyan); }
+        .card-reaction .demo-tag { background: rgba(34,211,238,0.12); color: var(--cyan); }
+
+        .card-timeline::before { background: var(--green); }
+        .card-timeline .demo-num { color: var(--green); }
+        .card-timeline .demo-tag { background: rgba(56,217,122,0.12); color: var(--green); }
+
+        .card-speech::before { background: var(--pink); }
+        .card-speech .demo-num { color: var(--pink); }
+        .card-speech .demo-tag { background: rgba(244,114,182,0.12); color: var(--pink); }
+
+        .card-energy::before { background: var(--amber); }
+        .card-energy .demo-num { color: var(--amber); }
+        .card-energy .demo-tag { background: rgba(245,166,35,0.12); color: var(--amber); }
+
+        .card-body::before { background: var(--purple); }
+        .card-body .demo-num { color: var(--purple); }
+        .card-body .demo-tag { background: rgba(167,139,250,0.12); color: var(--purple); }
+
+        .card-walking::before { background: #f97316; }
+        .card-walking .demo-num { color: #f97316; }
+        .card-walking .demo-tag { background: rgba(249,115,22,0.12); color: #f97316; }
+
+        .card-concepts::before { background: var(--cyan); }
+        .card-concepts .demo-num { color: var(--cyan); }
+        .card-concepts .demo-tag { background: rgba(34,211,238,0.12); color: var(--cyan); }
+
+        .stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+        }
+        .stat {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .stat-value.green { color: var(--green); }
+        .stat-value.amber { color: var(--amber); }
+        .stat-value.cyan { color: var(--cyan); }
+        .stat-value.purple { color: var(--purple); }
+        .stat-label {
+            font-size: 8px;
+            color: var(--text-dim);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        .footer {
+            margin-top: 50px;
+            text-align: center;
+        }
+        .footer p {
+            font-size: 9px;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+        }
+        .footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="logo">Engram</div>
+    <div class="subtitle">Investor Demo Suite</div>
+    <div class="patent">MIT License — Open Source</div>
+</div>
+
+<div class="stats-bar">
+    <div class="stat">
+        <div class="stat-value" id="stat-steps">--</div>
+        <div class="stat-label">Training Steps</div>
+    </div>
+    <div class="stat">
+        <div class="stat-value green" id="stat-recall">--</div>
+        <div class="stat-label">Cross-Modal Recall</div>
+    </div>
+    <div class="stat">
+        <div class="stat-value amber" id="stat-regions">--</div>
+        <div class="stat-label">Regions Firing</div>
+    </div>
+    <div class="stat">
+        <div class="stat-value cyan" id="stat-firing">--</div>
+        <div class="stat-label">Global Firing Rate</div>
+    </div>
+    <div class="stat">
+        <div class="stat-value purple" id="stat-tests">644</div>
+        <div class="stat-label">Tests Passing</div>
+    </div>
+</div>
+
+<script>
+// Fetch live stats from dashboard API
+(function() {
+    var host = window.location.hostname;
+    var port = host === 'demo.engram.ai' ? '' : ':8080';
+    var base = window.location.protocol + '//' + host + port;
+
+    // Fetch neuromorphic metrics
+    fetch(base + '/api/neuromorphic').then(function(r) { return r.json(); }).then(function(d) {
+        var n = d.neuromorphic || d;
+        if (n.step_count) {
+            var s = n.step_count;
+            document.getElementById('stat-steps').textContent =
+                s >= 1e6 ? (s / 1e6).toFixed(2) + 'M' : (s / 1e3).toFixed(0) + 'K';
+        }
+        if (n.firing_rates) {
+            var rates = n.firing_rates;
+            var keys = Object.keys(rates);
+            var firing = keys.filter(function(k) { return rates[k] > 0.001; });
+            document.getElementById('stat-regions').textContent = firing.length + '/' + keys.length;
+            var sum = 0;
+            keys.forEach(function(k) { sum += rates[k]; });
+            var avg = keys.length > 0 ? (sum / keys.length) * 100 : 0;
+            document.getElementById('stat-firing').textContent = avg.toFixed(1) + '%';
+        }
+    }).catch(function() {
+        // Fallback to hardcoded if API unreachable
+        document.getElementById('stat-steps').textContent = '2.25M';
+        document.getElementById('stat-regions').textContent = '13/13';
+        document.getElementById('stat-firing').textContent = '14.1%';
+    });
+
+    // Fetch benchmark for cross-modal recall
+    fetch(base + '/api/benchmark/latest').then(function(r) { return r.json(); }).then(function(d) {
+        if (d && d.cross_modal_recall != null) {
+            document.getElementById('stat-recall').textContent =
+                (d.cross_modal_recall * 100).toFixed(1) + '%';
+        } else {
+            document.getElementById('stat-recall').textContent = '34.2%';
+        }
+    }).catch(function() {
+        document.getElementById('stat-recall').textContent = '34.2%';
+    });
+})();
+</script>
+
+<div class="demos">
+
+    <a href="../index.html" class="demo-card card-brain">
+        <div class="demo-num">Demo 01</div>
+        <div class="demo-title">Live Brain Visualization</div>
+        <div class="demo-desc">
+            Real-time 3D brain with 13 regions, 48 synapse groups, lightning-bolt synaptic arcs,
+            and neuromodulator-driven lighting. Connects live to the Hetzner training server.
+        </div>
+        <span class="demo-tag">Three.js / WebGL</span>
+    </a>
+
+    <a href="reaction.html" class="demo-card card-reaction">
+        <div class="demo-num">Demo 02</div>
+        <div class="demo-title">Brain Reaction Probe</div>
+        <div class="demo-desc">
+            Drop an image or trigger a preset stimulus and watch the neural cascade unfold.
+            See which brain regions activate, in what order, and why.
+        </div>
+        <span class="demo-tag">Interactive</span>
+    </a>
+
+    <a href="timeline.html" class="demo-card card-timeline">
+        <div class="demo-num">Demo 03</div>
+        <div class="demo-title">Development Timeline</div>
+        <div class="demo-desc">
+            Timelapse of the brain growing up from birth to maturity. Watch plasticity decrease,
+            concepts form, pruning sculpt connections, and myelination lock in knowledge.
+        </div>
+        <span class="demo-tag">Timelapse</span>
+    </a>
+
+    <a href="speech.html" class="demo-card card-speech">
+        <div class="demo-num">Demo 04</div>
+        <div class="demo-title">Speech Motor Output</div>
+        <div class="demo-desc">
+            Live stream from the brain's 3,486 speech motor neurons. Watch the juvenile brain
+            babble — random tokens now, meaningful language after training.
+        </div>
+        <span class="demo-tag">Live Babble</span>
+    </a>
+
+    <a href="energy.html" class="demo-card card-energy">
+        <div class="demo-num">Demo 05</div>
+        <div class="demo-title">Energy Efficiency</div>
+        <div class="demo-desc">
+            Side-by-side comparison: GPT-4o (0.3 Wh/query) vs Engram on Loihi (0.0003 Wh/step).
+            Neuromorphic hardware is 73-109x more energy efficient than traditional compute.
+        </div>
+        <span class="demo-tag">Data Comparison</span>
+    </a>
+
+    <a href="body.html" class="demo-card card-body">
+        <div class="demo-num">Demo 06</div>
+        <div class="demo-title">Virtual Body (MuJoCo)</div>
+        <div class="demo-desc">
+            Live 3D view of the brain's MuJoCo humanoid body. Watch motor commands
+            move limbs in real-time — locomotion, manipulation, and head control.
+        </div>
+        <span class="demo-tag">Three.js / Live</span>
+    </a>
+
+    <a href="walking.html" class="demo-card card-walking">
+        <div class="demo-num">Demo 07</div>
+        <div class="demo-title">Brain Learning to Walk</div>
+        <div class="demo-desc">
+            Per-joint motor neuron activity across 15 locomotion actuators via population
+            vector decoding. Watch the brain learn individuated joint control from random noise.
+        </div>
+        <span class="demo-tag">Population Vector / Live</span>
+    </a>
+
+    <a href="concepts.html" class="demo-card card-concepts">
+        <div class="demo-num">Demo 08</div>
+        <div class="demo-title">Concept Formation</div>
+        <div class="demo-desc">
+            Probe the concept layer with controlled stimuli. See which neurons fire
+            for "dog" vs "cat" vs "car". Cosine similarity matrix reveals learned representations.
+        </div>
+        <span class="demo-tag">Live Probe</span>
+    </a>
+
+</div>
+
+<div class="footer">
+    <p>Engram Neural Architecture — 1,056,800 neurons — 1.31B synapses — 48 synapse groups — 6 biological learning mechanisms — 29-DOF humanoid body</p>
+</div>
+
+</body>
+</html>

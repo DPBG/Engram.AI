@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engram — Energy Efficiency Comparison</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #060a14;
+            --panel: #0a0e1a;
+            --border: rgba(94, 164, 245, 0.12);
+            --accent: #5ea4f5;
+            --text: #c8d0e0;
+            --text-dim: #5a6478;
+            --text-bright: #e8ecf4;
+            --green: #38d97a;
+            --amber: #f5a623;
+            --red: #f44;
+            --cyan: #22d3ee;
+            --purple: #a78bfa;
+            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--mono);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .topbar {
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        .topbar-logo { font-size: 13px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); }
+        .topbar-sep { width: 1px; height: 16px; background: var(--border); }
+        .topbar-title { font-size: 11px; font-weight: 400; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+        .demo-badge { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; padding: 3px 10px; border-radius: 3px; background: rgba(245,166,35,0.15); color: var(--amber); border: 1px solid rgba(245,166,35,0.3); text-transform: uppercase; }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding: 40px 60px;
+            gap: 40px;
+        }
+
+        /* ── Hero headline ───────────────────────────────────── */
+        .hero {
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 28px;
+            font-weight: 300;
+            letter-spacing: 4px;
+            color: var(--text-bright);
+            margin-bottom: 8px;
+        }
+        .hero h1 strong {
+            font-weight: 700;
+            color: var(--green);
+        }
+        .hero p {
+            font-size: 11px;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+        }
+
+        /* ── Comparison bars ─────────────────────────────────── */
+        .comparison {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 24px;
+            max-width: 900px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .comp-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .comp-label {
+            width: 180px;
+            flex-shrink: 0;
+            text-align: right;
+        }
+        .comp-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text);
+        }
+        .comp-sub {
+            font-size: 9px;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+        .comp-bar-track {
+            flex: 1;
+            height: 32px;
+            background: rgba(255,255,255,0.02);
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.03);
+            overflow: hidden;
+            position: relative;
+        }
+        .comp-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--bg);
+            transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+            width: 0%;
+            position: relative;
+        }
+        .comp-bar-fill .bar-label {
+            position: absolute;
+            right: -8px;
+            transform: translateX(100%);
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .comp-value {
+            width: 100px;
+            flex-shrink: 0;
+            font-size: 14px;
+            font-weight: 600;
+            text-align: left;
+        }
+
+        /* ── Bottom stats ────────────────────────────────────── */
+        .bottom-stats {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+        }
+        .bstat {
+            text-align: center;
+        }
+        .bstat-val {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        .bstat-label {
+            font-size: 9px;
+            color: var(--text-dim);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        /* Source footnote */
+        .sources {
+            text-align: center;
+            padding: 0 20px;
+        }
+        .sources p {
+            font-size: 8px;
+            color: var(--text-dim);
+            line-height: 1.8;
+            letter-spacing: 0.5px;
+        }
+
+        .bottombar {
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            background: var(--panel);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .bottombar-item { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+        .bottombar-item strong { color: var(--text); font-weight: 500; }
+        .bottombar-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--text-dim); opacity: 0.4; }
+
+        /* ── Mobile responsive ─────────────────────────────────── */
+        @media (max-width: 768px) {
+            body { overflow-y: auto; }
+            .main { padding: 20px 16px; gap: 24px; }
+            .hero h1 { font-size: 22px; }
+            .comp-row { flex-wrap: wrap; }
+            .comp-label { width: 120px; }
+            .comp-name { font-size: 11px; }
+            .comp-value { width: 80px; font-size: 11px; }
+            .comp-bar-track { height: 24px; }
+            .bottom-stats { flex-wrap: wrap; gap: 20px; }
+            .bstat-val { font-size: 24px; }
+            .bottombar { flex-wrap: wrap; height: auto; padding: 8px; }
+            .sources p { word-break: break-word; }
+            .comp-row, .bstat, .bottombar-item { touch-action: manipulation; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-left">
+        <span class="topbar-logo">Engram</span>
+        <span class="topbar-sep"></span>
+        <span class="topbar-title">Energy Efficiency</span>
+    </div>
+    <span class="demo-badge">Data</span>
+</div>
+
+<div class="main">
+
+    <div class="hero">
+        <h1>Energy Per <strong>Inference</strong></h1>
+        <p>Neuromorphic hardware uses orders of magnitude less energy than GPU-based AI</p>
+    </div>
+
+    <div class="comparison" id="comparison"></div>
+
+    <div class="bottom-stats">
+        <div class="bstat">
+            <div class="bstat-val" style="color: var(--green)">73x</div>
+            <div class="bstat-label">Less energy than CPU<br>(Loihi vs CPU, peg-in-hole)</div>
+        </div>
+        <div class="bstat">
+            <div class="bstat-val" style="color: var(--cyan)">109x</div>
+            <div class="bstat-label">Less energy than GPU<br>(Loihi vs GPU, keyword spotting)</div>
+        </div>
+        <div class="bstat">
+            <div class="bstat-val" style="color: var(--amber)">20W</div>
+            <div class="bstat-label">Engram target power<br>(Loihi 2 neuromorphic chip)</div>
+        </div>
+    </div>
+
+    <div class="sources">
+        <p>
+            Sources: GPT-4o — Epoch AI (2024). Gemini — Google Environmental Report (2024).
+            Loihi efficiency — IEEE IJCNN (2024), Intel Research (2023).
+            Human brain — Raichle & Gusnard, PNAS (2002).
+            Training costs — SemiAnalysis, public filings.
+        </p>
+    </div>
+</div>
+
+<div class="bottombar">
+    <span class="bottombar-item"><strong>Engram</strong> Neural Architecture</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item">MIT License</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item">Neuromorphic Advantage</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Energy Comparison Chart — animated bars
+// ═══════════════════════════════════════════════════════════════════
+
+const DATA = [
+    {
+        name: 'GPT-4o',
+        sub: 'OpenAI, 1.8T params',
+        value: 0.3,
+        unit: 'Wh/query',
+        color: '#f44',
+        pct: 100,
+    },
+    {
+        name: 'Gemini 1.5',
+        sub: 'Google, MoE',
+        value: 0.24,
+        unit: 'Wh/query',
+        color: '#ff6b35',
+        pct: 80,
+    },
+    {
+        name: 'Llama 3 (GPU)',
+        sub: 'Meta, A100 inference',
+        value: 0.08,
+        unit: 'Wh/query',
+        color: '#f5a623',
+        pct: 27,
+    },
+    {
+        name: 'Engram (CPU)',
+        sub: 'Current: EPYC 7502P',
+        value: 0.012,
+        unit: 'Wh/step',
+        color: '#22d3ee',
+        pct: 4,
+    },
+    {
+        name: 'Engram (Loihi 2)',
+        sub: 'Target: neuromorphic',
+        value: 0.0003,
+        unit: 'Wh/step',
+        color: '#38d97a',
+        pct: 0.1,
+        highlight: true,
+    },
+    {
+        name: 'Human Brain',
+        sub: 'Biological reference',
+        value: 0.0056,
+        unit: 'Wh/thought',
+        color: '#a78bfa',
+        pct: 1.9,
+    },
+];
+
+const MAX_PCT = 100;
+const container = document.getElementById('comparison');
+
+DATA.forEach((d, idx) => {
+    const row = document.createElement('div');
+    row.className = 'comp-row';
+
+    const barPct = Math.max(0.5, (d.pct / MAX_PCT) * 100);
+
+    row.innerHTML = `
+        <div class="comp-label">
+            <div class="comp-name" ${d.highlight ? 'style="color: var(--green); font-weight: 700"' : ''}>${d.name}</div>
+            <div class="comp-sub">${d.sub}</div>
+        </div>
+        <div class="comp-bar-track">
+            <div class="comp-bar-fill" id="bar-${idx}" style="background: ${d.color}; width: 0%">
+            </div>
+        </div>
+        <div class="comp-value" style="color: ${d.color}">${d.value} ${d.unit}</div>
+    `;
+
+    container.appendChild(row);
+
+    // Animate bar after staggered delay
+    setTimeout(() => {
+        document.getElementById(`bar-${idx}`).style.width = barPct + '%';
+    }, 300 + idx * 200);
+});
+</script>
+</body>
+</html>

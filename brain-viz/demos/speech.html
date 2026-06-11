@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engram — Speech Output Monitor</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #060a14;
+            --panel: #0a0e1a;
+            --border: rgba(94, 164, 245, 0.12);
+            --accent: #5ea4f5;
+            --text: #c8d0e0;
+            --text-dim: #5a6478;
+            --text-bright: #e8ecf4;
+            --green: #38d97a;
+            --amber: #f5a623;
+            --cyan: #22d3ee;
+            --purple: #a78bfa;
+            --pink: #f472b6;
+            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--mono);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* ── Top bar ─────────────────────────────────────────── */
+        .topbar {
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        .topbar-logo { font-size: 13px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); }
+        .topbar-sep { width: 1px; height: 16px; background: var(--border); }
+        .topbar-title { font-size: 11px; font-weight: 400; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+        .demo-badge { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; padding: 3px 10px; border-radius: 3px; background: rgba(245,166,35,0.15); color: var(--amber); border: 1px solid rgba(245,166,35,0.3); text-transform: uppercase; }
+
+        /* ── Main layout ─────────────────────────────────────── */
+        .main { flex: 1; display: flex; overflow: hidden; }
+
+        /* ── Left: Brain ─────────────────────────────────────── */
+        .brain-side {
+            flex: 1;
+            position: relative;
+            background: var(--bg);
+        }
+        .brain-side iframe { width: 100%; height: 100%; border: none; }
+
+        /* Motor cortex overlay */
+        .motor-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .motor-label {
+            font-size: 9px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 8px;
+        }
+        .motor-bars {
+            display: flex;
+            gap: 3px;
+            align-items: flex-end;
+            height: 50px;
+        }
+        .motor-bar {
+            width: 4px;
+            background: var(--green);
+            border-radius: 2px 2px 0 0;
+            opacity: 0.6;
+            transition: height 0.15s ease;
+        }
+
+        /* ── Right: Speech panel ─────────────────────────────── */
+        .speech-panel {
+            width: 420px;
+            flex-shrink: 0;
+            background: var(--panel);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Speech stream */
+        .speech-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .speech-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .section-label {
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .section-label::before {
+            content: '';
+            width: 3px;
+            height: 10px;
+            background: var(--green);
+            border-radius: 1px;
+        }
+        .token-counter {
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+        .token-counter strong {
+            color: var(--green);
+            font-weight: 600;
+        }
+
+        /* Main babble display */
+        .babble-display {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(94,164,245,0.2) transparent;
+            position: relative;
+        }
+        .babble-display::-webkit-scrollbar { width: 4px; }
+        .babble-display::-webkit-scrollbar-track { background: transparent; }
+        .babble-display::-webkit-scrollbar-thumb { background: rgba(94,164,245,0.2); border-radius: 2px; }
+
+        .babble-text {
+            font-size: 20px;
+            font-weight: 300;
+            line-height: 1.8;
+            color: var(--text-bright);
+            word-break: break-all;
+            letter-spacing: 2px;
+        }
+        .babble-char {
+            display: inline;
+            animation: charAppear 0.3s ease-out;
+            transition: opacity 2s;
+        }
+        .babble-char.fresh {
+            color: var(--green);
+            text-shadow: 0 0 12px rgba(56, 217, 122, 0.5);
+        }
+        @keyframes charAppear {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .babble-cursor {
+            display: inline-block;
+            width: 2px;
+            height: 22px;
+            background: var(--green);
+            animation: cursorBlink 0.8s step-end infinite;
+            vertical-align: text-bottom;
+            margin-left: 2px;
+        }
+        @keyframes cursorBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+        /* Token detail panel */
+        .token-detail {
+            padding: 14px 20px;
+            border-top: 1px solid var(--border);
+            background: rgba(56, 217, 122, 0.02);
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .detail-row:last-child { margin-bottom: 0; }
+        .detail-label {
+            font-size: 9px;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+        }
+        .detail-val {
+            font-size: 10px;
+            font-weight: 500;
+        }
+        .detail-val.green { color: var(--green); }
+        .detail-val.amber { color: var(--amber); }
+        .detail-val.cyan { color: var(--cyan); }
+
+        /* Explanation section */
+        .explain-section {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+        }
+        .explain-title {
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .explain-title::before {
+            content: '';
+            width: 3px;
+            height: 10px;
+            background: var(--purple);
+            border-radius: 1px;
+        }
+        .explain-text {
+            font-size: 10px;
+            color: var(--text-dim);
+            line-height: 1.7;
+        }
+        .explain-text strong {
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        /* Phase badge */
+        .phase-indicator {
+            padding: 12px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .phase-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 8px rgba(56, 217, 122, 0.4);
+            animation: phasePulse 2s infinite;
+        }
+        @keyframes phasePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .phase-text {
+            font-size: 10px;
+            color: var(--text);
+        }
+        .phase-text span {
+            color: var(--text-dim);
+        }
+
+        /* ── Bottom bar ──────────────────────────────────────── */
+        .bottombar {
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            background: var(--panel);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .bottombar-item { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
+        .bottombar-item strong { color: var(--text); font-weight: 500; }
+        .bottombar-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--text-dim); opacity: 0.4; }
+
+        /* ── Mobile responsive ──────────────────────────────────── */
+        @media (max-width: 768px) {
+            body {
+                overflow-y: auto;
+            }
+
+            .main {
+                flex-direction: column;
+                overflow: visible;
+            }
+
+            .brain-side {
+                height: 200px;
+                flex: none;
+                flex-shrink: 0;
+            }
+
+            .speech-panel {
+                width: 100%;
+                flex: 1;
+                overflow-y: auto;
+                border-left: none;
+                border-top: 1px solid var(--border);
+            }
+
+            .babble-display {
+                min-height: 120px;
+                flex: 1;
+            }
+
+            .babble-text {
+                font-size: 16px;
+            }
+
+            .token-detail {
+                overflow-x: hidden;
+            }
+
+            .detail-row {
+                gap: 8px;
+            }
+
+            .detail-val {
+                text-align: right;
+                word-break: break-all;
+                min-width: 0;
+            }
+
+            .explain-text {
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+            }
+
+            .motor-overlay {
+                bottom: 8px;
+                left: 8px;
+            }
+
+            .motor-bars {
+                height: 36px;
+            }
+
+            .motor-bar {
+                width: 3px;
+            }
+
+            .bottombar {
+                flex-wrap: wrap;
+                gap: 8px;
+                height: auto;
+                padding: 8px;
+            }
+
+            .bottombar-item,
+            .bottombar-sep {
+                min-height: 44px;
+                display: flex;
+                align-items: center;
+            }
+
+            .topbar,
+            .speech-header-row,
+            .phase-indicator {
+                min-height: 44px;
+            }
+
+            .demo-badge,
+            .phase-dot {
+                touch-action: manipulation;
+            }
+
+            .babble-display,
+            .speech-panel,
+            .token-detail,
+            .explain-section {
+                touch-action: manipulation;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-left">
+        <span class="topbar-logo">Engram</span>
+        <span class="topbar-sep"></span>
+        <span class="topbar-title">Speech Motor Output</span>
+    </div>
+    <span class="demo-badge">Live Babble</span>
+</div>
+
+<div class="main">
+    <!-- Brain viewport -->
+    <div class="brain-side">
+        <iframe id="brain-frame"></iframe>
+        <script>
+        // Build iframe src, passing through live/ws params from parent URL
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var src = '../index.html?embed=true&labels=false';
+            if (params.get('mode')) src += '&mode=' + params.get('mode');
+            if (params.get('ws')) src += '&ws=' + encodeURIComponent(params.get('ws'));
+            document.getElementById('brain-frame').src = src;
+        })();
+        </script>
+        <div class="motor-overlay">
+            <div class="motor-label">Speech Motor Sub-Range</div>
+            <div class="motor-bars" id="motor-bars"></div>
+        </div>
+    </div>
+
+    <!-- Speech panel -->
+    <div class="speech-panel">
+        <div class="speech-header">
+            <div class="speech-header-row">
+                <div class="section-label">Neural Speech Stream</div>
+                <div class="token-counter">Tokens: <strong id="token-count">0</strong></div>
+            </div>
+        </div>
+
+        <div class="babble-display" id="babble-display">
+            <div class="babble-text" id="babble-text">
+                <span class="babble-cursor"></span>
+            </div>
+        </div>
+
+        <div class="token-detail" id="token-detail">
+            <div class="detail-row">
+                <span class="detail-label">Last Token</span>
+                <span class="detail-val green" id="detail-token">—</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Neuron Index</span>
+                <span class="detail-val cyan" id="detail-neuron">—</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Confidence</span>
+                <span class="detail-val amber" id="detail-confidence">—</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Speech Rate</span>
+                <span class="detail-val" id="detail-rate">—</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Firing Rate</span>
+                <span class="detail-val green" id="detail-firing">—</span>
+            </div>
+        </div>
+
+        <div class="explain-section">
+            <div class="explain-title">What you're seeing</div>
+            <div class="explain-text">
+                The brain's <strong>motor cortex</strong> has 3,486 neurons dedicated to speech
+                (80-83% sub-range). Each neuron maps to a position in a <strong>256-token vocabulary</strong>.
+                When enough speech neurons fire, the peak neuron's position is decoded as a character.
+                <br><br>
+                Output is currently noise — the brain is still learning language patterns
+                through sensory experience. This is equivalent to a baby's babbling stage. With continued
+                audio+text training, meaningful tokens will emerge.
+            </div>
+        </div>
+
+        <div class="phase-indicator">
+            <div class="phase-dot"></div>
+            <div class="phase-text">
+                Phase: <strong>Adolescent</strong> <span>— Pre-linguistic babble</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="bottombar">
+    <span class="bottombar-item"><strong>Engram</strong> Neural Architecture</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item">MIT License</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item"><strong>3,486</strong> speech neurons</span>
+    <span class="bottombar-sep"></span>
+    <span class="bottombar-item"><strong>256</strong> token vocabulary</span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Engram Speech Babble Monitor
+// ═══════════════════════════════════════════════════════════════════
+
+const SPEECH_NEURONS = 3486;
+const VOCAB_SIZE = 256;
+const MAX_DISPLAY_CHARS = 500;
+
+// Simulated speech motor output — random tokens weighted toward
+// common ASCII ranges to look like nascent language attempts
+const CHAR_WEIGHTS = new Float32Array(VOCAB_SIZE);
+// Letters get higher weight
+for (let i = 65; i <= 90; i++) CHAR_WEIGHTS[i] = 3.0;  // A-Z
+for (let i = 97; i <= 122; i++) CHAR_WEIGHTS[i] = 5.0;  // a-z
+CHAR_WEIGHTS[32] = 8.0;  // space
+for (let i = 48; i <= 57; i++) CHAR_WEIGHTS[i] = 1.0;  // 0-9
+// Some punctuation
+CHAR_WEIGHTS[46] = 2.0; CHAR_WEIGHTS[44] = 1.5; CHAR_WEIGHTS[33] = 0.5;
+CHAR_WEIGHTS[63] = 0.5; CHAR_WEIGHTS[45] = 1.0; CHAR_WEIGHTS[39] = 0.8;
+// Normalize
+const totalWeight = CHAR_WEIGHTS.reduce((a, b) => a + b);
+for (let i = 0; i < VOCAB_SIZE; i++) CHAR_WEIGHTS[i] /= totalWeight;
+
+function sampleToken() {
+    let r = Math.random();
+    for (let i = 0; i < VOCAB_SIZE; i++) {
+        r -= CHAR_WEIGHTS[i];
+        if (r <= 0) return i;
+    }
+    return 32; // fallback: space
+}
+
+// ── DOM refs ────────────────────────────────────────────────
+const brainFrame = document.getElementById('brain-frame');
+const babbleText = document.getElementById('babble-text');
+const tokenCountEl = document.getElementById('token-count');
+const detailToken = document.getElementById('detail-token');
+const detailNeuron = document.getElementById('detail-neuron');
+const detailConfidence = document.getElementById('detail-confidence');
+const detailRate = document.getElementById('detail-rate');
+const detailFiring = document.getElementById('detail-firing');
+const motorBarsEl = document.getElementById('motor-bars');
+
+// Build motor bars (simulated speech sub-range activity)
+const NUM_BARS = 40;
+const bars = [];
+for (let i = 0; i < NUM_BARS; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'motor-bar';
+    bar.style.height = '2px';
+    motorBarsEl.appendChild(bar);
+    bars.push(bar);
+}
+
+let tokenCount = 0;
+let chars = [];
+let lastEmitTime = 0;
+const EMIT_INTERVAL = 800 + Math.random() * 1200; // 0.8-2s between tokens
+let nextEmitTime = performance.now() + EMIT_INTERVAL;
+
+// ── Main loop ───────────────────────────────────────────────
+function animate(now) {
+    requestAnimationFrame(animate);
+
+    // Update motor bars (always animating)
+    updateMotorBars(now);
+
+    // Emit a new token periodically
+    if (now >= nextEmitTime) {
+        emitToken();
+        nextEmitTime = now + 600 + Math.random() * 1800;
+    }
+
+    // Send brain state to iframe
+    sendBrainState(now);
+}
+
+function updateMotorBars(now) {
+    const t = now * 0.003;
+    for (let i = 0; i < NUM_BARS; i++) {
+        const base = 3;
+        const wave = Math.sin(t + i * 0.4) * 10;
+        const noise = Math.random() * 15;
+        const burst = (now - lastEmitTime < 300) ? 20 : 0;
+        bars[i].style.height = Math.max(2, base + wave + noise + burst) + 'px';
+        bars[i].style.opacity = 0.3 + (burst > 0 ? 0.5 : 0) + Math.random() * 0.2;
+    }
+}
+
+function emitToken() {
+    const tokenIdx = sampleToken();
+    const ch = String.fromCharCode(tokenIdx);
+    const neuronIdx = Math.floor(Math.random() * SPEECH_NEURONS);
+    const confidence = 0.15 + Math.random() * 0.35; // juvenile = low confidence
+    const firingRate = 0.03 + Math.random() * 0.04;
+
+    tokenCount++;
+    lastEmitTime = performance.now();
+
+    // Add character to display
+    const span = document.createElement('span');
+    span.className = 'babble-char fresh';
+    span.textContent = tokenIdx === 32 ? '\u00A0' : ch; // non-breaking space for visibility
+    if (tokenIdx < 32 || tokenIdx === 127) span.textContent = '\u00B7'; // show control chars as dots
+
+    // Insert before cursor
+    const cursor = babbleText.querySelector('.babble-cursor');
+    babbleText.insertBefore(span, cursor);
+
+    // Remove "fresh" glow after 500ms
+    setTimeout(() => span.classList.remove('fresh'), 500);
+
+    // Trim old chars
+    chars.push(span);
+    while (chars.length > MAX_DISPLAY_CHARS) {
+        const old = chars.shift();
+        old.remove();
+    }
+
+    // Scroll to bottom
+    const display = document.getElementById('babble-display');
+    display.scrollTop = display.scrollHeight;
+
+    // Update detail panel
+    tokenCountEl.textContent = tokenCount;
+    detailToken.textContent = tokenIdx === 32 ? 'SPACE' : (tokenIdx < 32 ? 'CTRL-' + tokenIdx : `'${ch}' (${tokenIdx})`);
+    detailNeuron.textContent = `#${neuronIdx} / ${SPEECH_NEURONS}`;
+    detailConfidence.textContent = (confidence * 100).toFixed(1) + '%';
+    detailRate.textContent = (1000 / (600 + Math.random() * 1800)).toFixed(1) + ' tok/s';
+    detailFiring.textContent = (firingRate * 100).toFixed(1) + '%';
+}
+
+function sendBrainState(now) {
+    if (!brainFrame.contentWindow) return;
+    const t = now * 0.001;
+    const speechBurst = (now - lastEmitTime < 300) ? 0.06 : 0.02;
+
+    brainFrame.contentWindow.postMessage({
+        type: 'demo_reaction',
+        firingRates: {
+            motor_cortex: 0.03 + speechBurst,
+            sensory_cortex: 0.03 + Math.sin(t * 0.5) * 0.01,
+            association_cortex: 0.025 + Math.sin(t * 0.3) * 0.01,
+            working_memory: 0.02 + speechBurst * 0.3,
+        },
+        neuromodulation: {
+            phase: 'juvenile',
+            da: 1.2 + Math.sin(t * 0.2) * 0.1,
+            ach: 1.2,
+            ne: 1.1,
+            serotonin: 0.9,
+        },
+    }, '*');
+}
+
+// Start
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

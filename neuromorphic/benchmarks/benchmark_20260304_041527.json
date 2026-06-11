@@ -1,0 +1,208 @@
+{
+  "timestamp": "2026-03-04T04:13:26",
+  "system": {
+    "platform": "macOS-26.2-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "cpu_count": 12,
+    "python_version": "3.13.9",
+    "numpy_version": "2.4.2"
+  },
+  "config": {
+    "total_neurons": 750000,
+    "total_synapses": 646812419,
+    "synapse_groups": 15,
+    "dendrites_enabled": true,
+    "cognitive_enabled": false,
+    "initial_step": 0
+  },
+  "init": {
+    "time_s": 58.881,
+    "memory_mb": 4212.5,
+    "memory_delta_mb": 4164.1
+  },
+  "speed": {
+    "steps": 50,
+    "elapsed_s": 32.792,
+    "steps_per_sec": 1.52,
+    "synapse_info": {
+      "sensory_association": {
+        "nnz": 199502045
+      },
+      "association_lateral": {
+        "nnz": 119819531
+      },
+      "sensory_motor": {
+        "nnz": 39960097
+      },
+      "brainstem_motor": {
+        "nnz": 4493291
+      },
+      "sensory_cerebellum": {
+        "nnz": 39959936
+      },
+      "motor_cerebellum": {
+        "nnz": 19979550
+      },
+      "cerebellum_motor": {
+        "nnz": 19980032
+      },
+      "association_predictive": {
+        "nnz": 99751319
+      },
+      "predictive_recurrent": {
+        "nnz": 29954965
+      },
+      "predictive_association": {
+        "nnz": 39959733
+      },
+      "association_working": {
+        "nnz": 14977537
+      },
+      "working_motor": {
+        "nnz": 7488698
+      }
+    },
+    "phase_timing": {
+      "1_brainstem_sensory": {
+        "mean_ms": 54.673,
+        "std_ms": 298.955,
+        "p50_ms": 5.196,
+        "p95_ms": 48.434,
+        "p99_ms": 1135.191
+      },
+      "2_reflex_feature": {
+        "mean_ms": 3.263,
+        "std_ms": 19.918,
+        "p50_ms": 0.288,
+        "p95_ms": 0.903,
+        "p99_ms": 75.165
+      },
+      "3_association": {
+        "mean_ms": 307.664,
+        "std_ms": 1787.738,
+        "p50_ms": 4.406,
+        "p95_ms": 488.848,
+        "p99_ms": 6858.381
+      },
+      "4_concept_predictive": {
+        "mean_ms": 2.588,
+        "std_ms": 0.967,
+        "p50_ms": 2.267,
+        "p95_ms": 4.624,
+        "p99_ms": 6.601
+      },
+      "5_meta_wm_cereb_motor": {
+        "mean_ms": 219.28,
+        "std_ms": 1111.61,
+        "p50_ms": 6.114,
+        "p95_ms": 572.721,
+        "p99_ms": 4606.131
+      },
+      "6_decode": {
+        "mean_ms": 1.513,
+        "std_ms": 1.321,
+        "p50_ms": 1.176,
+        "p95_ms": 2.527,
+        "p99_ms": 6.574
+      },
+      "7_neuromod_phase": {
+        "mean_ms": 0.059,
+        "std_ms": 0.072,
+        "p50_ms": 0.04,
+        "p95_ms": 0.126,
+        "p99_ms": 0.397
+      },
+      "8_stdp": {
+        "mean_ms": 65.614,
+        "std_ms": 448.572,
+        "p50_ms": 0.0,
+        "p95_ms": 0.454,
+        "p99_ms": 1670.216
+      },
+      "9_eligibility": {
+        "mean_ms": 0.198,
+        "std_ms": 0.085,
+        "p50_ms": 0.191,
+        "p95_ms": 0.318,
+        "p99_ms": 0.504
+      },
+      "10_consolidation_homeostasis": {
+        "mean_ms": 0.001,
+        "std_ms": 0.001,
+        "p50_ms": 0.001,
+        "p95_ms": 0.002,
+        "p99_ms": 0.003
+      },
+      "total": {
+        "mean_ms": 654.911,
+        "std_ms": 2962.056,
+        "p50_ms": 21.528,
+        "p95_ms": 2484.386,
+        "p99_ms": 12385.783
+      }
+    }
+  },
+  "learning": {
+    "patterns": 5,
+    "repetitions": 2,
+    "steps_per_pattern": 10,
+    "total_steps": 100,
+    "elapsed_s": 74.361,
+    "steps_per_sec": 1.34,
+    "weight_changes": {
+      "sensory_association": {
+        "initial_mean": 0.50117,
+        "final_mean": 0.50117,
+        "delta": 0.0
+      }
+    },
+    "concept_count": 0,
+    "convergence": {
+      "is_converged": false,
+      "stable_count": 1,
+      "patience": 20,
+      "mean_delta": 0.0003810321922372718
+    },
+    "neuromodulation": {
+      "phase": "infant",
+      "da": 2.0,
+      "ach": 2.5,
+      "ne": 2.0,
+      "serotonin": 0.1,
+      "plasticity_multiplier": 1.8
+    }
+  },
+  "memory": {
+    "peak_rss_mb": 4212.5,
+    "total_synapses": 646812419,
+    "myelination_fractions": {}
+  },
+  "final_state": {
+    "step_count": 160,
+    "firing_rates": {
+      "brainstem": 0.005327,
+      "reflex_arc": 0.01176,
+      "sensory_cortex": 0.066726,
+      "motor_cortex": 4.3e-05,
+      "cerebellum": 0.0,
+      "association_cortex": 0.0,
+      "predictive_layer": 0.0,
+      "working_memory": 0.0
+    },
+    "convergence": {
+      "is_converged": false,
+      "stable_count": 1,
+      "patience": 20,
+      "mean_delta": 0.0003810321922372718
+    },
+    "neuromodulation": {
+      "phase": "infant",
+      "da": 2.0,
+      "ach": 2.5,
+      "ne": 2.0,
+      "serotonin": 0.1,
+      "plasticity_multiplier": 1.8
+    },
+    "phase": "infant"
+  }
+}

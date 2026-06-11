@@ -1,0 +1,58 @@
+# =============================================================================
+# Engram — unified dependencies for running locally with pure Python (no Docker)
+# Install with:  python run.py --install   (or)  pip install -r requirements-local.txt
+#
+# Covers the 'core' and 'full' profiles. Hardware/optional extras are listed at
+# the bottom and commented out — uncomment only if you need those services.
+# =============================================================================
+
+# --- shared / SDK + every service ---
+nats-py>=2.6.0
+pydantic>=2.5.0
+aiohttp>=3.9.0
+aiosqlite>=0.19.0
+
+# --- vector DB client (memory, beliefs, cache, coordinator) ---
+qdrant-client>=1.7.0
+
+# --- beliefs (knowledge graph) ---
+networkx>=3.2.0
+
+# --- neuromorphic brain + coordinator ---
+numpy>=1.26.0
+scipy>=1.12.0
+
+# --- dashboard (FastAPI web UI) ---
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+
+# --- external-api (optional cloud LLM fallback; harmless to install) ---
+anthropic>=0.28.0
+openai>=1.30.0
+
+# =============================================================================
+# OPTIONAL EXTRAS — uncomment if you need them
+# =============================================================================
+
+# sensory-gateway in video mode (feeds the brain a looping video → clears the
+# "No sensory input" watchdog). Run with: python run.py --only sensory-gateway --video PATH
+# Video gives VISUAL input with just opencv; audio is optional and degrades
+# gracefully if its deps are missing.
+#   opencv-python>=4.8.0
+#   numpy>=1.26.0             # already required by the neuromorphic brain
+# Optional — audio track from the video (needs ffmpeg on PATH too):
+#   sounddevice>=0.4.6
+# Optional — live mic / serial sensors:
+#   sounddevice>=0.4.6
+#   pyserial>=3.5
+
+# overrides service (camera + microphone human-override input):
+#   opencv-python>=4.8.0
+#   pyaudio>=0.2.14            # On Windows: pip install pipwin && pipwin install pyaudio
+
+# neuromorphic motor feedback / physics (only if NEURO motor_feedback enabled):
+#   mujoco>=3.0.0
+
+# meta-programmer is NOT runnable without Docker (needs the Docker socket) and is
+# therefore excluded from the pure-Python setup.

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sensory-gateway"
+version = "0.1.0"
+description = "Sensory Gateway — discovers and streams sensor data to the neuromorphic brain via NATS"
+requires-python = ">=3.11"
+
+dependencies = [
+    "activelearning-sdk",
+    "nats-py>=2.6.0",
+    "numpy>=1.24.0",
+    "opencv-python>=4.8.0",
+    "sounddevice>=0.4.6",
+    "python-speech-features>=0.6",
+    "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+stt = [
+    "faster-whisper>=0.10.0",
+]
+video = [
+    "yt-dlp>=2025.1.0",
+]
+video-stt = [
+    "yt-dlp>=2025.1.0",
+    "faster-whisper>=0.10.0",
+]
+cnn = [
+    "onnxruntime>=1.16.0",
+]
+all = [
+    "yt-dlp>=2025.1.0",
+    "faster-whisper>=0.10.0",
+    "onnxruntime>=1.16.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.scripts]
+sensory-gateway = "gateway:main_sync"
+
+[tool.uv.sources]
+activelearning-sdk = { path = "../sdk", editable = true }
