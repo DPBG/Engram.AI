@@ -9,9 +9,13 @@ Safety rules:
 5. Human escalation for conflicts
 """
 
+import asyncio
+import json
 import logging
 import os
-from typing import Any, Dict, Optional
+import time
+import uuid
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,7 @@ class ExternalAPIManager:
         if self.anthropic_api_key:
             try:
                 from anthropic import AsyncAnthropic
+
                 self._claude_client = AsyncAnthropic(api_key=self.anthropic_api_key)
                 logger.info("Claude API client initialized")
             except Exception as e:
@@ -44,6 +49,7 @@ class ExternalAPIManager:
         if self.openai_api_key:
             try:
                 from openai import AsyncOpenAI
+
                 self._openai_client = AsyncOpenAI(api_key=self.openai_api_key)
                 logger.info("OpenAI API client initialized")
             except Exception as e:
@@ -52,9 +58,9 @@ class ExternalAPIManager:
     async def query_external(
         self,
         query: str,
-        context: Optional[Dict] = None,
-        local_knowledge: Optional[Dict] = None,
-    ) -> Dict:
+        context: dict | None = None,
+        local_knowledge: dict | None = None,
+    ) -> dict:
         """
         Query external APIs with safety checks.
 
@@ -129,10 +135,6 @@ class ExternalAPIManager:
     async def _request_kernel_approval(self, query: str) -> bool:
         """Request Kernel approval for external query."""
         try:
-            import asyncio
-            import json
-            import uuid
-
             trace_id = str(uuid.uuid4())
 
             proposal = {
@@ -157,7 +159,7 @@ class ExternalAPIManager:
             try:
                 decision = await asyncio.wait_for(future, timeout=10.0)
                 return decision.get("type") == "ALLOW"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error("Timeout waiting for Kernel decision")
                 return False
             finally:
@@ -167,7 +169,7 @@ class ExternalAPIManager:
             logger.error(f"Error requesting Kernel approval: {e}")
             return False
 
-    async def _query_claude(self, query: str, context: Optional[Dict]) -> str:
+    async def _query_claude(self, query: str, context: dict | None) -> str:
         """Query Claude API."""
         try:
             # Build prompt
@@ -192,7 +194,7 @@ class ExternalAPIManager:
             logger.error(f"Claude API error: {e}")
             raise
 
-    async def _query_openai(self, query: str, context: Optional[Dict]) -> str:
+    async def _query_openai(self, query: str, context: dict | None) -> str:
         """Query OpenAI API."""
         try:
             # Build prompt
@@ -202,9 +204,7 @@ class ExternalAPIManager:
 
             response = await self._openai_client.chat.completions.create(
                 model="gpt-4",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 max_tokens=1024,
             )
 
@@ -214,7 +214,7 @@ class ExternalAPIManager:
             logger.error(f"OpenAI API error: {e}")
             raise
 
-    def _detect_conflict(self, external_response: str, local_knowledge: Dict) -> bool:
+    def _detect_conflict(self, external_response: str, local_knowledge: dict) -> bool:
         """
         Detect if external response conflicts with local knowledge.
 
@@ -239,9 +239,6 @@ class ExternalAPIManager:
     async def _log_query(self, query: str, response: str, conflict: bool) -> None:
         """Log external API query."""
         try:
-            import uuid
-            import time
-
             await self.db.execute(
                 """
                 INSERT INTO external_api_queries
@@ -264,25 +261,24 @@ class ExternalAPIManager:
         self,
         query: str,
         external_response: str,
-        local_knowledge: Dict,
+        local_knowledge: dict,
     ) -> None:
         """Escalate knowledge conflict to human."""
         try:
-            import json
-            import uuid
-
             trace_id = str(uuid.uuid4())
 
             await self.nats_client.publish(
                 "approval.request",
-                json.dumps({
-                    "trace_id": trace_id,
-                    "type": "knowledge_conflict",
-                    "query": query,
-                    "external_response": external_response,
-                    "local_knowledge": local_knowledge,
-                    "message": "Conflicting knowledge detected. Which should be trusted?",
-                }).encode(),
+                json.dumps(
+                    {
+                        "trace_id": trace_id,
+                        "type": "knowledge_conflict",
+                        "query": query,
+                        "external_response": external_response,
+                        "local_knowledge": local_knowledge,
+                        "message": "Conflicting knowledge detected. Which should be trusted?",
+                    }
+                ).encode(),
             )
 
             logger.info(f"Conflict escalated to human: {trace_id}")
