@@ -1,246 +1,266 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Engram — Investor Demos</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
-    <style>
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engram — Interactive Demos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070b15;
+    --text:#cdd6e6; --dim:#7a8699; --faint:#525d70; --bright:#eef2fb;
+    --border:rgba(120,160,225,0.10); --border-2:rgba(120,160,225,0.20);
+    --sans:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono:'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  }
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--sans);color:var(--text);line-height:1.5;min-height:100vh;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    background:
+      radial-gradient(1000px 560px at 18% -6%, rgba(36,92,170,0.20), transparent 60%),
+      radial-gradient(760px 460px at 100% 8%, rgba(124,92,222,0.12), transparent 60%),
+      var(--bg);
+    background-attachment:fixed;
+  }
+  a{color:inherit}
 
-        :root {
-            --bg: #060a14;
-            --panel: #0a0e1a;
-            --border: rgba(94, 164, 245, 0.12);
-            --accent: #5ea4f5;
-            --text: #c8d0e0;
-            --text-dim: #5a6478;
-            --text-bright: #e8ecf4;
-            --green: #38d97a;
-            --amber: #f5a623;
-            --cyan: #22d3ee;
-            --purple: #a78bfa;
-            --pink: #f472b6;
-            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-        }
+  .shell{display:grid;grid-template-columns:300px 1fr;min-height:100vh}
 
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: var(--mono);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 40px;
-        }
+  /* ---------- left rail ---------- */
+  .side{
+    position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+    display:flex;flex-direction:column;
+    padding:38px 30px;
+    background:linear-gradient(180deg,rgba(148,178,225,0.05),rgba(148,178,225,0.012));
+    border-right:1px solid var(--border);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  }
+  .brand-row{display:flex;align-items:center;gap:13px}
+  .mark{width:40px;height:40px;flex:none;filter:drop-shadow(0 4px 16px rgba(46,128,220,0.4))}
+  .brand{
+    font-size:23px;font-weight:800;letter-spacing:.16em;line-height:1;
+    background:linear-gradient(100deg,#5fe0f5,#7db4ff 50%,#b79cff);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .tagline{margin-top:18px;font-size:13px;line-height:1.6;color:var(--dim)}
 
-        body::after {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
-            pointer-events: none;
-            z-index: 9999;
-        }
+  .live-head{display:flex;align-items:center;gap:9px;margin:30px 0 6px;font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)}
+  .dot{width:7px;height:7px;border-radius:50%;background:#38d97a;box-shadow:0 0 9px #38d97a;animation:pulse 1.9s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-        .header {
-            text-align: center;
-            margin-bottom: 50px;
-        }
-        .logo {
-            font-size: 36px;
-            font-weight: 700;
-            letter-spacing: 12px;
-            text-transform: uppercase;
-            color: var(--accent);
-            margin-bottom: 8px;
-        }
-        .subtitle {
-            font-size: 12px;
-            color: var(--text-dim);
-            letter-spacing: 3px;
-            text-transform: uppercase;
-        }
-        .patent {
-            font-size: 9px;
-            color: var(--text-dim);
-            letter-spacing: 1.5px;
-            margin-top: 12px;
-            padding: 4px 14px;
-            border: 1px solid var(--border);
-            border-radius: 3px;
-            display: inline-block;
-        }
+  .metrics{display:flex;flex-direction:column}
+  .metric{display:flex;align-items:baseline;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid rgba(120,160,225,0.07)}
+  .metric .k{font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+  .metric .v{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--bright);white-space:nowrap}
+  .v.c-blue{color:#7db4ff}.v.c-green{color:#38d97a}.v.c-amber{color:#f5b13a}.v.c-cyan{color:#22d3ee}.v.c-violet{color:#b79cff}
 
-        .demos {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 16px;
-            max-width: 1200px;
-            width: 100%;
-        }
+  .side-foot{margin-top:auto;padding-top:28px;display:flex;flex-direction:column;gap:11px}
+  .side-foot a{font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--dim);text-decoration:none;display:flex;align-items:center;gap:8px;transition:color .2s}
+  .side-foot a:hover{color:var(--bright)}
+  .side-foot a .g{color:var(--faint);transition:transform .2s,color .2s}
+  .side-foot a:hover .g{color:#7db4ff;transform:translateX(2px)}
 
-        .demo-card {
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 24px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-decoration: none;
-            color: var(--text);
-            display: block;
-            position: relative;
-            overflow: hidden;
-        }
-        .demo-card:hover {
-            border-color: var(--accent);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 32px rgba(94, 164, 245, 0.1);
-        }
-        .demo-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 2px;
-            border-radius: 8px 8px 0 0;
-        }
+  /* ---------- main panel ---------- */
+  .main{padding:clamp(34px,4.5vw,60px) clamp(26px,5vw,76px) 48px;min-width:0}
+  .main-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:8px}
+  .main-head h2{font-size:clamp(24px,3.2vw,32px);font-weight:700;letter-spacing:-.015em;color:var(--bright)}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-bottom:10px}
+  .count{font-family:var(--mono);font-size:12px;color:var(--faint);white-space:nowrap}
 
-        .demo-num {
-            font-size: 9px;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            margin-bottom: 10px;
-        }
-        .demo-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--text-bright);
-            margin-bottom: 8px;
-            letter-spacing: 0.5px;
-        }
-        .demo-desc {
-            font-size: 10px;
-            color: var(--text-dim);
-            line-height: 1.7;
-        }
-        .demo-tag {
-            display: inline-block;
-            margin-top: 14px;
-            font-size: 8px;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            padding: 3px 8px;
-            border-radius: 3px;
-        }
+  .list{margin-top:14px}
+  .row{
+    position:relative;display:grid;grid-template-columns:50px 1fr auto;align-items:center;
+    column-gap:22px;padding:24px 18px;text-decoration:none;color:var(--text);
+    border-radius:12px;transition:background .22s ease;
+  }
+  .row + .row{box-shadow:0 -1px 0 var(--border)}
+  .row::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;background:var(--c);opacity:0;transition:opacity .22s}
+  .row:hover{background:linear-gradient(90deg, color-mix(in srgb, var(--c) 9%, transparent), transparent 72%)}
+  .row:hover::before{opacity:1}
 
-        .card-brain::before { background: var(--accent); }
-        .card-brain .demo-num { color: var(--accent); }
-        .card-brain .demo-tag { background: rgba(94,164,245,0.12); color: var(--accent); }
+  .row .num{font-family:var(--mono);font-size:20px;font-weight:600;color:var(--c)}
+  .row .body{min-width:0}
+  .row h3{font-size:18px;font-weight:600;letter-spacing:-.01em;color:var(--bright);margin-bottom:6px}
+  .row p{font-size:13px;line-height:1.6;color:var(--dim);max-width:62ch}
+  .row .tag{display:inline-block;margin-top:11px;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--c);padding:3px 9px;border-radius:999px;background:color-mix(in srgb, var(--c) 13%, transparent);border:1px solid color-mix(in srgb, var(--c) 22%, transparent)}
+  .row .arrow{font-size:18px;color:var(--c);opacity:0;transform:translateX(-6px);transition:opacity .22s,transform .22s;justify-self:end}
+  .row:hover .arrow{opacity:1;transform:translateX(0)}
 
-        .card-reaction::before { background: var(--cyan); }
-        .card-reaction .demo-num { color: var(--cyan); }
-        .card-reaction .demo-tag { background: rgba(34,211,238,0.12); color: var(--cyan); }
+  .row-brain{--c:#5ea4f5}
+  .row-reaction{--c:#22d3ee}
+  .row-timeline{--c:#38d97a}
+  .row-speech{--c:#f472b6}
+  .row-energy{--c:#f5a623}
+  .row-body{--c:#a78bfa}
+  .row-walking{--c:#f97316}
+  .row-concepts{--c:#2dd4bf}
 
-        .card-timeline::before { background: var(--green); }
-        .card-timeline .demo-num { color: var(--green); }
-        .card-timeline .demo-tag { background: rgba(56,217,122,0.12); color: var(--green); }
+  .spec{margin-top:40px;padding-top:24px;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;letter-spacing:.03em;color:var(--faint);line-height:1.85}
 
-        .card-speech::before { background: var(--pink); }
-        .card-speech .demo-num { color: var(--pink); }
-        .card-speech .demo-tag { background: rgba(244,114,182,0.12); color: var(--pink); }
-
-        .card-energy::before { background: var(--amber); }
-        .card-energy .demo-num { color: var(--amber); }
-        .card-energy .demo-tag { background: rgba(245,166,35,0.12); color: var(--amber); }
-
-        .card-body::before { background: var(--purple); }
-        .card-body .demo-num { color: var(--purple); }
-        .card-body .demo-tag { background: rgba(167,139,250,0.12); color: var(--purple); }
-
-        .card-walking::before { background: #f97316; }
-        .card-walking .demo-num { color: #f97316; }
-        .card-walking .demo-tag { background: rgba(249,115,22,0.12); color: #f97316; }
-
-        .card-concepts::before { background: var(--cyan); }
-        .card-concepts .demo-num { color: var(--cyan); }
-        .card-concepts .demo-tag { background: rgba(34,211,238,0.12); color: var(--cyan); }
-
-        .stats-bar {
-            display: flex;
-            justify-content: center;
-            gap: 32px;
-            margin-bottom: 40px;
-            flex-wrap: wrap;
-        }
-        .stat {
-            text-align: center;
-        }
-        .stat-value {
-            font-size: 24px;
-            font-weight: 700;
-            color: var(--accent);
-        }
-        .stat-value.green { color: var(--green); }
-        .stat-value.amber { color: var(--amber); }
-        .stat-value.cyan { color: var(--cyan); }
-        .stat-value.purple { color: var(--purple); }
-        .stat-label {
-            font-size: 8px;
-            color: var(--text-dim);
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            margin-top: 4px;
-        }
-
-        .footer {
-            margin-top: 50px;
-            text-align: center;
-        }
-        .footer p {
-            font-size: 9px;
-            color: var(--text-dim);
-            letter-spacing: 1px;
-        }
-        .footer a {
-            color: var(--accent);
-            text-decoration: none;
-        }
-    </style>
+  /* ---------- responsive ---------- */
+  @media (max-width:900px){
+    .shell{grid-template-columns:1fr}
+    .side{position:static;height:auto;overflow:visible;border-right:none;border-bottom:1px solid var(--border)}
+    .metrics{flex-flow:row wrap;gap:6px 26px}
+    .metric{flex:1 1 120px;border-bottom:none}
+    .side-foot{margin-top:22px;flex-flow:row wrap;gap:18px}
+  }
+  @media (max-width:560px){
+    .row{grid-template-columns:38px 1fr;padding:20px 12px}
+    .row .arrow{display:none}
+    .row p{max-width:none}
+  }
+</style>
 </head>
 <body>
+<div class="shell">
 
-<div class="header">
-    <div class="logo">Engram</div>
-    <div class="subtitle">Investor Demo Suite</div>
-    <div class="patent">MIT License — Open Source</div>
-</div>
+  <!-- ===== left rail ===== -->
+  <aside class="side">
+    <div class="brand-row">
+      <svg class="mark" viewBox="0 0 240 240" aria-hidden="true">
+        <defs>
+          <linearGradient id="lm-edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.5" stop-color="#5ea4f5"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+          <radialGradient id="lm-node" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#daf6ff"/><stop offset="1" stop-color="#22d3ee"/></radialGradient>
+          <radialGradient id="lm-fire" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#e9fff2"/><stop offset="1" stop-color="#38d97a"/></radialGradient>
+          <filter id="lm-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <circle cx="120" cy="120" r="106" fill="none" stroke="url(#lm-edge)" stroke-width="3" opacity="0.5"/>
+        <g filter="url(#lm-glow)" stroke="url(#lm-edge)" stroke-width="3" stroke-linecap="round" opacity="0.9">
+          <line x1="120" y1="56" x2="171" y2="76"/><line x1="171" y1="76" x2="187" y2="122"/><line x1="187" y1="122" x2="162" y2="170"/>
+          <line x1="162" y1="170" x2="110" y2="184"/><line x1="110" y1="184" x2="64" y2="160"/><line x1="64" y1="160" x2="55" y2="102"/>
+          <line x1="55" y1="102" x2="120" y2="56"/><line x1="120" y1="56" x2="116" y2="108"/><line x1="116" y1="108" x2="150" y2="124"/>
+          <line x1="150" y1="124" x2="187" y2="122"/><line x1="116" y1="108" x2="96" y2="142"/><line x1="96" y1="142" x2="64" y2="160"/>
+          <line x1="150" y1="124" x2="137" y2="156"/><line x1="137" y1="156" x2="110" y2="184"/><line x1="96" y1="142" x2="137" y2="156"/>
+          <line x1="171" y1="76" x2="150" y2="124"/><line x1="55" y1="102" x2="116" y2="108"/><line x1="116" y1="108" x2="137" y2="156"/>
+        </g>
+        <g filter="url(#lm-glow)">
+          <circle cx="120" cy="56" r="6" fill="url(#lm-node)"/><circle cx="187" cy="122" r="6" fill="url(#lm-node)"/><circle cx="162" cy="170" r="5.5" fill="url(#lm-node)"/>
+          <circle cx="64" cy="160" r="6" fill="url(#lm-node)"/><circle cx="55" cy="102" r="5.5" fill="url(#lm-node)"/><circle cx="96" cy="142" r="5.5" fill="url(#lm-node)"/>
+          <circle cx="137" cy="156" r="6" fill="url(#lm-node)"/><circle cx="116" cy="108" r="7" fill="url(#lm-node)"/>
+          <circle cx="171" cy="76" r="8" fill="url(#lm-fire)"/><circle cx="110" cy="184" r="7" fill="url(#lm-fire)"/><circle cx="150" cy="124" r="8.5" fill="url(#lm-fire)"/>
+        </g>
+      </svg>
+      <span class="brand">ENGRAM</span>
+    </div>
 
-<div class="stats-bar">
-    <div class="stat">
-        <div class="stat-value" id="stat-steps">--</div>
-        <div class="stat-label">Training Steps</div>
+    <p class="tagline">A self-aware, continuously-learning neuromorphic AI.</p>
+
+    <div class="live-head"><span class="dot"></span> Live Metrics</div>
+    <div class="metrics">
+      <div class="metric"><span class="k">Training Steps</span><span class="v c-blue"   id="stat-steps">--</span></div>
+      <div class="metric"><span class="k">Cross-Modal Recall</span><span class="v c-green" id="stat-recall">--</span></div>
+      <div class="metric"><span class="k">Regions Firing</span><span class="v c-amber"  id="stat-regions">--</span></div>
+      <div class="metric"><span class="k">Global Firing Rate</span><span class="v c-cyan" id="stat-firing">--</span></div>
+      <div class="metric"><span class="k">Tests Passing</span><span class="v c-violet"   id="stat-tests">644</span></div>
     </div>
-    <div class="stat">
-        <div class="stat-value green" id="stat-recall">--</div>
-        <div class="stat-label">Cross-Modal Recall</div>
+
+    <div class="side-foot">
+      <a href="../index.html"><span class="g">↗</span> Live Brain</a>
+      <a href="/"><span class="g">↗</span> Dashboard</a>
+      <a href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener"><span class="g">↗</span> GitHub · MIT</a>
     </div>
-    <div class="stat">
-        <div class="stat-value amber" id="stat-regions">--</div>
-        <div class="stat-label">Regions Firing</div>
+  </aside>
+
+  <!-- ===== main panel ===== -->
+  <main class="main">
+    <div class="eyebrow">Interactive Demos</div>
+    <div class="main-head">
+      <h2>Explore the brain, live.</h2>
+      <span class="count">08 demos</span>
     </div>
-    <div class="stat">
-        <div class="stat-value cyan" id="stat-firing">--</div>
-        <div class="stat-label">Global Firing Rate</div>
-    </div>
-    <div class="stat">
-        <div class="stat-value purple" id="stat-tests">644</div>
-        <div class="stat-label">Tests Passing</div>
-    </div>
+
+    <nav class="list">
+
+      <a href="../index.html" class="row row-brain">
+        <span class="num">01</span>
+        <span class="body">
+          <h3>Live Brain Visualization</h3>
+          <p>Real-time 3D brain with 13 regions, 48 synapse groups, lightning-bolt synaptic arcs, and neuromodulator-driven lighting. Connects live to the running brain.</p>
+          <span class="tag">Three.js / WebGL</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+      <a href="reaction.html" class="row row-reaction">
+        <span class="num">02</span>
+        <span class="body">
+          <h3>Brain Reaction Probe</h3>
+          <p>Drop an image or trigger a preset stimulus and watch the neural cascade unfold. See which brain regions activate, in what order, and why.</p>
+          <span class="tag">Interactive</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+      <a href="timeline.html" class="row row-timeline">
+        <span class="num">03</span>
+        <span class="body">
+          <h3>Development Timeline</h3>
+          <p>Timelapse of the brain growing up from birth to maturity. Watch plasticity decrease, concepts form, pruning sculpt connections, and myelination lock in knowledge.</p>
+          <span class="tag">Timelapse</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+      <a href="speech.html" class="row row-speech">
+        <span class="num">04</span>
+        <span class="body">
+          <h3>Speech Motor Output</h3>
+          <p>Live stream from the brain's 3,486 speech motor neurons. Watch the juvenile brain babble — random tokens now, meaningful language after training.</p>
+          <span class="tag">Live Babble</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+      <a href="energy.html" class="row row-energy">
+        <span class="num">05</span>
+        <span class="body">
+          <h3>Energy Efficiency</h3>
+          <p>Side-by-side comparison: GPT-4o (0.3 Wh/query) vs Engram on Loihi (0.0003 Wh/step). Neuromorphic hardware is 73–109× more energy efficient than traditional compute.</p>
+          <span class="tag">Data Comparison</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+      <a href="body.html" class="row row-body">
+        <span class="num">06</span>
+        <span class="body">
+          <h3>Virtual Body (MuJoCo)</h3>
+          <p>Live 3D view of the brain's MuJoCo humanoid body. Watch motor commands move limbs in real-time — locomotion, manipulation, and head control.</p>
+          <span class="tag">Three.js / Live</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+      <a href="walking.html" class="row row-walking">
+        <span class="num">07</span>
+        <span class="body">
+          <h3>Brain Learning to Walk</h3>
+          <p>Per-joint motor neuron activity across 15 locomotion actuators via population vector decoding. Watch the brain learn individuated joint control from random noise.</p>
+          <span class="tag">Population Vector / Live</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+      <a href="concepts.html" class="row row-concepts">
+        <span class="num">08</span>
+        <span class="body">
+          <h3>Concept Formation</h3>
+          <p>Probe the concept layer with controlled stimuli. See which neurons fire for "dog" vs "cat" vs "car". Cosine similarity matrix reveals learned representations.</p>
+          <span class="tag">Live Probe</span>
+        </span>
+        <span class="arrow">→</span>
+      </a>
+
+    </nav>
+
+    <p class="spec">Engram Neural Architecture &nbsp;·&nbsp; 1,056,800 neurons &nbsp;·&nbsp; 1.31B synapses &nbsp;·&nbsp; 48 synapse groups &nbsp;·&nbsp; 6 biological learning mechanisms &nbsp;·&nbsp; 29-DOF humanoid body</p>
+  </main>
+
 </div>
 
 <script>
@@ -288,94 +308,6 @@
     });
 })();
 </script>
-
-<div class="demos">
-
-    <a href="../index.html" class="demo-card card-brain">
-        <div class="demo-num">Demo 01</div>
-        <div class="demo-title">Live Brain Visualization</div>
-        <div class="demo-desc">
-            Real-time 3D brain with 13 regions, 48 synapse groups, lightning-bolt synaptic arcs,
-            and neuromodulator-driven lighting. Connects live to the Hetzner training server.
-        </div>
-        <span class="demo-tag">Three.js / WebGL</span>
-    </a>
-
-    <a href="reaction.html" class="demo-card card-reaction">
-        <div class="demo-num">Demo 02</div>
-        <div class="demo-title">Brain Reaction Probe</div>
-        <div class="demo-desc">
-            Drop an image or trigger a preset stimulus and watch the neural cascade unfold.
-            See which brain regions activate, in what order, and why.
-        </div>
-        <span class="demo-tag">Interactive</span>
-    </a>
-
-    <a href="timeline.html" class="demo-card card-timeline">
-        <div class="demo-num">Demo 03</div>
-        <div class="demo-title">Development Timeline</div>
-        <div class="demo-desc">
-            Timelapse of the brain growing up from birth to maturity. Watch plasticity decrease,
-            concepts form, pruning sculpt connections, and myelination lock in knowledge.
-        </div>
-        <span class="demo-tag">Timelapse</span>
-    </a>
-
-    <a href="speech.html" class="demo-card card-speech">
-        <div class="demo-num">Demo 04</div>
-        <div class="demo-title">Speech Motor Output</div>
-        <div class="demo-desc">
-            Live stream from the brain's 3,486 speech motor neurons. Watch the juvenile brain
-            babble — random tokens now, meaningful language after training.
-        </div>
-        <span class="demo-tag">Live Babble</span>
-    </a>
-
-    <a href="energy.html" class="demo-card card-energy">
-        <div class="demo-num">Demo 05</div>
-        <div class="demo-title">Energy Efficiency</div>
-        <div class="demo-desc">
-            Side-by-side comparison: GPT-4o (0.3 Wh/query) vs Engram on Loihi (0.0003 Wh/step).
-            Neuromorphic hardware is 73-109x more energy efficient than traditional compute.
-        </div>
-        <span class="demo-tag">Data Comparison</span>
-    </a>
-
-    <a href="body.html" class="demo-card card-body">
-        <div class="demo-num">Demo 06</div>
-        <div class="demo-title">Virtual Body (MuJoCo)</div>
-        <div class="demo-desc">
-            Live 3D view of the brain's MuJoCo humanoid body. Watch motor commands
-            move limbs in real-time — locomotion, manipulation, and head control.
-        </div>
-        <span class="demo-tag">Three.js / Live</span>
-    </a>
-
-    <a href="walking.html" class="demo-card card-walking">
-        <div class="demo-num">Demo 07</div>
-        <div class="demo-title">Brain Learning to Walk</div>
-        <div class="demo-desc">
-            Per-joint motor neuron activity across 15 locomotion actuators via population
-            vector decoding. Watch the brain learn individuated joint control from random noise.
-        </div>
-        <span class="demo-tag">Population Vector / Live</span>
-    </a>
-
-    <a href="concepts.html" class="demo-card card-concepts">
-        <div class="demo-num">Demo 08</div>
-        <div class="demo-title">Concept Formation</div>
-        <div class="demo-desc">
-            Probe the concept layer with controlled stimuli. See which neurons fire
-            for "dog" vs "cat" vs "car". Cosine similarity matrix reveals learned representations.
-        </div>
-        <span class="demo-tag">Live Probe</span>
-    </a>
-
-</div>
-
-<div class="footer">
-    <p>Engram Neural Architecture — 1,056,800 neurons — 1.31B synapses — 48 synapse groups — 6 biological learning mechanisms — 29-DOF humanoid body</p>
-</div>
 
 </body>
 </html>

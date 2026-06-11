@@ -4,7 +4,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Engram — Brain Development Timeline</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+:root{
+  --eg-bg:#070b15;
+  --eg-text:#cdd6e6; --eg-dim:#7a8699; --eg-faint:#525d70; --eg-bright:#eef2fb;
+  --eg-border:rgba(120,160,225,0.12); --eg-border-2:rgba(120,160,225,0.22);
+  --eg-panel-1:rgba(148,178,225,0.05); --eg-panel-2:rgba(148,178,225,0.012);
+  --eg-sans:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --eg-mono:'JetBrains Mono','SF Mono', ui-monospace, monospace;
+  --eg-accent:#38d97a;
+}
+body{
+  font-family:var(--eg-sans); color:var(--eg-text);
+  background:
+    radial-gradient(1000px 560px at 18% -6%, rgba(36,92,170,0.16), transparent 60%),
+    radial-gradient(760px 460px at 100% 8%, rgba(124,92,222,0.10), transparent 60%),
+    var(--eg-bg) !important;
+  background-attachment:fixed;
+}
+.eg-topbar{position:fixed;inset:0 0 auto 0;height:54px;z-index:9000;display:flex;align-items:center;gap:14px;padding:0 18px;background:rgba(8,12,22,0.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--eg-border);font-family:var(--eg-mono)}
+.eg-topbar a{text-decoration:none}
+.eg-back{display:inline-flex;align-items:center;gap:7px;font-size:12px;letter-spacing:.05em;color:var(--eg-dim);transition:color .2s}
+.eg-back:hover{color:var(--eg-bright)}
+.eg-brandwrap{display:flex;align-items:center;gap:9px;font-size:12.5px;letter-spacing:.07em}
+.eg-mark{width:22px;height:22px;flex:none}
+.eg-name{font-weight:700;background:linear-gradient(100deg,#5fe0f5,#7db4ff,#b79cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.eg-sep{color:var(--eg-faint)}
+.eg-page{color:var(--eg-accent)}
+.eg-right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;letter-spacing:.05em}
+.eg-right a{color:var(--eg-dim);transition:color .2s}
+.eg-right a:hover{color:#7db4ff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(120,160,225,0.18);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+    </style>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -25,12 +61,12 @@
         }
 
         body {
-            background: var(--bg);
             color: var(--text);
             font-family: var(--mono);
             overflow: hidden;
             width: 100vw;
             height: 100vh;
+            padding-top: 54px;
             display: flex;
             flex-direction: column;
         }
@@ -43,23 +79,6 @@
             pointer-events: none;
             z-index: 9999;
         }
-
-        /* ── Top bar ─────────────────────────────────────────── */
-        .topbar {
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 20px;
-            background: var(--panel);
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
-        }
-        .topbar-left { display: flex; align-items: center; gap: 12px; }
-        .topbar-logo { font-size: 13px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); }
-        .topbar-sep { width: 1px; height: 16px; background: var(--border); }
-        .topbar-title { font-size: 11px; font-weight: 400; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
-        .demo-badge { font-size: 9px; font-weight: 700; letter-spacing: 1.5px; padding: 3px 10px; border-radius: 3px; background: rgba(245,166,35,0.15); color: var(--adolescent); border: 1px solid rgba(245,166,35,0.3); text-transform: uppercase; }
 
         /* ── Main layout ─────────────────────────────────────── */
         .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -126,6 +145,23 @@
             left: 20px;
             z-index: 10;
             pointer-events: none;
+            background: var(--eg-panel-1);
+            border: 1px solid var(--eg-border);
+            border-radius: 12px;
+            padding: 14px 16px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            min-width: 212px;
+        }
+        .stats-overlay::before {
+            content: 'Learning State';
+            display: block;
+            font-family: var(--eg-mono);
+            font-size: 9px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--eg-faint);
+            margin-bottom: 11px;
         }
         .stat-row {
             display: flex;
@@ -166,10 +202,11 @@
             transform: translateX(-50%);
             z-index: 10;
             padding: 10px 20px;
-            background: rgba(10, 14, 26, 0.9);
-            border: 1px solid var(--border);
-            border-radius: 6px;
+            background: var(--eg-panel-1);
+            border: 1px solid var(--eg-border);
+            border-radius: 12px;
             backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
             pointer-events: none;
             opacity: 0;
             transition: opacity 0.5s;
@@ -193,8 +230,8 @@
         /* ── Timeline scrubber ───────────────────────────────── */
         .timeline-bar {
             height: 80px;
-            background: var(--panel);
-            border-top: 1px solid var(--border);
+            background: var(--eg-panel-1);
+            border-top: 1px solid var(--eg-border);
             display: flex;
             flex-direction: column;
             padding: 8px 20px 12px;
@@ -210,8 +247,8 @@
             width: 30px;
             height: 30px;
             border-radius: 50%;
-            border: 1px solid var(--border);
-            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--eg-border);
+            background: var(--eg-panel-1);
             color: var(--text);
             font-size: 12px;
             cursor: pointer;
@@ -220,20 +257,20 @@
             justify-content: center;
             transition: all 0.2s;
         }
-        .btn-play:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-play:hover { border-color: var(--eg-accent); color: var(--eg-accent); }
         .btn-speed {
             padding: 4px 10px;
-            border: 1px solid var(--border);
-            border-radius: 3px;
+            border: 1px solid var(--eg-border);
+            border-radius: 8px;
             background: transparent;
             color: var(--text-dim);
-            font-family: var(--mono);
+            font-family: var(--eg-mono);
             font-size: 9px;
             cursor: pointer;
             transition: all 0.2s;
             letter-spacing: 0.5px;
         }
-        .btn-speed:hover, .btn-speed.active { border-color: var(--accent); color: var(--accent); }
+        .btn-speed:hover, .btn-speed.active { border-color: var(--eg-accent); color: var(--eg-accent); }
         .timeline-time {
             font-size: 10px;
             color: var(--text-dim);
@@ -289,9 +326,9 @@
             width: 14px;
             height: 14px;
             border-radius: 50%;
-            background: var(--accent);
+            background: var(--eg-accent);
             border: 2px solid var(--text-bright);
-            box-shadow: 0 0 10px rgba(94, 164, 245, 0.4);
+            box-shadow: 0 0 10px rgba(56, 217, 122, 0.4);
             pointer-events: none;
             transition: left 0.1s linear;
         }
@@ -303,8 +340,8 @@
             align-items: center;
             justify-content: center;
             gap: 20px;
-            background: var(--panel);
-            border-top: 1px solid var(--border);
+            background: var(--eg-panel-1);
+            border-top: 1px solid var(--eg-border);
             flex-shrink: 0;
         }
         .bottombar-item { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); }
@@ -390,14 +427,29 @@
 </head>
 <body>
 
-<div class="topbar">
-    <div class="topbar-left">
-        <span class="topbar-logo">Engram</span>
-        <span class="topbar-sep"></span>
-        <span class="topbar-title">Development Timeline</span>
-    </div>
-    <span class="demo-badge">Timelapse</span>
-</div>
+<header class="eg-topbar">
+  <a class="eg-back" href="index.html">&larr; Demos</a>
+  <div class="eg-brandwrap">
+    <svg class="eg-mark" viewBox="0 0 240 240" aria-hidden="true">
+      <defs>
+        <linearGradient id="egm-e" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.5" stop-color="#5ea4f5"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+        <radialGradient id="egm-n" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#daf6ff"/><stop offset="1" stop-color="#22d3ee"/></radialGradient>
+        <radialGradient id="egm-f" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#e9fff2"/><stop offset="1" stop-color="#38d97a"/></radialGradient>
+      </defs>
+      <circle cx="120" cy="120" r="106" fill="none" stroke="url(#egm-e)" stroke-width="4" opacity="0.5"/>
+      <g stroke="url(#egm-e)" stroke-width="4" stroke-linecap="round" opacity="0.9">
+        <line x1="120" y1="56" x2="171" y2="76"/><line x1="171" y1="76" x2="187" y2="122"/><line x1="187" y1="122" x2="162" y2="170"/><line x1="162" y1="170" x2="110" y2="184"/><line x1="110" y1="184" x2="64" y2="160"/><line x1="64" y1="160" x2="55" y2="102"/><line x1="55" y1="102" x2="120" y2="56"/><line x1="120" y1="56" x2="116" y2="108"/><line x1="116" y1="108" x2="150" y2="124"/><line x1="150" y1="124" x2="187" y2="122"/><line x1="116" y1="108" x2="96" y2="142"/><line x1="96" y1="142" x2="64" y2="160"/><line x1="150" y1="124" x2="137" y2="156"/><line x1="137" y1="156" x2="110" y2="184"/><line x1="96" y1="142" x2="137" y2="156"/><line x1="171" y1="76" x2="150" y2="124"/><line x1="55" y1="102" x2="116" y2="108"/><line x1="116" y1="108" x2="137" y2="156"/>
+      </g>
+      <g>
+        <circle cx="120" cy="56" r="7" fill="url(#egm-n)"/><circle cx="187" cy="122" r="7" fill="url(#egm-n)"/><circle cx="64" cy="160" r="7" fill="url(#egm-n)"/><circle cx="55" cy="102" r="6" fill="url(#egm-n)"/><circle cx="116" cy="108" r="8" fill="url(#egm-n)"/><circle cx="171" cy="76" r="9" fill="url(#egm-f)"/><circle cx="110" cy="184" r="8" fill="url(#egm-f)"/><circle cx="150" cy="124" r="10" fill="url(#egm-f)"/>
+      </g>
+    </svg>
+    <span class="eg-name">ENGRAM</span>
+    <span class="eg-sep">/</span>
+    <span class="eg-page">Development Timeline</span>
+  </div>
+  <div class="eg-right"><a href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener">GitHub</a></div>
+</header>
 
 <div class="main">
     <div class="viewport">

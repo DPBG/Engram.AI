@@ -1,781 +1,239 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Engram — Brain Reaction Demo</title>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap">
-    <style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engram — Brain Reaction Probe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --eg-bg:#070b15; --eg-stage:#05080f;
+  --eg-text:#cdd6e6; --eg-dim:#7a8699; --eg-faint:#525d70; --eg-bright:#eef2fb;
+  --eg-border:rgba(120,160,225,0.12); --eg-border-2:rgba(120,160,225,0.22);
+  --eg-panel-1:rgba(148,178,225,0.05); --eg-panel-2:rgba(148,178,225,0.02);
+  --eg-sans:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --eg-mono:'JetBrains Mono','SF Mono', ui-monospace, monospace;
+  --eg-accent:#22d3ee;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:var(--eg-sans);color:var(--eg-text);overflow:hidden;-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1100px 600px at 50% -10%, rgba(36,92,170,0.14), transparent 60%), var(--eg-bg);}
+a{color:inherit;text-decoration:none}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(120,160,225,0.18);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
 
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+.eg-topbar{position:fixed;inset:0 0 auto 0;height:54px;z-index:50;display:flex;align-items:center;gap:14px;padding:0 18px;background:rgba(8,12,22,0.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--eg-border);font-family:var(--eg-mono)}
+.eg-back{display:inline-flex;align-items:center;gap:7px;font-size:12px;letter-spacing:.05em;color:var(--eg-dim);transition:color .2s}
+.eg-back:hover{color:var(--eg-bright)}
+.eg-brandwrap{display:flex;align-items:center;gap:9px;font-size:12.5px;letter-spacing:.07em}
+.eg-mark{width:22px;height:22px;flex:none}
+.eg-name{font-weight:700;background:linear-gradient(100deg,#5fe0f5,#7db4ff,#b79cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.eg-sep{color:var(--eg-faint)}
+.eg-page{color:var(--eg-accent)}
+.eg-right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;letter-spacing:.05em}
+.eg-right a{color:var(--eg-dim);transition:color .2s}.eg-right a:hover{color:#7db4ff}
+.demo-badge{font-family:var(--eg-mono);font-size:10px;letter-spacing:.08em;padding:4px 10px;border-radius:999px;border:1px solid var(--eg-border);color:var(--eg-dim)}
 
-        :root {
-            --bg: #060a14;
-            --panel: #0a0e1a;
-            --border: rgba(94, 164, 245, 0.12);
-            --border-active: rgba(94, 164, 245, 0.4);
-            --accent: #5ea4f5;
-            --accent-dim: rgba(94, 164, 245, 0.6);
-            --text: #c8d0e0;
-            --text-dim: #5a6478;
-            --text-bright: #e8ecf4;
-            --green: #38d97a;
-            --amber: #f5a623;
-            --red: #f44;
-            --cyan: #22d3ee;
-            --purple: #a78bfa;
-            --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-            --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
+.stage{position:fixed;inset:54px 0 0 0;display:grid;grid-template-columns:300px minmax(0,1fr) 344px}
+.col{min-height:0;overflow-y:auto}
+.col-l{border-right:1px solid var(--eg-border);padding:22px 20px;display:flex;flex-direction:column;gap:24px;background:linear-gradient(180deg,var(--eg-panel-1),transparent 55%)}
+.col-r{border-left:1px solid var(--eg-border);padding:22px 20px;display:flex;flex-direction:column;gap:16px;background:linear-gradient(180deg,var(--eg-panel-1),transparent 55%)}
+.col-c{position:relative;overflow:hidden;background:var(--eg-stage)}
 
-        body {
-            background: var(--bg);
-            color: var(--text);
-            font-family: var(--mono);
-            overflow: hidden;
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
+.sec{display:flex;flex-direction:column;gap:12px}
+.sec-label{font-family:var(--eg-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--eg-faint);display:flex;align-items:center;gap:9px}
+.sec-label::before{content:'';width:3px;height:11px;border-radius:2px;background:var(--eg-accent);opacity:.75}
 
-        /* ── Scan line overlay ────────────────────────────────── */
-        body::after {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background: repeating-linear-gradient(
-                0deg,
-                transparent,
-                transparent 2px,
-                rgba(0, 0, 0, 0.03) 2px,
-                rgba(0, 0, 0, 0.03) 4px
-            );
-            pointer-events: none;
-            z-index: 9999;
-        }
+.drop-zone{position:relative;border:1.5px dashed var(--eg-border-2);border-radius:12px;padding:26px 16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
+.drop-zone:hover{border-color:var(--eg-accent);background:color-mix(in srgb,var(--eg-accent) 6%,transparent)}
+.drop-zone.dragover{border-color:var(--eg-accent);background:color-mix(in srgb,var(--eg-accent) 13%,transparent)}
+.drop-zone input[type=file]{display:none}
+.drop-icon{font-size:22px;color:var(--eg-dim);display:block;margin-bottom:8px}
+.drop-text{font-size:12.5px;color:var(--eg-dim);line-height:1.6}
+.drop-text strong{color:var(--eg-bright)}
+.drop-zone.has-file .drop-default{display:none}
+.drop-preview{display:none;align-items:center;gap:12px;text-align:left}
+.drop-preview.active{display:flex}
+.drop-preview img{width:48px;height:48px;border-radius:8px;object-fit:cover;border:1px solid var(--eg-border);flex:none}
+.drop-preview-name{font-size:12px;color:var(--eg-bright);word-break:break-all}
+.drop-preview-size{font-family:var(--eg-mono);font-size:10px;color:var(--eg-faint);margin-top:3px}
 
-        /* ── Top bar ─────────────────────────────────────────── */
-        .topbar {
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 20px;
-            background: var(--panel);
-            border-bottom: 1px solid var(--border);
-            flex-shrink: 0;
-        }
-        .topbar-left {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .topbar-logo {
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            color: var(--accent);
-        }
-        .topbar-sep {
-            width: 1px;
-            height: 16px;
-            background: var(--border);
-        }
-        .topbar-title {
-            font-size: 11px;
-            font-weight: 400;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            color: var(--text-dim);
-        }
-        .demo-badge {
-            font-size: 9px;
-            font-weight: 700;
-            letter-spacing: 1.5px;
-            padding: 3px 10px;
-            border-radius: 3px;
-            background: rgba(245, 166, 35, 0.15);
-            color: var(--amber);
-            border: 1px solid rgba(245, 166, 35, 0.3);
-            text-transform: uppercase;
-        }
+.text-row{display:flex;gap:8px}
+.text-input{flex:1;min-width:0;background:var(--eg-panel-2);border:1px solid var(--eg-border);border-radius:9px;padding:10px 12px;color:var(--eg-text);font-family:var(--eg-sans);font-size:13px;transition:border-color .2s}
+.text-input:focus{outline:none;border-color:var(--eg-accent)}
+.text-input::placeholder{color:var(--eg-faint)}
+.btn-send{font-family:var(--eg-mono);font-size:11px;letter-spacing:.08em;color:var(--eg-accent);background:color-mix(in srgb,var(--eg-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--eg-accent) 32%,transparent);border-radius:9px;padding:0 16px;cursor:pointer;transition:.2s}
+.btn-send:hover{background:color-mix(in srgb,var(--eg-accent) 22%,transparent)}
 
-        /* ── Main layout ─────────────────────────────────────── */
-        .main {
-            flex: 1;
-            display: flex;
-            overflow: hidden;
-        }
+.presets{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.preset-btn{text-align:left;background:var(--eg-panel-2);border:1px solid var(--eg-border);border-radius:10px;padding:11px 12px;color:var(--eg-text);font-family:var(--eg-sans);font-size:12px;cursor:pointer;transition:.18s;display:flex;flex-direction:column;gap:7px}
+.preset-btn:hover{border-color:var(--eg-accent);transform:translateY(-1px);background:color-mix(in srgb,var(--eg-accent) 7%,transparent)}
+.preset-tag{font-family:var(--eg-mono);font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;align-self:flex-start;padding:2px 8px;border-radius:999px}
+.preset-tag.visual{color:#22d3ee;background:rgba(34,211,238,.12)}
+.preset-tag.auditory{color:#38d97a;background:rgba(56,217,122,.12)}
+.preset-tag.text{color:#f472b6;background:rgba(244,114,182,.12)}
+.preset-tag.multi{color:#f5a623;background:rgba(245,166,35,.12)}
+.col-foot{margin-top:auto;padding-top:18px;font-family:var(--eg-mono);font-size:10px;letter-spacing:.04em;color:var(--eg-faint);line-height:1.7}
 
-        /* ── Left panel ──────────────────────────────────────── */
-        .panel-left {
-            width: 340px;
-            flex-shrink: 0;
-            background: var(--panel);
-            border-right: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
+.col-c iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+.stage-vignette{position:absolute;inset:0;pointer-events:none;background:radial-gradient(125% 125% at 50% 42%, transparent 52%, rgba(5,8,15,0.62) 100%);box-shadow:inset 0 0 120px 30px rgba(5,8,15,0.55)}
+.stage-label{position:absolute;top:16px;left:18px;z-index:2;font-family:var(--eg-mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--eg-dim);display:flex;align-items:center;gap:9px;pointer-events:none}
+.stage-label .ldot{width:7px;height:7px;border-radius:50%;background:var(--eg-accent);box-shadow:0 0 9px var(--eg-accent)}
 
-        .section {
-            padding: 16px 18px;
-            border-bottom: 1px solid var(--border);
-        }
-        .section-label {
-            font-size: 9px;
-            font-weight: 600;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: var(--text-dim);
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .section-label::before {
-            content: '';
-            width: 3px;
-            height: 10px;
-            background: var(--accent);
-            border-radius: 1px;
-        }
+.processing{position:absolute;left:50%;bottom:26px;transform:translate(-50%,12px);z-index:3;width:min(460px,74%);opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;background:rgba(8,12,22,0.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--eg-border);border-radius:13px;padding:15px 17px}
+.processing.active{opacity:1;transform:translate(-50%,0)}
+.processing-header{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+.processing-dot{width:8px;height:8px;border-radius:50%;background:var(--eg-accent);box-shadow:0 0 10px var(--eg-accent);animation:eg-pulse 1.2s infinite}
+.processing-text{font-family:var(--eg-mono);font-size:12px;color:var(--eg-text)}
+.processing-bar{height:3px;border-radius:3px;background:rgba(255,255,255,0.07);overflow:hidden}
+.processing-bar-fill{height:100%;width:0;border-radius:3px;background:linear-gradient(90deg,var(--eg-accent),#7db4ff);transition:width .3s ease}
+@keyframes eg-pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-        /* Drop zone */
-        .drop-zone {
-            border: 1px dashed var(--border);
-            border-radius: 6px;
-            padding: 24px 16px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-            min-height: 100px;
-        }
-        .drop-zone:hover, .drop-zone.dragover {
-            border-color: var(--accent);
-            background: rgba(94, 164, 245, 0.04);
-        }
-        .drop-zone.dragover {
-            box-shadow: inset 0 0 30px rgba(94, 164, 245, 0.08);
-        }
-        .drop-icon {
-            font-size: 28px;
-            margin-bottom: 8px;
-            opacity: 0.3;
-            display: block;
-        }
-        .drop-text {
-            font-size: 11px;
-            color: var(--text-dim);
-            line-height: 1.6;
-        }
-        .drop-text strong {
-            color: var(--accent-dim);
-        }
-        .drop-zone input[type="file"] {
-            display: none;
-        }
-        .drop-preview {
-            display: none;
-            align-items: center;
-            gap: 12px;
-        }
-        .drop-preview.active {
-            display: flex;
-        }
-        .drop-preview img {
-            width: 64px;
-            height: 64px;
-            object-fit: cover;
-            border-radius: 4px;
-            border: 1px solid var(--border);
-        }
-        .drop-preview-info {
-            text-align: left;
-        }
-        .drop-preview-name {
-            font-size: 11px;
-            color: var(--text);
-            margin-bottom: 2px;
-            word-break: break-all;
-        }
-        .drop-preview-size {
-            font-size: 9px;
-            color: var(--text-dim);
-        }
-        .drop-default { display: block; }
-        .drop-zone.has-file .drop-default { display: none; }
+.r-head h2{font-family:var(--eg-sans);font-size:18px;font-weight:700;color:var(--eg-bright);letter-spacing:-.01em}
+.r-head p{font-size:12px;color:var(--eg-dim);margin-top:5px;line-height:1.55}
+.summary{display:none}
+.summary.active{display:block}
+.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}
+.summary-stat{background:var(--eg-panel-2);border:1px solid var(--eg-border);border-radius:10px;padding:11px 12px}
+.summary-stat-label{font-family:var(--eg-mono);font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--eg-faint)}
+.summary-stat-val{font-family:var(--eg-mono);font-size:18px;font-weight:600;color:var(--eg-bright);margin-top:5px}
+.summary-stat-val.cyan{color:#22d3ee}.summary-stat-val.green{color:#38d97a}.summary-stat-val.amber{color:#f5b13a}
+.log-wrap{display:flex;flex-direction:column;min-height:0;flex:1}
+.log-scroll{flex:1;min-height:0;overflow-y:auto;margin-top:4px}
+.log-scroll:empty::after{content:'Trigger a stimulus to trace the neural cascade — region by region, as the brain reacts in real time.';display:block;font-size:12px;color:var(--eg-faint);line-height:1.7;padding:14px 2px}
+.log-entry{display:grid;grid-template-columns:46px 1fr;gap:2px 12px;padding:12px 4px;border-bottom:1px solid var(--eg-border);align-items:start;animation:logIn .3s ease}
+@keyframes logIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.log-time{grid-row:1/4;grid-column:1;font-family:var(--eg-mono);font-size:10px;color:var(--eg-faint);padding-top:2px}
+.log-region{grid-column:2;font-size:13px;font-weight:600;letter-spacing:-.01em}
+.log-detail{grid-column:2;font-size:11px;color:var(--eg-dim);line-height:1.5;margin-top:2px}
+.log-bar{grid-column:2;height:3px;border-radius:3px;background:rgba(255,255,255,0.06);margin-top:7px;overflow:hidden;width:100%}
+.log-bar-fill{height:100%;border-radius:3px}
 
-        /* Text input */
-        .text-input-row {
-            display: flex;
-            gap: 8px;
-        }
-        .text-input {
-            flex: 1;
-            background: rgba(255,255,255,0.03);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 8px 12px;
-            color: var(--text);
-            font-family: var(--mono);
-            font-size: 11px;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        .text-input:focus {
-            border-color: var(--accent);
-        }
-        .text-input::placeholder {
-            color: var(--text-dim);
-        }
-        .btn-send {
-            padding: 8px 14px;
-            background: rgba(94, 164, 245, 0.12);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            color: var(--accent);
-            font-family: var(--mono);
-            font-size: 10px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            letter-spacing: 0.5px;
-        }
-        .btn-send:hover {
-            background: rgba(94, 164, 245, 0.2);
-            border-color: var(--accent);
-        }
-
-        /* Preset buttons */
-        .presets {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 6px;
-        }
-        .preset-btn {
-            padding: 10px 8px;
-            background: rgba(255,255,255,0.02);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            color: var(--text-dim);
-            font-family: var(--mono);
-            font-size: 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: left;
-            line-height: 1.4;
-        }
-        .preset-btn:hover {
-            background: rgba(94, 164, 245, 0.06);
-            border-color: var(--border-active);
-            color: var(--text);
-        }
-        .preset-btn:active {
-            transform: scale(0.97);
-        }
-        .preset-tag {
-            display: block;
-            font-size: 8px;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            margin-bottom: 3px;
-        }
-        .preset-tag.visual { color: var(--cyan); }
-        .preset-tag.auditory { color: var(--green); }
-        .preset-tag.text { color: var(--purple); }
-        .preset-tag.multi { color: var(--amber); }
-
-        /* ── Activity Log ────────────────────────────────────── */
-        .log-section {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            min-height: 0;
-        }
-        .log-scroll {
-            flex: 1;
-            overflow-y: auto;
-            padding: 0 18px 12px;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(94,164,245,0.2) transparent;
-        }
-        .log-scroll::-webkit-scrollbar { width: 4px; }
-        .log-scroll::-webkit-scrollbar-track { background: transparent; }
-        .log-scroll::-webkit-scrollbar-thumb { background: rgba(94,164,245,0.2); border-radius: 2px; }
-
-        .log-entry {
-            padding: 6px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.02);
-            animation: logSlideIn 0.3s ease-out;
-        }
-        @keyframes logSlideIn {
-            from { opacity: 0; transform: translateX(-8px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        .log-time {
-            font-size: 9px;
-            color: var(--text-dim);
-            margin-bottom: 2px;
-        }
-        .log-region {
-            font-size: 10px;
-            font-weight: 600;
-            margin-bottom: 1px;
-        }
-        .log-detail {
-            font-size: 9px;
-            color: var(--text-dim);
-            line-height: 1.4;
-        }
-        .log-bar {
-            margin-top: 4px;
-            height: 3px;
-            border-radius: 1.5px;
-            background: rgba(255,255,255,0.04);
-            overflow: hidden;
-        }
-        .log-bar-fill {
-            height: 100%;
-            border-radius: 1.5px;
-            transition: width 0.5s ease-out;
-        }
-
-        /* ── Processing overlay ──────────────────────────────── */
-        .processing {
-            display: none;
-            padding: 16px 18px;
-            border-bottom: 1px solid var(--border);
-        }
-        .processing.active {
-            display: block;
-        }
-        .processing-header {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 8px;
-        }
-        .processing-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: var(--accent);
-            animation: procPulse 1s infinite;
-        }
-        @keyframes procPulse {
-            0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--accent); }
-            50% { opacity: 0.4; box-shadow: none; }
-        }
-        .processing-text {
-            font-size: 10px;
-            font-weight: 500;
-            color: var(--accent);
-            letter-spacing: 0.5px;
-        }
-        .processing-bar {
-            height: 2px;
-            background: rgba(255,255,255,0.04);
-            border-radius: 1px;
-            overflow: hidden;
-        }
-        .processing-bar-fill {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, var(--accent), var(--cyan));
-            border-radius: 1px;
-            transition: width 0.15s linear;
-        }
-
-        /* ── Summary card ────────────────────────────────────── */
-        .summary {
-            display: none;
-            padding: 14px 18px;
-            border-bottom: 1px solid var(--border);
-            background: rgba(56, 217, 122, 0.03);
-        }
-        .summary.active {
-            display: block;
-            animation: summaryIn 0.4s ease-out;
-        }
-        @keyframes summaryIn {
-            from { opacity: 0; transform: translateY(-6px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .summary-label {
-            font-size: 9px;
-            font-weight: 600;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: var(--green);
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .summary-label::before {
-            content: '';
-            width: 3px;
-            height: 10px;
-            background: var(--green);
-            border-radius: 1px;
-        }
-        .summary-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 6px;
-        }
-        .summary-stat {
-            padding: 6px 8px;
-            background: rgba(255,255,255,0.02);
-            border-radius: 3px;
-            border: 1px solid rgba(255,255,255,0.03);
-        }
-        .summary-stat-label {
-            font-size: 8px;
-            color: var(--text-dim);
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
-        .summary-stat-val {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--text-bright);
-            margin-top: 2px;
-        }
-        .summary-stat-val.green { color: var(--green); }
-        .summary-stat-val.amber { color: var(--amber); }
-        .summary-stat-val.cyan { color: var(--cyan); }
-
-        /* ── Brain viewport ──────────────────────────────────── */
-        .viewport {
-            flex: 1;
-            position: relative;
-            background: var(--bg);
-        }
-        .viewport iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
-            display: block;
-        }
-        /* Corner decorations */
-        .viewport::before, .viewport::after {
-            content: '';
-            position: absolute;
-            width: 30px;
-            height: 30px;
-            border: 1px solid var(--border);
-            pointer-events: none;
-            z-index: 2;
-        }
-        .viewport::before {
-            top: 12px; left: 12px;
-            border-right: none; border-bottom: none;
-        }
-        .viewport::after {
-            bottom: 12px; right: 12px;
-            border-left: none; border-top: none;
-        }
-
-        /* ── Bottom bar ──────────────────────────────────────── */
-        .bottombar {
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 20px;
-            background: var(--panel);
-            border-top: 1px solid var(--border);
-            flex-shrink: 0;
-        }
-        .bottombar-item {
-            font-size: 9px;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            color: var(--text-dim);
-        }
-        .bottombar-item strong {
-            color: var(--text);
-            font-weight: 500;
-        }
-        .bottombar-sep {
-            width: 3px;
-            height: 3px;
-            border-radius: 50%;
-            background: var(--text-dim);
-            opacity: 0.4;
-        }
-
-        /* ── Idle state hint in viewport ─────────────────────── */
-        .viewport-hint {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            pointer-events: none;
-            z-index: 1;
-            opacity: 0;
-            transition: opacity 0.5s;
-        }
-        .viewport-hint.visible {
-            opacity: 1;
-        }
-        .viewport-hint-text {
-            font-size: 11px;
-            color: var(--text-dim);
-            letter-spacing: 1px;
-            text-transform: uppercase;
-            margin-top: 60px;
-        }
-
-        /* ── Mobile responsive ──────────────────────────────── */
-        @media (max-width: 768px) {
-            body {
-                overflow-y: auto;
-                height: auto;
-                min-height: 100vh;
-            }
-
-            .topbar {
-                padding: 0 12px;
-            }
-
-            .topbar-title {
-                font-size: 10px;
-                letter-spacing: 1px;
-            }
-
-            .main {
-                flex-direction: column;
-                overflow: visible;
-                flex: none;
-            }
-
-            .panel-left {
-                width: 100%;
-                flex-shrink: 0;
-                max-height: none;
-                overflow-y: visible;
-                overflow: visible;
-                border-right: none;
-                border-bottom: 1px solid var(--border);
-            }
-
-            .viewport {
-                width: 100%;
-                height: 300px;
-                flex-shrink: 0;
-                flex: none;
-            }
-
-            .viewport iframe {
-                height: 300px;
-            }
-
-            .drop-zone {
-                padding: 16px 12px;
-                min-height: 80px;
-            }
-
-            .section {
-                padding: 12px 14px;
-            }
-
-            .presets {
-                grid-template-columns: 1fr 1fr;
-            }
-
-            .preset-btn {
-                min-height: 44px;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                touch-action: manipulation;
-            }
-
-            .btn-send {
-                min-height: 44px;
-                touch-action: manipulation;
-            }
-
-            .text-input {
-                min-height: 44px;
-            }
-
-            .log-section {
-                max-height: 200px;
-                flex: none;
-                overflow: hidden;
-            }
-
-            .log-scroll {
-                padding: 0 14px 10px;
-            }
-
-            .summary-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-
-            .bottombar {
-                flex-wrap: wrap;
-                height: auto;
-                padding: 8px 12px;
-                gap: 10px;
-            }
-
-            .bottombar-item {
-                font-size: 8px;
-            }
-
-            /* Hide corner decorations on mobile - they overlap content */
-            .viewport::before,
-            .viewport::after {
-                display: none;
-            }
-        }
-    </style>
+@media (max-width:1080px){
+  body{overflow:auto}
+  .stage{position:static;inset:auto;grid-template-columns:1fr;height:auto}
+  .col{overflow:visible}
+  .col-c{height:62vh;min-height:420px}
+  .eg-topbar{position:sticky}
+}
+</style>
 </head>
 <body>
 
-<!-- ── Top Bar ────────────────────────────────────────────── -->
-<div class="topbar">
-    <div class="topbar-left">
-        <span class="topbar-logo">Engram</span>
-        <span class="topbar-sep"></span>
-        <span class="topbar-title">Neural Reaction Probe</span>
-    </div>
+<header class="eg-topbar">
+  <a class="eg-back" href="index.html">&larr; Demos</a>
+  <div class="eg-brandwrap">
+    <svg class="eg-mark" viewBox="0 0 240 240" aria-hidden="true">
+      <defs>
+        <linearGradient id="egm-e" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="0.5" stop-color="#5ea4f5"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+        <radialGradient id="egm-n" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#daf6ff"/><stop offset="1" stop-color="#22d3ee"/></radialGradient>
+        <radialGradient id="egm-f" cx="0.5" cy="0.38" r="0.65"><stop offset="0" stop-color="#e9fff2"/><stop offset="1" stop-color="#38d97a"/></radialGradient>
+      </defs>
+      <circle cx="120" cy="120" r="106" fill="none" stroke="url(#egm-e)" stroke-width="4" opacity="0.5"/>
+      <g stroke="url(#egm-e)" stroke-width="4" stroke-linecap="round" opacity="0.9">
+        <line x1="120" y1="56" x2="171" y2="76"/><line x1="171" y1="76" x2="187" y2="122"/><line x1="187" y1="122" x2="162" y2="170"/><line x1="162" y1="170" x2="110" y2="184"/><line x1="110" y1="184" x2="64" y2="160"/><line x1="64" y1="160" x2="55" y2="102"/><line x1="55" y1="102" x2="120" y2="56"/><line x1="120" y1="56" x2="116" y2="108"/><line x1="116" y1="108" x2="150" y2="124"/><line x1="150" y1="124" x2="187" y2="122"/><line x1="116" y1="108" x2="96" y2="142"/><line x1="96" y1="142" x2="64" y2="160"/><line x1="150" y1="124" x2="137" y2="156"/><line x1="137" y1="156" x2="110" y2="184"/><line x1="96" y1="142" x2="137" y2="156"/><line x1="171" y1="76" x2="150" y2="124"/><line x1="55" y1="102" x2="116" y2="108"/><line x1="116" y1="108" x2="137" y2="156"/>
+      </g>
+      <g>
+        <circle cx="120" cy="56" r="7" fill="url(#egm-n)"/><circle cx="187" cy="122" r="7" fill="url(#egm-n)"/><circle cx="64" cy="160" r="7" fill="url(#egm-n)"/><circle cx="55" cy="102" r="6" fill="url(#egm-n)"/><circle cx="116" cy="108" r="8" fill="url(#egm-n)"/><circle cx="171" cy="76" r="9" fill="url(#egm-f)"/><circle cx="110" cy="184" r="8" fill="url(#egm-f)"/><circle cx="150" cy="124" r="10" fill="url(#egm-f)"/>
+      </g>
+    </svg>
+    <span class="eg-name">ENGRAM</span>
+    <span class="eg-sep">/</span>
+    <span class="eg-page">Brain Reaction Probe</span>
+  </div>
+  <div class="eg-right">
     <span class="demo-badge" id="mode-badge">Interactive Demo</span>
-</div>
+    <a href="https://github.com/DPBG/Engram.AI" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</header>
 
-<!-- ── Main Layout ────────────────────────────────────────── -->
-<div class="main">
+<div class="stage">
 
-    <!-- Left Panel -->
-    <div class="panel-left">
-
-        <!-- Input: Drop Zone -->
-        <div class="section">
-            <div class="section-label">Sensory Input</div>
-            <div class="drop-zone" id="drop-zone">
-                <div class="drop-default">
-                    <span class="drop-icon">&darr;</span>
-                    <div class="drop-text">
-                        Drop an <strong>image</strong> here<br>
-                        or click to select
-                    </div>
-                </div>
-                <div class="drop-preview" id="drop-preview">
-                    <img id="preview-img" src="" alt="">
-                    <div class="drop-preview-info">
-                        <div class="drop-preview-name" id="preview-name"></div>
-                        <div class="drop-preview-size" id="preview-size"></div>
-                    </div>
-                </div>
-                <input type="file" id="file-input" accept="image/*">
-            </div>
+  <section class="col col-l">
+    <div class="sec">
+      <div class="sec-label">Sensory Input</div>
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-default">
+          <span class="drop-icon">&darr;</span>
+          <div class="drop-text">Drop an <strong>image</strong> here<br>or click to select</div>
         </div>
-
-        <!-- Input: Text -->
-        <div class="section">
-            <div class="section-label">Text Stimulus</div>
-            <div class="text-input-row">
-                <input type="text" class="text-input" id="text-input" placeholder="Type a word or phrase...">
-                <button class="btn-send" id="btn-text-send">SEND</button>
-            </div>
+        <div class="drop-preview" id="drop-preview">
+          <img id="preview-img" src="" alt="">
+          <div class="drop-preview-info">
+            <div class="drop-preview-name" id="preview-name"></div>
+            <div class="drop-preview-size" id="preview-size"></div>
+          </div>
         </div>
-
-        <!-- Presets -->
-        <div class="section">
-            <div class="section-label">Quick Stimuli</div>
-            <div class="presets">
-                <button class="preset-btn" data-preset="dog">
-                    <span class="preset-tag visual">Visual</span>
-                    Show it a dog
-                </button>
-                <button class="preset-btn" data-preset="sound">
-                    <span class="preset-tag auditory">Auditory</span>
-                    Play a loud sound
-                </button>
-                <button class="preset-btn" data-preset="flash">
-                    <span class="preset-tag visual">Visual</span>
-                    Flash a bright light
-                </button>
-                <button class="preset-btn" data-preset="hello">
-                    <span class="preset-tag text">Language</span>
-                    Say "Hello"
-                </button>
-                <button class="preset-btn" data-preset="pain">
-                    <span class="preset-tag multi">Reflex</span>
-                    Touch something hot
-                </button>
-                <button class="preset-btn" data-preset="novel">
-                    <span class="preset-tag multi">Novel</span>
-                    Show something new
-                </button>
-            </div>
-        </div>
-
-        <!-- Processing indicator -->
-        <div class="processing" id="processing">
-            <div class="processing-header">
-                <div class="processing-dot"></div>
-                <span class="processing-text" id="processing-text">Encoding sensory input...</span>
-            </div>
-            <div class="processing-bar">
-                <div class="processing-bar-fill" id="processing-bar"></div>
-            </div>
-        </div>
-
-        <!-- Summary card -->
-        <div class="summary" id="summary">
-            <div class="summary-label">Brain Response</div>
-            <div class="summary-grid" id="summary-grid"></div>
-        </div>
-
-        <!-- Activity log -->
-        <div class="section log-section">
-            <div class="section-label">Cascade Log</div>
-            <div class="log-scroll" id="log-scroll"></div>
-        </div>
-
+        <input type="file" id="file-input" accept="image/*">
+      </div>
     </div>
 
-    <!-- Brain Viewport -->
-    <div class="viewport">
-        <iframe id="brain-frame"></iframe>
-        <script>
-        // Build iframe src, passing through live/ws params from parent URL
-        (function() {
-            var params = new URLSearchParams(window.location.search);
-            var src = '../index.html?embed=true&labels=false';
-            if (params.get('mode')) src += '&mode=' + params.get('mode');
-            if (params.get('ws')) src += '&ws=' + encodeURIComponent(params.get('ws'));
-            document.getElementById('brain-frame').src = src;
-        })();
-        </script>
+    <div class="sec">
+      <div class="sec-label">Text Stimulus</div>
+      <div class="text-row">
+        <input type="text" class="text-input" id="text-input" placeholder="Type a word or phrase...">
+        <button class="btn-send" id="btn-text-send">SEND</button>
+      </div>
     </div>
 
-</div>
+    <div class="sec">
+      <div class="sec-label">Quick Stimuli</div>
+      <div class="presets">
+        <button class="preset-btn" data-preset="dog"><span class="preset-tag visual">Visual</span>Show it a dog</button>
+        <button class="preset-btn" data-preset="sound"><span class="preset-tag auditory">Auditory</span>Play a loud sound</button>
+        <button class="preset-btn" data-preset="flash"><span class="preset-tag visual">Visual</span>Flash a bright light</button>
+        <button class="preset-btn" data-preset="hello"><span class="preset-tag text">Language</span>Say "Hello"</button>
+        <button class="preset-btn" data-preset="pain"><span class="preset-tag multi">Reflex</span>Touch something hot</button>
+        <button class="preset-btn" data-preset="novel"><span class="preset-tag multi">Novel</span>Show something new</button>
+      </div>
+    </div>
 
-<!-- ── Bottom Bar ─────────────────────────────────────────── -->
-<div class="bottombar">
-    <span class="bottombar-item"><strong>Engram</strong> Neural Architecture</span>
-    <span class="bottombar-sep"></span>
-    <span class="bottombar-item">MIT License</span>
-    <span class="bottombar-sep"></span>
-    <span class="bottombar-item"><strong>1,056,800</strong> neurons</span>
-    <span class="bottombar-sep"></span>
-    <span class="bottombar-item"><strong>1.31B</strong> synapses</span>
-    <span class="bottombar-sep"></span>
-    <span class="bottombar-item"><strong>48</strong> synapse groups</span>
+    <div class="col-foot">1,056,800 neurons &middot; 13 regions &middot; 48 synapse groups</div>
+  </section>
+
+  <section class="col-c">
+    <div class="stage-label"><span class="ldot"></span> Neural Cascade</div>
+    <iframe id="brain-frame"></iframe>
+    <script>
+    (function() {
+        var params = new URLSearchParams(window.location.search);
+        var src = '../index.html?embed=true&labels=false';
+        if (params.get('mode')) src += '&mode=' + params.get('mode');
+        if (params.get('ws')) src += '&ws=' + encodeURIComponent(params.get('ws'));
+        document.getElementById('brain-frame').src = src;
+    })();
+    </script>
+    <div class="stage-vignette"></div>
+    <div class="processing" id="processing">
+      <div class="processing-header">
+        <div class="processing-dot"></div>
+        <span class="processing-text" id="processing-text">Encoding sensory input...</span>
+      </div>
+      <div class="processing-bar"><div class="processing-bar-fill" id="processing-bar"></div></div>
+    </div>
+  </section>
+
+  <section class="col col-r">
+    <div class="r-head">
+      <h2>Reaction</h2>
+      <p>Watch the brain react: which regions fire, in what order, and how strongly.</p>
+    </div>
+
+    <div class="summary" id="summary">
+      <div class="sec-label">Brain Response</div>
+      <div class="summary-grid" id="summary-grid"></div>
+    </div>
+
+    <div class="log-wrap">
+      <div class="sec-label">Cascade Log</div>
+      <div class="log-scroll" id="log-scroll"></div>
+    </div>
+  </section>
+
 </div>
 
 <script>

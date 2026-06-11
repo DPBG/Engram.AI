@@ -462,7 +462,7 @@ The neuromorphic cognitive core draws from established computational neuroscienc
 | **k-WTA competition** | Maass (2000). On the computational power of winner-take-all. *Neural Computation* | Concept layer enforces 2% sparsity via k-Winners-Take-All |
 
 ### Reminiscence Bump & Adolescent Plasticity
-The brain's developmental model includes an "adolescent" supercharged learning phase inspired by the reminiscence bump — the neurobiological phenomenon where experiences during ages 10-25 are wired into core identity with extraordinary durability. See `docs/RESEARCH-REMINISCENCE-BUMP.md` for full research.
+The brain's developmental model includes an "adolescent" supercharged learning phase inspired by the reminiscence bump — the neurobiological phenomenon where experiences during ages 10-25 are wired into core identity with extraordinary durability.
 
 | Concept | Reference | How We Use It |
 |---|---|---|
@@ -532,8 +532,6 @@ python run.py --only dashboard
 |----------|---------|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full system design, component relationships, NATS message schemas |
 | [`DESIGN-PRINCIPLES.md`](DESIGN-PRINCIPLES.md) | 6 core architecture invariants and implementation file map |
-
-| [`docs/SCALING-ANALYSIS.md`](docs/SCALING-ANALYSIS.md) | Memory model, compute costs, hardware comparison |
 | [`docs/SENSORY-GATEWAY.md`](docs/SENSORY-GATEWAY.md) | Gateway architecture, sensor types, discovery |
 | [`docs/META-PROGRAMMER.md`](docs/META-PROGRAMMER.md) | Self-evolution agent system |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, PR process, code standards |
