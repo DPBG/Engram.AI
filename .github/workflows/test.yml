@@ -2,9 +2,11 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [dev, main]
   pull_request:
-    branches: [main]
+    # dev is the integration branch — feature PRs target dev; dev->main is the
+    # release PR. Run CI for both targets.
+    branches: [dev, main]
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
