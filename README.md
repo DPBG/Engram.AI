@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🧠 Engram
+<img src="docs/engram-logo.svg" alt="Engram logo" width="112" />
+
+# Engram
 
 ### A self-aware, continuously-learning neuromorphic AI
 
