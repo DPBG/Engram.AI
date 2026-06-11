@@ -1,6 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Engram logo — a neural constellation">
   <title>Engram</title>
   <defs>
+    <radialGradient id="eg-bg" cx="0.5" cy="0.42" r="0.62">
+      <stop offset="0" stop-color="#16264a"/>
+      <stop offset="1" stop-color="#0a0e1a"/>
+    </radialGradient>
+    <radialGradient id="eg-inner" cx="0.52" cy="0.46" r="0.58">
+      <stop offset="0" stop-color="#1e5f8f" stop-opacity="0.45"/>
+      <stop offset="0.7" stop-color="#0e1730" stop-opacity="0"/>
+      <stop offset="1" stop-color="#0a0e1a" stop-opacity="0"/>
+    </radialGradient>
     <linearGradient id="eg-edge" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#22d3ee"/>
       <stop offset="0.5" stop-color="#5ea4f5"/>
@@ -28,11 +37,13 @@
     </filter>
   </defs>
 
-  <!-- containment ring -->
-  <circle cx="120" cy="120" r="106" fill="none" stroke="url(#eg-ring)" stroke-width="2.5" opacity="0.45"/>
+  <!-- dark backdrop so the neon stays visible on light OR dark pages -->
+  <circle cx="120" cy="120" r="115" fill="url(#eg-bg)"/>
+  <circle cx="120" cy="120" r="86"  fill="url(#eg-inner)"/>
+  <circle cx="120" cy="120" r="115" fill="none" stroke="url(#eg-ring)" stroke-width="2.5" opacity="0.7"/>
 
   <!-- synapses -->
-  <g filter="url(#eg-glow)" stroke="url(#eg-edge)" stroke-width="2.4" stroke-linecap="round" opacity="0.85">
+  <g filter="url(#eg-glow)" stroke="url(#eg-edge)" stroke-width="2.4" stroke-linecap="round" opacity="0.9">
     <line x1="120" y1="56"  x2="171" y2="76"/>
     <line x1="171" y1="76"  x2="187" y2="122"/>
     <line x1="187" y1="122" x2="162" y2="170"/>
@@ -63,7 +74,6 @@
     <circle cx="96"  cy="142" r="4.5" fill="url(#eg-node)"/>
     <circle cx="137" cy="156" r="5"   fill="url(#eg-node)"/>
     <circle cx="116" cy="108" r="6"   fill="url(#eg-node)"/>
-    <!-- firing nodes -->
     <circle cx="171" cy="76"  r="6.5" fill="url(#eg-fire)"/>
     <circle cx="110" cy="184" r="6"   fill="url(#eg-fire)"/>
     <circle cx="150" cy="124" r="7"   fill="url(#eg-fire)"/>
