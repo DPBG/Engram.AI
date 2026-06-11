@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 # Download training videos to /data/videos/
 #
 # Usage:

@@ -20,6 +20,10 @@ dependencies = [
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
+    # Cross-package integration tests (test_safety_pipeline.py) import
+    # beliefs.graph, which requires networkx. Without it, pytest aborts at
+    # collection time in the neuromorphic-only CI environment.
+    "networkx>=3.2.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -28,6 +32,22 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
 
 [dependency-groups]
 dev = [

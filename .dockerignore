@@ -1,0 +1,34 @@
+# Keep the build context small and reproducible.
+# NOTE: do not blanket-ignore *.md — pyproject.toml files reference README.md
+# (e.g. sdk/README.md) and setuptools needs them at build time.
+.git/
+.github/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+.venv/
+venv/
+node_modules/
+.localrun/
+data/
+staging_videos/
+thoughts/
+**/*.log
+**/*.db
+**/*.sqlite*
+*.mp4
+*.onnx
+*.onnx.data
+# Model weights / learned state (regenerated at runtime)
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.pkl
+.DS_Store
+Thumbs.db

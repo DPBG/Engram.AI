@@ -1,0 +1,36 @@
+# Engram — shared dependency floors (single source of truth)
+# ---------------------------------------------------------------------------
+# Every service declares its own deps in its pyproject.toml / requirements.txt,
+# but shared runtime libraries MUST agree on a common minimum version. Use this
+# file as a pip constraints file to keep installs consistent:
+#
+#     pip install -r <service>/requirements.txt -c constraints.txt
+#
+# When bumping a shared dependency, change it HERE first, then update the
+# per-service files to match. CLAUDE.md §7 documents this rule.
+# ---------------------------------------------------------------------------
+
+# Messaging / persistence (used by every service via the SDK)
+nats-py>=2.6.0
+pydantic>=2.5.0
+aiosqlite>=0.19.0
+aiohttp>=3.9.0
+
+# Vector DB client (memory, beliefs, cache, coordinator)
+qdrant-client>=1.7.0
+
+# Knowledge graph (beliefs)
+networkx>=3.2.0
+
+# Numerics (neuromorphic brain, coordinator, overrides, sensory-gateway)
+numpy>=1.26.0
+scipy>=1.12.0
+
+# Dashboard web stack
+fastapi>=0.104.0
+uvicorn>=0.24.0
+websockets>=12.0
+
+# Optional cloud LLM SDKs (external-api; harmless to install)
+anthropic>=0.28.0
+openai>=1.30.0

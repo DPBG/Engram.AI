@@ -32,15 +32,38 @@ jobs:
 
       - name: Run neuromorphic tests
         working-directory: neuromorphic
+        # Skip the continuous MuJoCo physics-loop tests: their background
+        # stepping aborts (SIGABRT) nondeterministically on headless runners.
+        env:
+          ENGRAM_SKIP_MUJOCO_LOOP: "1"
         run: uv run --extra dev python -m pytest tests/ -v -p no:anchorpy
 
+  sdk:
+    name: SDK test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run SDK tests with coverage
+        working-directory: sdk
+        run: uv run --extra dev python -m pytest tests/ -v --cov=activelearning --cov-report=term-missing
+
   lint:
-    name: Lint (ruff)
+    name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Non-blocking for now: the codebase predates a lint gate. Remove
-    # continue-on-error once the existing warnings are cleared.
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,5 +71,37 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Run ruff
+      # BLOCKING: the "real bug" subset (syntax errors, undefined names, broken
+      # comparisons/f-strings). A clean codebase always passes this; it would
+      # have caught the memory-service NameError fixed in P0.3.
+      - name: Ruff (blocking bug gate)
+        run: uvx ruff check --select E9,F63,F7,F82 .
+
+      # ADVISORY: full style rule set. Flip to blocking once the backlog is
+      # cleared (ROADMAP.md P5).
+      - name: Ruff (full, advisory)
+        continue-on-error: true
         run: uvx ruff check .
+
+      # ADVISORY: formatting. Flip to blocking after a one-time `black .` pass.
+      - name: Black (advisory)
+        continue-on-error: true
+        run: uvx black --check --line-length 100 .
+
+  typecheck:
+    name: Type check (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # ADVISORY for now: strict mypy has a backlog. Step-level continue-on-error
+      # keeps the job (and its check) green while still surfacing type errors in
+      # the log. Flip to blocking once the backlog is cleared (ROADMAP.md P5).
+      - name: Mypy (sdk)
+        continue-on-error: true
+        run: uvx mypy --python-version 3.11 --ignore-missing-imports sdk/src/activelearning

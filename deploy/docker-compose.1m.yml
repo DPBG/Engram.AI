@@ -1,0 +1,74 @@
+# Production override for the ~1M-neuron Hetzner deployment.
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.1m.yml up -d
+#
+# Requires NATS_TOKEN (and, for the tunnel, CLOUDFLARE_TUNNEL_TOKEN) in the
+# environment. The NATS server reads $NATS_TOKEN from its config at startup, so
+# no in-place secret rewriting is needed.
+#
+# NOTE: per-service NATS authorization (per-account subject permissions) is
+# Phase 1.1 in ROADMAP.md. Until then services authenticate with the shared
+# token embedded in NATS_URL.
+
+services:
+  nats:
+    command: ["-c", "/etc/nats/nats.conf"]
+    environment:
+      NATS_TOKEN: ${NATS_TOKEN:?NATS_TOKEN must be set for the 1m deployment}
+    volumes:
+      - ./deploy/nats-1m.conf:/etc/nats/nats.conf:ro
+      - nats-data:/data
+
+  neuromorphic:
+    environment:
+      NATS_URL: nats://${NATS_TOKEN}@nats:4222
+      SQLITE_PATH: /data/sqlite/neuromorphic.db
+      # Full PoC scale (~1M neurons). Needs a large-RAM host.
+      NEURO_BRAINSTEM_N: "15000"
+      NEURO_REFLEX_N: "10000"
+      NEURO_SENSORY_N: "200000"
+      NEURO_MOTOR_N: "100000"
+      NEURO_CEREBELLUM_N: "100000"
+      NEURO_ASSOCIATION_N: "200000"
+      NEURO_PREDICTIVE_N: "100000"
+      NEURO_WORKING_MEM_N: "25000"
+      NEURO_FEATURE_N: "20000"
+      NEURO_CONCEPT_N: "5000"
+      NEURO_META_N: "3000"
+      NEURO_COGNITIVE_ENABLED: "1"
+      # Turbo: compute-bound loop, larger drain batches.
+      NEURO_QUEUE_SIZE: "50"
+      NEURO_LOOP_YIELD: "0"
+    shm_size: "2gb"
+    deploy:
+      resources:
+        limits:
+          memory: 24g
+
+  kernel:
+    environment:
+      NATS_URL: nats://${NATS_TOKEN}@nats:4222
+  safety-supervisor:
+    environment:
+      NATS_URL: nats://${NATS_TOKEN}@nats:4222
+  beliefs:
+    environment:
+      NATS_URL: nats://${NATS_TOKEN}@nats:4222
+  planner:
+    environment:
+      NATS_URL: nats://${NATS_TOKEN}@nats:4222
+  external-api:
+    environment:
+      NATS_URL: nats://${NATS_TOKEN}@nats:4222
+  dashboard:
+    environment:
+      NATS_URL: nats://${NATS_TOKEN}@nats:4222
+
+  # Cloudflare Tunnel — exposes the dashboard without opening host ports.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: activelearning-cloudflared
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}"]
+    restart: unless-stopped
+    depends_on:
+      - dashboard

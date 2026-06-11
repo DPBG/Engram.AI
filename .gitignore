@@ -63,7 +63,7 @@ npm-debug.log*
 .playwright-mcp/
 
 # Lock files
-uv.lock
+# (uv.lock is intentionally tracked for reproducible builds — see ROADMAP.md P0.4)
 
 # Large files
 *.mp4

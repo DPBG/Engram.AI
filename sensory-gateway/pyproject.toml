@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "activelearning-sdk",
     "nats-py>=2.6.0",
-    "numpy>=1.24.0",
+    "numpy>=1.26.0",
     "opencv-python>=4.8.0",
     "sounddevice>=0.4.6",
     "python-speech-features>=0.6",
@@ -44,6 +44,22 @@ dev = [
 
 [project.scripts]
 sensory-gateway = "gateway:main_sync"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
 
 [tool.uv.sources]
 activelearning-sdk = { path = "../sdk", editable = true }

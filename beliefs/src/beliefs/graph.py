@@ -8,11 +8,14 @@ confidence updates, contradiction detection, and belief propagation.
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 import time
 import uuid
 
 import networkx as nx
+
+if TYPE_CHECKING:
+    from beliefs.profiles import BodyProfile
 
 logger = logging.getLogger(__name__)
 

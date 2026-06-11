@@ -11,6 +11,34 @@ The **Meta-Programmer** is the system's self-evolution capability—an orchestra
 
 **Key principle**: The Meta-Programmer decides how to interface with new hardware (Arduino, Pi, sensors, etc.) by generating the necessary adapter code itself.
 
+> ## ⚠️ Implementation Status (read first)
+>
+> This document describes the **target design**. Several capabilities below are
+> **not yet implemented** as written. As of the latest audit:
+>
+> **Implemented:** code generation via Ollama, staging, submission to the Kernel
+> for approval, and the `SandboxManager` Docker configuration (no-network,
+> read-only FS, mem/CPU/pid limits).
+>
+> **Not yet implemented / aspirational (see [ROADMAP.md](../ROADMAP.md)):**
+> - The `activelearning-sandbox` image is built from `sandbox/Dockerfile`
+>   (added in P0); making missing-sandbox **fail-closed** and adding
+>   `cap_drop=ALL` / `no-new-privileges` is **Phase 1.3**.
+> - The decision bus is **not yet authenticated/signed** — the "no path around
+>   the Kernel, only through it" guarantee is a design goal hardened in
+>   **Phase 1.1–1.2**, not an enforced property today.
+> - Only the first ~500 chars of generated code are pattern-scanned; full-artifact
+>   AST taint analysis is **Phase 1.5**.
+> - The multi-agent refactor pipeline, Stage-2 Test-Runner integration,
+>   post-deploy auto-rollback, and the 24h approval-timeout-as-DENY are **not yet
+>   built** (Phase 1.9 / 4.1).
+> - The Coordinator task-execution path does **not** currently route through the
+>   Kernel (Phase 1.6).
+>
+> Treat the sections below as the destination, and ROADMAP.md Phase 1 as the
+> work required to get there. Do not build new autonomy on top of the gate until
+> Phase 1 lands.
+
 ---
 
 ## Core Principle: Inviolable Kernel Constraint

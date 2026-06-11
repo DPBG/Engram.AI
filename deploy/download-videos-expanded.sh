@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 # Download expanded training curriculum — 27 videos across 10 categories
 #
 # Usage:

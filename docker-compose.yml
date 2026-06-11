@@ -1,0 +1,272 @@
+# Engram — Docker Compose stack.
+#
+#   docker compose up                  # core: nats + brain + governance + dashboard
+#   docker compose --profile full up   # + qdrant, ollama, memory, cache, coordinator
+#   docker compose --profile extra up  # + sensory-gateway, overrides, meta-programmer
+#   docker compose --profile build-only build sandbox-base   # build the sandbox image
+#
+# Production (Hetzner, ~1M neurons) layers the override:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.1m.yml up -d
+#
+# Services without a `profiles:` key are the always-on "core" set.
+
+x-svc-build: &svc-build
+  context: .
+  dockerfile: Dockerfile
+
+x-common-env: &common-env
+  NATS_URL: nats://nats:4222
+  QDRANT_URL: http://qdrant:6333
+  OLLAMA_URL: http://ollama:11434
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  SQLITE_PATH: /data/sqlite/unified.db
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  volumes:
+    - engram-data:/data
+  depends_on:
+    - nats
+
+services:
+  # --- message bus (always on) ------------------------------------------------
+  nats:
+    image: nats:2.10-alpine
+    container_name: activelearning-nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  # --- core: governance -------------------------------------------------------
+  kernel:
+    <<: *service-defaults
+    container_name: activelearning-kernel
+    build:
+      <<: *svc-build
+      args: {SERVICE: kernel, MODULE: kernel.service}
+    environment: *common-env
+
+  safety-supervisor:
+    <<: *service-defaults
+    container_name: activelearning-safety-supervisor
+    build:
+      <<: *svc-build
+      args: {SERVICE: safety-supervisor, MODULE: safety_supervisor.service}
+    environment: *common-env
+
+  beliefs:
+    <<: *service-defaults
+    container_name: activelearning-beliefs
+    build:
+      <<: *svc-build
+      args: {SERVICE: beliefs, MODULE: beliefs.service}
+    environment: *common-env
+
+  planner:
+    <<: *service-defaults
+    container_name: activelearning-planner
+    build:
+      <<: *svc-build
+      args: {SERVICE: planner, MODULE: planner.service}
+    environment: *common-env
+
+  external-api:
+    <<: *service-defaults
+    container_name: activelearning-external-api
+    build:
+      <<: *svc-build
+      args: {SERVICE: external-api, MODULE: external_api.service}
+    environment:
+      <<: *common-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+  # --- core: the brain --------------------------------------------------------
+  neuromorphic:
+    <<: *service-defaults
+    container_name: activelearning-neuromorphic
+    image: engram-neuromorphic:latest
+    build:
+      <<: *svc-build
+      args: {SERVICE: neuromorphic, MODULE: neuromorphic.service}
+    environment:
+      <<: *common-env
+      SQLITE_PATH: /data/sqlite/neuromorphic.db
+      # Laptop-friendly default scale (~50K neurons). The 1m override scales up.
+      NEURO_BRAINSTEM_N: "2000"
+      NEURO_REFLEX_N: "1500"
+      NEURO_SENSORY_N: "12000"
+      NEURO_MOTOR_N: "6000"
+      NEURO_CEREBELLUM_N: "6000"
+      NEURO_ASSOCIATION_N: "12000"
+      NEURO_PREDICTIVE_N: "6000"
+      NEURO_WORKING_MEM_N: "2000"
+      NEURO_FEATURE_N: "5000"
+      NEURO_CONCEPT_N: "1500"
+      NEURO_META_N: "1000"
+      NEURO_COGNITIVE_ENABLED: "1"
+      NEURO_EXPRESSION_END: "0.85"
+
+  # --- core: web UI -----------------------------------------------------------
+  dashboard:
+    <<: *service-defaults
+    container_name: activelearning-dashboard
+    build:
+      <<: *svc-build
+      args: {SERVICE: dashboard, MODULE: dashboard.api}
+    environment:
+      <<: *common-env
+      DASHBOARD_PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - nats
+      - neuromorphic
+
+  # --- full: vector DB + LLM + dependent services -----------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: activelearning-qdrant
+    profiles: ["full"]
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: activelearning-ollama
+    profiles: ["full"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  memory:
+    <<: *service-defaults
+    container_name: activelearning-memory
+    profiles: ["full"]
+    build:
+      <<: *svc-build
+      args: {SERVICE: memory, MODULE: memory.service}
+    environment: *common-env
+    depends_on:
+      - nats
+      - qdrant
+
+  cache:
+    <<: *service-defaults
+    container_name: activelearning-cache
+    profiles: ["full"]
+    build:
+      <<: *svc-build
+      args: {SERVICE: cache, MODULE: cache.service}
+    environment: *common-env
+    depends_on:
+      - nats
+      - qdrant
+      - ollama
+
+  coordinator:
+    <<: *service-defaults
+    container_name: activelearning-coordinator
+    profiles: ["full"]
+    build:
+      <<: *svc-build
+      args: {SERVICE: coordinator, MODULE: coordinator.service}
+    environment: *common-env
+    depends_on:
+      - nats
+      - qdrant
+
+  cognitive-bridge:
+    container_name: activelearning-cognitive-bridge
+    profiles: ["full"]
+    image: engram-neuromorphic:latest
+    command: ["sh", "-c", "exec python -m neuromorphic.cognitive_bridge"]
+    environment:
+      <<: *common-env
+      SQLITE_PATH: /data/sqlite/neuromorphic.db
+    volumes:
+      - engram-data:/data
+    restart: unless-stopped
+    depends_on:
+      - nats
+      - ollama
+      - neuromorphic
+
+  # --- extra: hardware / self-evolution (opt-in) ------------------------------
+  sensory-gateway:
+    container_name: activelearning-sensory-gateway
+    profiles: ["extra"]
+    build:
+      <<: *svc-build
+      args:
+        SERVICE: sensory-gateway
+        SRC_SUBDIR: "."
+        MODULE: gateway
+        EXTRA_APT: "ffmpeg libgl1 libglib2.0-0"
+    command: ["sh", "-c", "exec python -m gateway --no-camera --no-mic --video-loop"]
+    environment:
+      <<: *common-env
+      SENSORY_VIDEO: ${SENSORY_VIDEO:-}
+    volumes:
+      - engram-data:/data
+    restart: unless-stopped
+    depends_on:
+      - nats
+
+  overrides:
+    container_name: activelearning-overrides
+    profiles: ["extra"]
+    build:
+      <<: *svc-build
+      args:
+        SERVICE: overrides
+        MODULE: overrides.service
+        EXTRA_APT: "libgl1 libglib2.0-0 portaudio19-dev gcc"
+    environment: *common-env
+    volumes:
+      - engram-data:/data
+    restart: unless-stopped
+    depends_on:
+      - nats
+
+  meta-programmer:
+    container_name: activelearning-meta-programmer
+    profiles: ["extra"]
+    build:
+      <<: *svc-build
+      args: {SERVICE: meta-programmer, MODULE: meta_programmer.service}
+    # Needs the Docker socket to spawn sandbox containers; runs as root for socket access.
+    user: "0:0"
+    environment: *common-env
+    volumes:
+      - engram-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    depends_on:
+      - nats
+      - kernel
+
+  # --- build-only: the sandbox image used by meta-programmer -------------------
+  sandbox-base:
+    image: activelearning-sandbox:latest
+    profiles: ["build-only"]
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    # Never started as a service — present only so `compose build sandbox-base` works.
+    command: ["true"]
+
+volumes:
+  engram-data:
+  nats-data:
+  qdrant-data:
+  ollama-data:

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eo pipefail
 # ActiveLearningAI — Cloud server bootstrap script
 #
 # Run on a fresh Ubuntu 22.04+ server:
