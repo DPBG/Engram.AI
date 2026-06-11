@@ -21,7 +21,12 @@ project's [MIT License](LICENSE).
    ```
 4. Make your changes.
 5. Run the tests (see below).
-6. Commit, push to your fork, and open a Pull Request against `main`.
+6. Commit, push to your fork, and open a Pull Request against `dev`.
+
+> **Branching model:** `dev` is the integration branch — **open all pull requests
+> against `dev`**, not `main`. `main` is the stable/release branch; `dev` is merged
+> into `main` for releases. The repository's default branch is `dev`, so new PRs
+> target it automatically.
 
 ## Running Tests
 
