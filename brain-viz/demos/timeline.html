@@ -145,6 +145,23 @@ body{
             left: 20px;
             z-index: 10;
             pointer-events: none;
+            background: var(--eg-panel-1);
+            border: 1px solid var(--eg-border);
+            border-radius: 12px;
+            padding: 14px 16px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            min-width: 212px;
+        }
+        .stats-overlay::before {
+            content: 'Learning State';
+            display: block;
+            font-family: var(--eg-mono);
+            font-size: 9px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--eg-faint);
+            margin-bottom: 11px;
         }
         .stat-row {
             display: flex;
