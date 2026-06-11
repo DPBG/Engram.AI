@@ -360,8 +360,16 @@ body {
 </header>
 
 <div class="main">
-    <div class="body-panel">
-        <div id="body-container"></div>
+    <div class="stage-col">
+        <div class="stats-hud">
+            <div class="stat-item"><div class="val" id="torso-height">0.92</div><div class="lbl">Torso Height (m)</div></div>
+            <div class="stat-item"><div class="val" id="task-name">Stand</div><div class="lbl">Current Task</div></div>
+            <div class="stat-item"><div class="val" id="motor-rate">0.0%</div><div class="lbl">Motor Firing Rate</div></div>
+            <div class="stat-item"><div class="val" id="fall-count">0</div><div class="lbl">Falls</div></div>
+        </div>
+        <div class="body-panel">
+            <div id="body-container"></div>
+        </div>
     </div>
 
     <div class="motor-panel">
@@ -392,24 +400,21 @@ body {
     </div>
 </div>
 
-<div class="stats-hud">
-    <div class="stat-item">
-        <div class="val" id="torso-height">0.92</div>
-        <div class="lbl">Torso Height (m)</div>
-    </div>
-    <div class="stat-item">
-        <div class="val" id="task-name">Stand</div>
-        <div class="lbl">Current Task</div>
-    </div>
-    <div class="stat-item">
-        <div class="val" id="motor-rate">0.0%</div>
-        <div class="lbl">Motor Firing Rate</div>
-    </div>
-    <div class="stat-item">
-        <div class="val" id="fall-count">0</div>
-        <div class="lbl">Falls</div>
-    </div>
-</div>
+<style>
+/* ── Professional layout: KPI strip over the 3D stage, body | motor columns ── */
+.stage-col{flex:1;min-width:0;display:flex;flex-direction:column}
+.body-panel{min-height:0}
+.stats-hud{position:static !important;left:auto !important;bottom:auto !important;display:flex;gap:0 !important;padding:0 !important;border:none !important;border-bottom:1px solid var(--eg-border) !important;border-radius:0 !important;background:linear-gradient(180deg,var(--eg-panel-1),transparent) !important;backdrop-filter:none !important;flex-shrink:0}
+.stats-hud .stat-item{flex:1;padding:14px 12px;border-right:1px solid var(--eg-border)}
+.stats-hud .stat-item:last-child{border-right:none}
+.stats-hud .stat-item .val{font-size:22px}
+@media (max-width:1000px){
+  body{overflow:auto}
+  .main{flex-direction:column;height:auto;min-height:calc(100vh - 54px)}
+  .body-panel{min-height:60vh}
+  .motor-panel{width:auto;border-left:none;border-top:1px solid var(--eg-border)}
+}
+</style>
 
 <script type="importmap">
 {
