@@ -7,37 +7,194 @@ tests, documentation, bug reports, and ideas.
 By contributing, you agree that your contributions will be licensed under the
 project's [MIT License](LICENSE).
 
-## Getting Started
+## Branching model (read this first)
 
-1. **Fork** the repository and clone your fork.
-2. Set up your environment (see [README.md](README.md) and [RUN-LOCAL.md](RUN-LOCAL.md)):
-   ```bash
-   python run.py --install     # one-time dependency install
-   python run.py               # start the core profile (dashboard on :8080)
-   ```
-3. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature
-   ```
-4. Make your changes.
-5. Run the tests (see below).
-6. Commit, push to your fork, and open a Pull Request against `dev`.
+Engram uses a two-branch model:
 
-> **Branching model:** `dev` is the integration branch — **open all pull requests
-> against `dev`**, not `main`. `main` is the stable/release branch; `dev` is merged
-> into `main` for releases. The repository's default branch is `dev`, so new PRs
-> target it automatically.
+- **`dev`** — the **integration branch**. **All pull requests target `dev`.** It is
+  the repository's default branch, so GitHub's "New pull request" page selects it
+  automatically.
+- **`main`** — the **stable / release branch**. Maintainers merge `dev` into `main`
+  for releases. **Do not open feature PRs against `main`** — they'll be asked to
+  retarget.
 
-## Running Tests
+> 🟢 **The golden rule: branch _from_ `dev`, and open your PR _back into_ `dev`.**
 
-The neuromorphic core is the primary test suite:
+## Contribution workflow
+
+### 1. Fork & clone (one-time setup)
+
+Fork the repo on GitHub, then:
 
 ```bash
-cd neuromorphic && uv run python -m pytest tests/ -v -p no:anchorpy
+git clone https://github.com/<your-username>/Engram.AI.git
+cd Engram.AI
+git remote add upstream https://github.com/DPBG/Engram.AI.git   # track the original repo
 ```
 
-CI runs this suite on every pull request (Python 3.11 and 3.12). PRs must pass
-before they can be merged.
+Set up your environment (full guide in [RUN-LOCAL.md](RUN-LOCAL.md)):
+
+```bash
+python run.py --install     # one-time: install dependencies
+python run.py               # start the core profile (dashboard on http://localhost:8080)
+```
+
+### 2. Start from an up-to-date `dev`
+
+Always branch from the latest `dev`:
+
+```bash
+git fetch upstream
+git checkout -B dev upstream/dev     # make local dev match the latest upstream dev
+```
+
+### 3. Create a branch
+
+Name it `type/short-kebab-description` (see [Branch naming](#branch-naming)):
+
+```bash
+git checkout -b feat/concept-probe-export
+```
+
+### 4. Make your change
+
+Keep it **focused** — one feature or fix per branch/PR. Follow the
+[Code Standards](#code-standards) and the [Architecture Invariants](#architecture-invariants).
+
+### 5. Run tests & checks locally — *before* you commit
+
+These are exactly what CI runs, so fixing them now avoids a red PR:
+
+```bash
+# Neuromorphic suite (primary)
+cd neuromorphic && uv run --extra dev python -m pytest tests/ -v -p no:anchorpy && cd ..
+
+# SDK suite
+cd sdk && uv run --extra dev python -m pytest tests/ -v && cd ..
+
+# Lint — the BLOCKING "real bug" gate CI enforces (this must be clean)
+uvx ruff check --select E9,F63,F7,F82 .
+```
+
+> `ruff check .` (full style), `black --check`, and `mypy` also run in CI but are
+> **advisory** for now — running them is encouraged, not required to merge.
+
+### 6. Commit
+
+Write a clear, [conventional commit message](#commit-messages):
+
+```bash
+git add <files>
+git commit -m "feat(neuromorphic): export concept-probe results as JSON"
+```
+
+### 7. Push to your fork
+
+```bash
+git push -u origin feat/concept-probe-export
+```
+
+### 8. Open the Pull Request — base branch **`dev`**
+
+1. On GitHub, open a PR from your branch into **`dev`** (it should be the default base
+   — double-check the base dropdown says `base: dev`).
+2. **Fill out the [PR template](.github/PULL_REQUEST_TEMPLATE.md)** that auto-populates:
+   summary, type of change, components affected, how you tested, and the checklist.
+3. Wait for **CI to go green** (see [Running tests & CI](#running-tests--ci)). A
+   maintainer reviews and merges.
+
+### 9. Respond to review & keep your branch current
+
+If `dev` advances while your PR is open, rebase onto it:
+
+```bash
+git fetch upstream
+git rebase upstream/dev          # replay your commits on top of the latest dev
+git push --force-with-lease      # update the PR (safe force-push)
+```
+
+## Branch naming
+
+Prefix the branch with the kind of change:
+
+| Prefix | Use for |
+|---|---|
+| `feat/` | a new feature |
+| `fix/` | a bug fix |
+| `docs/` | documentation only |
+| `test/` | tests only |
+| `refactor/` | restructuring with no behavior change |
+| `chore/` | tooling, CI, dependencies, housekeeping |
+
+Examples: `feat/sensor-imu-driver`, `fix/memory-recall-reply`, `docs/sdk-readme`.
+
+## Commit messages
+
+Every commit message uses the **Conventional Commits** form:
+
+```
+type(scope): short imperative summary
+
+Optional body — explain WHAT changed and WHY (wrap at ~72 columns).
+Reference issues in the body/footer with "Closes #123".
+```
+
+**Rules**
+
+- **`type`** — *required*, and must be one of the types in the table below.
+- **`scope`** — *optional* — the area touched, e.g. `neuromorphic`, `sdk`,
+  `dashboard`, `kernel`, `brain-viz`, `deploy`.
+- **`summary`** — *required* — imperative mood ("add", "fix", "remove"), lower-case
+  start, **no trailing period**, ≤ ~72 characters.
+- One logical change per commit; squash noisy "WIP" commits before opening the PR.
+
+**Allowed commit types** — pick the one that matches your change:
+
+| Type | Use it when you… | Example |
+|---|---|---|
+| `feat` | add a new feature or capability | `feat(sensory-gateway): add IMU sensor driver` |
+| `fix` | fix a bug | `fix(memory): publish recall results over NATS` |
+| `docs` | change documentation only | `docs: document the dev-branch PR workflow` |
+| `test` | add or fix tests | `test(kernel): cover envelope-clamp boundaries` |
+| `refactor` | restructure code with **no** behavior change | `refactor(sdk): unify the NATS client setup` |
+| `perf` | improve performance | `perf(neuromorphic): cache per-step routing tables` |
+| `chore` | tooling, dependencies, housekeeping | `chore: add uv.lock and constraints.txt` |
+| `ci` | change CI / workflows | `ci: run the SDK suite on Python 3.11 and 3.12` |
+
+> 💡 The commit **type usually matches your branch prefix** — a `fix/…` branch should
+> contain `fix:` commits, a `docs/…` branch `docs:` commits, and so on.
+
+## Pull request rules
+
+- **Base branch is always `dev`** (not `main`).
+- **One focused change per PR** — easier to review and to revert.
+- **Fill the PR template** completely (summary, type, components, testing, checklist).
+- **CI must be green** before merge — the neuromorphic + SDK suites on Python 3.11 &
+  3.12 and the blocking lint gate. Don't merge a red PR.
+- **Add/maintain tests for behavior changes** — required for `neuromorphic/` changes.
+- **No secrets** — never commit credentials, IPs, SSH keys, or tokens (see
+  [Security & Secrets](#security--secrets)).
+- **Safety-critical areas** (`kernel/`, `safety-supervisor/`, `meta-programmer/`,
+  `beliefs/`) require maintainer review — see
+  [Changes That Need Extra Review](#changes-that-need-extra-review).
+
+## Running tests & CI
+
+The neuromorphic core is the primary suite (also run automatically in CI):
+
+```bash
+cd neuromorphic && uv run --extra dev python -m pytest tests/ -v -p no:anchorpy
+```
+
+On every pull request to `dev` (and `main`), the **`Tests`** workflow runs:
+
+- the **neuromorphic** test suite on **Python 3.11 and 3.12**,
+- the **SDK** test suite on **Python 3.11 and 3.12**,
+- a **blocking lint gate** (`ruff --select E9,F63,F7,F82` — catches real bugs like
+  undefined names), and
+- **advisory** full-`ruff`, `black --check`, and `mypy` checks.
+
+Your PR can be merged once the blocking jobs are green.
 
 ## Code Standards
 
