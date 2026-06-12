@@ -8,8 +8,8 @@ Provides:
 - Conflict detection between local and external knowledge
 """
 
-from external_api.service import ExternalAPIService
 from external_api.manager import ExternalAPIManager
+from external_api.service import ExternalAPIService
 
 __version__ = "0.1.0"
 

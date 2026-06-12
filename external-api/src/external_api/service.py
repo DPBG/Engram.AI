@@ -8,7 +8,6 @@ import logging
 import os
 import signal
 import sys
-from typing import Optional
 
 import aiosqlite
 import nats
@@ -32,11 +31,11 @@ class ExternalAPIService:
         self.nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
         self.sqlite_path = os.environ.get("SQLITE_PATH", "/data/sqlite/unified.db")
 
-        self._nc: Optional[nats.aio.client.Client] = None
-        self._db: Optional[aiosqlite.Connection] = None
+        self._nc: nats.aio.client.Client | None = None
+        self._db: aiosqlite.Connection | None = None
         self._shutdown_event = asyncio.Event()
 
-        self._manager: Optional[ExternalAPIManager] = None
+        self._manager: ExternalAPIManager | None = None
 
         # Metrics
         self._queries_total = 0
