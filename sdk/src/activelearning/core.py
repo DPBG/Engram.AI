@@ -156,6 +156,23 @@ class KernelDecision(Generic[T]):
             return False
         return current_timestamp() > self.expires_at
 
+    def remaining_ttl_ms(self, now: Optional[int] = None) -> Optional[int]:
+        """Milliseconds left before this decision expires.
+
+        Returns ``None`` when the decision has no expiry (it never goes
+        stale), and ``0`` once it has already expired rather than a negative
+        value — so callers can use the result directly as a non-negative
+        cache TTL or freshness countdown.
+
+        Args:
+            now: Reference time in Unix milliseconds. Defaults to the current
+                time; pass an explicit value for deterministic checks/tests.
+        """
+        if self.expires_at is None:
+            return None
+        reference = current_timestamp() if now is None else now
+        return max(0, self.expires_at - reference)
+
     def is_approved(self) -> bool:
         """Check if this decision allows execution."""
         return self.type in (KernelDecisionType.ALLOW, KernelDecisionType.TRANSFORM)

@@ -155,6 +155,43 @@ class TestKernelDecision:
         assert decision.is_expired()
 
 
+class TestKernelDecisionTtl:
+    """Tests for KernelDecision.remaining_ttl_ms()."""
+
+    def test_no_expiry_returns_none(self):
+        decision = KernelDecision(
+            trace_id="test",
+            type=KernelDecisionType.ALLOW,
+        )
+        assert decision.remaining_ttl_ms() is None
+
+    def test_future_expiry_is_positive(self):
+        decision = KernelDecision(
+            trace_id="test",
+            type=KernelDecisionType.ALLOW,
+            expires_at=10_000,
+        )
+        assert decision.remaining_ttl_ms(now=4_000) == 6_000
+
+    def test_past_expiry_clamps_to_zero(self):
+        decision = KernelDecision(
+            trace_id="test",
+            type=KernelDecisionType.ALLOW,
+            expires_at=1_000,
+        )
+        assert decision.remaining_ttl_ms(now=5_000) == 0
+
+    def test_defaults_to_current_time(self):
+        decision = KernelDecision(
+            trace_id="test",
+            type=KernelDecisionType.ALLOW,
+            expires_at=current_timestamp() + 60_000,
+        )
+        remaining = decision.remaining_ttl_ms()
+        assert remaining is not None
+        assert 0 < remaining <= 60_000
+
+
 class TestOutcome:
     """Tests for Outcome dataclass."""
 
