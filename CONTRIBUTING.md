@@ -130,27 +130,39 @@ Examples: `feat/sensor-imu-driver`, `fix/memory-recall-reply`, `docs/sdk-readme`
 
 ## Commit messages
 
-Use the form:
+Every commit message uses the **Conventional Commits** form:
 
 ```
 type(scope): short imperative summary
 
-Optional body explaining WHAT changed and WHY (wrap at ~72 columns).
-Reference issues with "Closes #123".
+Optional body — explain WHAT changed and WHY (wrap at ~72 columns).
+Reference issues in the body/footer with "Closes #123".
 ```
 
-- **type** — `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`, `ci`.
-- **scope** (optional) — the area touched, e.g. `neuromorphic`, `sdk`, `dashboard`,
-  `kernel`, `brain-viz`.
-- **summary** — imperative mood ("add", "fix", "remove"), no trailing period.
-- Squash noisy WIP commits before opening the PR so history stays readable.
+**Rules**
 
-Examples:
-```
-fix(memory): publish recall results over NATS
-feat(brain-viz): add the concept-formation similarity matrix
-docs: document the dev-branch PR workflow
-```
+- **`type`** — *required*, and must be one of the types in the table below.
+- **`scope`** — *optional* — the area touched, e.g. `neuromorphic`, `sdk`,
+  `dashboard`, `kernel`, `brain-viz`, `deploy`.
+- **`summary`** — *required* — imperative mood ("add", "fix", "remove"), lower-case
+  start, **no trailing period**, ≤ ~72 characters.
+- One logical change per commit; squash noisy "WIP" commits before opening the PR.
+
+**Allowed commit types** — pick the one that matches your change:
+
+| Type | Use it when you… | Example |
+|---|---|---|
+| `feat` | add a new feature or capability | `feat(sensory-gateway): add IMU sensor driver` |
+| `fix` | fix a bug | `fix(memory): publish recall results over NATS` |
+| `docs` | change documentation only | `docs: document the dev-branch PR workflow` |
+| `test` | add or fix tests | `test(kernel): cover envelope-clamp boundaries` |
+| `refactor` | restructure code with **no** behavior change | `refactor(sdk): unify the NATS client setup` |
+| `perf` | improve performance | `perf(neuromorphic): cache per-step routing tables` |
+| `chore` | tooling, dependencies, housekeeping | `chore: add uv.lock and constraints.txt` |
+| `ci` | change CI / workflows | `ci: run the SDK suite on Python 3.11 and 3.12` |
+
+> 💡 The commit **type usually matches your branch prefix** — a `fix/…` branch should
+> contain `fix:` commits, a `docs/…` branch `docs:` commits, and so on.
 
 ## Pull request rules
 
