@@ -19,14 +19,35 @@ on:
         default: 'neuromorphic'
 
 jobs:
+  # Gate: only deploy when a deploy target is actually configured. The `secrets`
+  # context is NOT allowed in a job-level `if` (that makes the whole workflow an
+  # "invalid workflow file"), so read the secret in a step and expose the result
+  # as a job output, which a downstream job's `if` may use.
+  check:
+    name: Check deploy target
+    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'DPBG/Engram.AI' }}
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    steps:
+      - name: Detect Hetzner secret
+        id: gate
+        env:
+          HETZNER_IP: ${{ secrets.HETZNER_IP }}
+        run: |
+          if [ -n "$HETZNER_IP" ]; then
+            echo "Deploy target configured — proceeding."
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "HETZNER_IP secret is not set — skipping deploy (no target configured)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
+    needs: check
+    if: ${{ needs.check.outputs.enabled == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Only runs on the canonical repo (forks skip). NOTE: the `secrets` context
-    # is NOT allowed in a job-level `if` — using it makes GitHub reject the whole
-    # workflow as an "invalid workflow file", which fails on every push. Use the
-    # `github` context instead.
-    if: ${{ github.repository == 'DPBG/Engram.AI' }}
 
     steps:
       - name: Checkout code
