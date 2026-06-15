@@ -105,11 +105,61 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(
             "cognitive.response.validate", self._handle_cognitive_validate,
         )
+        # SAFE_HALT kill switch (Phase 1.9)
+        await self.event_bus.subscribe("safety.halt", self._handle_safety_halt)
+        await self.event_bus.subscribe("safety.resume", self._handle_safety_resume)
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
         # No kernel-specific resources to cleanup
         pass
+
+    async def _handle_safety_halt(self, data: dict) -> None:
+        """Engage the system-wide kill switch (Phase 1.9).
+
+        Sets the evaluator to deny every proposal, then propagates the halt:
+        the Planner is forced to SAFE_HALT (cancels its queue) and all motor
+        channels are restricted to zero. Because every action and code
+        proposal passes through the Kernel, the deny-all flag alone already
+        stops new execution and deployment; the propagation halts in-flight
+        motor output and planning too.
+        """
+        reason = data.get("reason", "operator SAFE_HALT")
+        operator = data.get("operator_id", "unknown")
+        self._evaluator.halt(reason)
+        self.logger.critical(f"SAFE_HALT engaged by {operator}: {reason}")
+
+        # Propagate: stop the planner queue and zero all motor channels.
+        try:
+            await self.event_bus.publish("planner.mode", {"mode": "SAFE_HALT", "reason": reason})
+            await self.event_bus.publish("policy.restrict", {
+                "motor_limits": {
+                    ch: {"max_intensity": 0.0}
+                    for ch in ("locomotion", "manipulation", "head", "speech")
+                },
+                "reason": f"SAFE_HALT: {reason}",
+                "operator_id": operator,
+            })
+        except Exception as e:
+            self.logger.error(f"SAFE_HALT propagation error: {e}")
+
+        await self.event_bus.publish("safety.halt.status", {
+            "halted": True, "reason": reason, "operator_id": operator,
+        })
+
+    async def _handle_safety_resume(self, data: dict) -> None:
+        """Release the kill switch (operator action). Resumes evaluation.
+
+        Resume is deliberately narrow: it re-enables the Kernel but does NOT
+        auto-restore motor limits or planner mode — an operator must restore
+        those explicitly, so the system never silently un-halts itself.
+        """
+        operator = data.get("operator_id", "unknown")
+        self._evaluator.resume()
+        self.logger.warning(f"SAFE_HALT released by {operator}")
+        await self.event_bus.publish("safety.halt.status", {
+            "halted": False, "operator_id": operator,
+        })
 
     async def _handle_load_profile(self, data: dict) -> None:
         """Handle runtime profile load/switch via NATS.

@@ -139,3 +139,58 @@ def scan_source(code: str) -> list[Finding]:
 def is_dangerous(code: str) -> bool:
     """True if the source contains any high-severity finding (should be blocked)."""
     return any(f.severity == "high" for f in scan_source(code))
+
+
+def deploy_atomically(target_path: str, code: str, validate_syntax: bool = True) -> tuple[bool, str]:
+    """Write ``code`` to ``target_path`` with automatic rollback on failure (Phase 1.9).
+
+    A deploy must never leave the system in a half-broken state. This:
+    1. Snapshots any existing file at ``target_path``.
+    2. Writes the new code.
+    3. Optionally validates it compiles (catches syntax errors before they
+       break an import at runtime).
+    4. On any failure, **rolls back** — restores the previous content, or
+       removes the file entirely if it was newly created — so a bad deploy
+       leaves no partial artifact behind.
+
+    Returns ``(ok, detail)``. The caller (and the allowlist check in
+    ``safe_deploy_path``) remain responsible for *where* it's allowed to write;
+    this only governs the write itself.
+    """
+    existed = os.path.exists(target_path)
+    prior: Optional[bytes] = None
+    if existed:
+        try:
+            with open(target_path, "rb") as f:
+                prior = f.read()
+        except OSError as e:
+            return False, f"could not snapshot existing file: {e}"
+
+    def _rollback() -> None:
+        if existed and prior is not None:
+            with open(target_path, "wb") as f:
+                f.write(prior)
+        elif not existed and os.path.exists(target_path):
+            os.remove(target_path)
+
+    try:
+        parent = os.path.dirname(target_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        if validate_syntax:
+            try:
+                compile(code, target_path, "exec")
+            except SyntaxError as e:
+                _rollback()
+                return False, f"rolled back — syntax error: {e}"
+
+        return True, "deployed"
+    except Exception as e:  # noqa: BLE001 — any failure must trigger rollback
+        try:
+            _rollback()
+        except Exception as re:  # noqa: BLE001
+            return False, f"deploy failed ({e}); ROLLBACK ALSO FAILED ({re})"
+        return False, f"rolled back — deploy error: {e}"

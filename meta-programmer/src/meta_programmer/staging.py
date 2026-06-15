@@ -13,9 +13,22 @@ import json
 import logging
 import os
 import shutil
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def is_review_expired(metadata: dict, now_ms: int, ttl_ms: int) -> bool:
+    """True if a human-review item has waited longer than its TTL (Phase 1.9).
+
+    Fail-closed: an item with no ``created_at`` (legacy / pre-timestamp) is
+    treated as expired, so an un-aged pending approval can't dodge the sweep.
+    """
+    created = metadata.get("created_at")
+    if not isinstance(created, (int, float)):
+        return True
+    return (now_ms - created) >= ttl_ms
 
 
 class StagingManager:
@@ -78,11 +91,14 @@ class StagingManager:
             with open(tests_path, "w") as f:
                 f.write(tests)
 
-        # Write metadata
+        # Write metadata. created_at lets the human-review sweep fail an
+        # unanswered DEFER closed after a TTL (Phase 1.9); it is preserved
+        # across stage moves since _move_stage only rewrites the `stage` field.
         metadata = {
             "trace_id": trace_id,
             "target_path": target_path,
             "stage": "pending",
+            "created_at": int(time.time() * 1000),
         }
         metadata_path = os.path.join(stage_dir, "metadata.json")
         with open(metadata_path, "w") as f:
@@ -106,7 +122,7 @@ class StagingManager:
     def stage_rejected(self, trace_id: str, reason: str) -> None:
         """Move code to rejected with reason."""
         source_dir = None
-        for check_dir in [self.pending_dir, self.testing_dir]:
+        for check_dir in [self.pending_dir, self.testing_dir, self.human_review_dir]:
             candidate = os.path.join(check_dir, trace_id)
             if os.path.exists(candidate):
                 source_dir = check_dir
@@ -162,6 +178,31 @@ class StagingManager:
 
         except Exception as e:
             logger.error(f"Error moving stage: {e}")
+
+    def list_human_review(self) -> list[dict]:
+        """Return metadata for every item awaiting human review (Phase 1.9)."""
+        items = []
+        if not os.path.isdir(self.human_review_dir):
+            return items
+        for trace_id in os.listdir(self.human_review_dir):
+            metadata_path = os.path.join(self.human_review_dir, trace_id, "metadata.json")
+            if os.path.exists(metadata_path):
+                try:
+                    with open(metadata_path, "r") as f:
+                        items.append(json.load(f))
+                except (OSError, json.JSONDecodeError):
+                    # A trace whose metadata can't be read is failed closed by
+                    # the caller; surface it with just its id so it isn't lost.
+                    items.append({"trace_id": trace_id})
+        return items
+
+    def expired_reviews(self, now_ms: int, ttl_ms: int) -> list[str]:
+        """trace_ids of human-review items that have exceeded their TTL."""
+        return [
+            m["trace_id"]
+            for m in self.list_human_review()
+            if "trace_id" in m and is_review_expired(m, now_ms, ttl_ms)
+        ]
 
     def get_metadata(self, trace_id: str) -> Optional[dict]:
         """Get metadata for a trace_id (searches all stages)."""

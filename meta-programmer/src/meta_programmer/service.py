@@ -8,6 +8,7 @@ tests in isolated sandboxes, and deploys after Kernel approval.
 import asyncio
 import json
 import os
+import time
 from typing import Any, Optional
 
 from activelearning import BaseService
@@ -15,7 +16,7 @@ from activelearning import BaseService
 from meta_programmer.sandbox_manager import SandboxManager
 from meta_programmer.staging import StagingManager
 from meta_programmer.agents import MetaProgrammerTeam
-from meta_programmer.safety import scan_source, safe_deploy_path
+from meta_programmer.safety import scan_source, safe_deploy_path, deploy_atomically
 
 
 class MetaProgrammerService(BaseService):
@@ -43,12 +44,18 @@ class MetaProgrammerService(BaseService):
         self._staging_manager = StagingManager(self.staging_root)
         self._team: Optional[MetaProgrammerTeam] = None
 
+        # A deferred (human-review) proposal that no one answers is failed
+        # closed after this TTL (Phase 1.9), rather than lingering forever.
+        self.defer_ttl_ms = int(os.environ.get("DEFER_TTL_MS", "300000"))  # 5 min
+        self._sweep_task: Optional[asyncio.Task] = None
+
         # Metrics
         self._gaps_processed = 0
         self._code_generated = 0
         self._tests_passed = 0
         self._tests_failed = 0
         self._deployments = 0
+        self._reviews_expired = 0
 
     async def _setup(self) -> None:
         """Initialize service-specific setup."""
@@ -71,10 +78,36 @@ class MetaProgrammerService(BaseService):
         # Subscribe to status requests
         await self.event_bus.subscribe("metaprogrammer.status", self._handle_status)
 
+        # Periodically fail-close DEFERs that no human ever answered.
+        self._sweep_task = asyncio.create_task(self._expire_reviews_loop())
+
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
-        # Cleanup is handled by BaseService
-        pass
+        if self._sweep_task:
+            self._sweep_task.cancel()
+
+    async def _expire_reviews_loop(self) -> None:
+        """Background loop: sweep expired human-review items (Phase 1.9)."""
+        # Check at least once per minute, more often for short TTLs.
+        interval = max(5.0, min(60.0, self.defer_ttl_ms / 1000 / 2))
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self._sweep_expired_reviews(int(time.time() * 1000))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:  # noqa: BLE001 — a sweep error must not kill the loop
+                self.logger.error(f"Review-expiry sweep error: {e}")
+
+    async def _sweep_expired_reviews(self, now_ms: int) -> int:
+        """Reject + DENY every human-review item past its TTL. Returns the count."""
+        expired = self._staging_manager.expired_reviews(now_ms, self.defer_ttl_ms)
+        for trace_id in expired:
+            self.logger.warning(f"DEFER expired (no human approval) — denying: {trace_id}")
+            self._staging_manager.stage_rejected(trace_id, "DEFER expired — no human approval (fail-closed)")
+            self._reviews_expired += 1
+            await self._publish_gap_result(trace_id, False, "DEFER expired — no human approval (fail-closed)")
+        return len(expired)
 
     async def _handle_knowledge_gap(self, data: dict[str, Any]) -> None:
         """
@@ -272,12 +305,13 @@ class MetaProgrammerService(BaseService):
                 raise ValueError(f"Unsafe deploy path: {resolved}")
             target_path = resolved
 
-            # Ensure target directory exists
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-
-            # Write code
-            with open(target_path, "w") as f:
-                f.write(code)
+            # Write atomically: snapshot any existing file, validate the new
+            # code compiles, and roll back to the prior content (or remove a
+            # newly-created file) on any failure — never leave a broken artifact.
+            ok, detail = deploy_atomically(target_path, code)
+            if not ok:
+                self.logger.error("Deploy rolled back for %s: %s", target_path, detail)
+                raise RuntimeError(f"Deploy rolled back: {detail}")
 
             self.logger.info(f"Deployed code to: {target_path}")
 

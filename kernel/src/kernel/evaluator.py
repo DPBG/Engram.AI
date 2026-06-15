@@ -91,6 +91,36 @@ class KernelEvaluator:
         # Phase 1.9) rather than letting it linger indefinitely.
         self.defer_ttl_ms = defer_ttl_ms
         self._body_profile: Optional["BodyProfile"] = body_profile
+        # SAFE_HALT kill switch (Phase 1.9). When halted, the Kernel — the sole
+        # authority that may approve anything — DENIES every proposal. Because
+        # actions, code deployments, and Coordinator task execution all route
+        # through here, one flag stops the whole system at once. Fail-safe.
+        self._halted = False
+        self._halt_reason = ""
+
+    @property
+    def is_halted(self) -> bool:
+        return self._halted
+
+    def halt(self, reason: str = "operator SAFE_HALT") -> None:
+        """Engage the kill switch: every subsequent proposal is DENIED."""
+        self._halted = True
+        self._halt_reason = reason or "operator SAFE_HALT"
+        logger.critical("KERNEL SAFE_HALT engaged: %s — denying all proposals", self._halt_reason)
+
+    def resume(self) -> None:
+        """Release the kill switch (operator action). Resumes normal evaluation."""
+        self._halted = False
+        self._halt_reason = ""
+        logger.warning("Kernel SAFE_HALT released — resuming normal evaluation")
+
+    def _halt_decision(self, trace_id: str) -> "KernelDecision":
+        return KernelDecision(
+            trace_id=trace_id,
+            type=DecisionType.DENY,
+            reason=f"SAFE_HALT active: {self._halt_reason}",
+            risk_score=1.0,
+        )
 
     def set_body_profile(self, profile: "BodyProfile") -> None:
         """Set or replace the active body profile.
@@ -121,6 +151,10 @@ class KernelEvaluator:
         """
         trace_id = proposal.get("trace_id", str(uuid.uuid4()))
         action = proposal.get("action", {})
+
+        # Kill switch: deny everything while halted.
+        if self._halted:
+            return self._halt_decision(trace_id)
 
         # Initialize risk score — clamp external input to [0.0, 1.0]
         risk_score = max(0.0, min(risk_analysis.risk_score, 1.0)) if risk_analysis else 0.0
@@ -225,6 +259,10 @@ class KernelEvaluator:
         trace_id = proposal.get("trace_id", str(uuid.uuid4()))
         target_path = proposal.get("target_path", "")
         code_preview = proposal.get("code_preview", "")
+
+        # Kill switch: deny all code deployment while halted.
+        if self._halted:
+            return self._halt_decision(trace_id)
 
         # Initialize risk analysis
         risk_score = risk_analysis.risk_score if risk_analysis else 0.0

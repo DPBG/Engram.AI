@@ -48,3 +48,32 @@ def test_clean_code_allowed():
     assert d.type == DecisionType.ALLOW
     # ALLOW decisions carry a TTL so stale approvals can't be replayed forever.
     assert d.expires_at is not None
+
+
+# ── SAFE_HALT kill switch (Phase 1.9) ────────────────────────────────────────
+
+def test_safe_halt_denies_action_proposal():
+    ev = _ev()
+    ev.halt("emergency")
+    assert ev.is_halted is True
+    d = ev.evaluate_action_proposal({"trace_id": "t", "action": {"channel": "head", "intensity": 0.1}})
+    assert d.type == DecisionType.DENY
+    assert "SAFE_HALT" in d.reason
+
+
+def test_safe_halt_denies_otherwise_clean_code():
+    # Code that would normally ALLOW must be denied while halted.
+    ev = _ev()
+    ev.halt()
+    d = ev.evaluate_code_proposal(_proposal(preview="def add(a, b):\n    return a + b\n"))
+    assert d.type == DecisionType.DENY
+    assert d.risk_score == 1.0
+
+
+def test_resume_restores_normal_evaluation():
+    ev = _ev()
+    ev.halt()
+    ev.resume()
+    assert ev.is_halted is False
+    d = ev.evaluate_code_proposal(_proposal(preview="def add(a, b):\n    return a + b\n"))
+    assert d.type == DecisionType.ALLOW
