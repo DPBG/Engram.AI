@@ -85,7 +85,7 @@ jobs:
           PYTHONPATH: kernel/src:meta-programmer/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests -v
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests -o addopts="" -v
 
   lint:
     name: Lint
