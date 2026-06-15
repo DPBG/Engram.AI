@@ -15,6 +15,7 @@ from activelearning import BaseService
 from meta_programmer.sandbox_manager import SandboxManager
 from meta_programmer.staging import StagingManager
 from meta_programmer.agents import MetaProgrammerTeam
+from meta_programmer.safety import scan_source, safe_deploy_path
 
 
 class MetaProgrammerService(BaseService):
@@ -112,6 +113,19 @@ class MetaProgrammerService(BaseService):
             target_path = code_result["target_path"]
             code_content = code_result["code"]
             test_content = code_result.get("tests", "")
+
+            # Defence-in-depth: scan the FULL generated source (not just the
+            # 500-char preview the Kernel sees) and refuse anything dangerous
+            # before it is ever staged, submitted, or deployed.
+            high = [f for f in scan_source(code_content) if f.severity == "high"]
+            if high:
+                reason = "Unsafe code blocked by full-source scan: " + "; ".join(
+                    f"{f.rule} ({f.detail})" for f in high[:5]
+                )
+                self.logger.warning("%s — %s", trace_id, reason)
+                self._staging_manager.stage_rejected(trace_id, reason)
+                await self._publish_gap_result(trace_id, False, reason)
+                return
 
             # Write to staging/pending
             staged_path = self._staging_manager.stage_pending(
@@ -247,6 +261,17 @@ class MetaProgrammerService(BaseService):
     async def _deploy_code(self, trace_id: str, target_path: str, code: str) -> None:
         """Deploy approved code to target location."""
         try:
+            # Refuse to write outside the deploy allowlist — reject `..` traversal
+            # and symlink escapes, and use the resolved, validated path.
+            ok, resolved = safe_deploy_path(
+                target_path,
+                allowlist=[self.plugins_root, self.tasks_root, self.staging_root],
+            )
+            if not ok:
+                self.logger.error("Refusing deploy to unsafe path: %s", resolved)
+                raise ValueError(f"Unsafe deploy path: {resolved}")
+            target_path = resolved
+
             # Ensure target directory exists
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
 

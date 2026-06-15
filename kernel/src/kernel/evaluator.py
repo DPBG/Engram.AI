@@ -241,10 +241,17 @@ class KernelEvaluator:
             risk_score = max(risk_score, 0.7)
             logger.warning(f"Dangerous patterns detected: {dangerous_flags}")
 
-        # Check for self-referential code
+        # Check for self-referential code — code that touches the safety/meta
+        # machinery itself (kernel, safety-supervisor, meta-programmer) is never
+        # auto-approved. Fail closed: DENY (not DEFER).
         if self._is_self_referential(code_preview):
             flags.append("SELF_REFERENTIAL")
-            risk_score = max(risk_score, 0.8)
+            return KernelDecision(
+                trace_id=trace_id,
+                type=DecisionType.DENY,
+                reason=f"Self-referential code touches system internals: {', '.join(flags)}",
+                risk_score=max(risk_score, 0.95),
+            )
 
         # Apply thresholds
         if risk_score >= self.deny_threshold:

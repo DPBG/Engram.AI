@@ -88,14 +88,16 @@ class SandboxManager:
                 image=self.sandbox_image,
                 command=command,
                 volumes=volumes,
-                network_disabled=True,  # No network access
-                read_only=True,         # Read-only filesystem
+                network_disabled=True,            # No network access
+                read_only=True,                   # Read-only root filesystem
+                cap_drop=["ALL"],                 # Drop all Linux capabilities
+                security_opt=["no-new-privileges"],  # Block privilege escalation
                 mem_limit=self.memory_limit,
                 cpu_quota=self.cpu_quota,
                 pids_limit=self.max_pids,
                 detach=True,
-                remove=True,  # Auto-destroy after completion
-                tmpfs={"/tmp": "size=50M"},  # Writable /tmp
+                remove=True,                      # Auto-destroy after completion
+                tmpfs={"/tmp": "size=50M"},       # Writable /tmp only
             )
 
             # Wait for completion with timeout

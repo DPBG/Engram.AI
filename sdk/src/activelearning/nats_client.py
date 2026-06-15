@@ -18,6 +18,8 @@ from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 from nats.js import JetStreamContext
 
+from activelearning.signing import verify_decision
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -244,6 +246,16 @@ class EventBus:
 
         async def handler(data: dict[str, Any]) -> None:
             nonlocal result
+            # Authenticate the decision. A forged or unsigned decision (when
+            # signing is enabled) is ignored, so it cannot satisfy the wait —
+            # the caller times out and must fail closed (deny/halt).
+            if not verify_decision(data):
+                logger.error(
+                    "Rejected decision on %s: missing/invalid signature "
+                    "(possible forgery) — ignoring and continuing to wait.",
+                    subject,
+                )
+                return
             result = data
             decision_received.set()
 
