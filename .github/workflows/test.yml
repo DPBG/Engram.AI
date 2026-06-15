@@ -62,6 +62,31 @@ jobs:
         working-directory: sdk
         run: uv run --extra dev python -m pytest tests/ -v --cov=activelearning --cov-report=term-missing
 
+  governance:
+    name: Governance & safety tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run Kernel + Meta-Programmer safety tests
+        env:
+          PYTHONPATH: kernel/src:meta-programmer/src
+        # uv run builds an ephemeral env (avoids the runner's externally-managed
+        # system Python); --with-editable ./sdk provides activelearning + its deps.
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests -o addopts="" -v
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

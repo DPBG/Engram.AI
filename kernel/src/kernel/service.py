@@ -11,7 +11,7 @@ import os
 import uuid
 from typing import Any, Optional
 
-from activelearning import BaseService
+from activelearning import BaseService, sign_decision
 
 from kernel.evaluator import KernelEvaluator, KernelDecision, RiskAnalysis, DecisionType
 from kernel.policy import (
@@ -402,14 +402,14 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 f"code.decision.{trace_id}",
-                {
+                sign_decision({
                     "trace_id": decision.trace_id,
                     "type": decision.type.value,
                     "reason": decision.reason,
                     "risk_score": decision.risk_score,
                     "issued_at": decision.issued_at,
                     "expires_at": decision.expires_at,
-                },
+                }),
             )
 
             self.logger.info(
@@ -553,7 +553,7 @@ class KernelService(BaseService):
         For cognitive/speech proposals that are ALLOWED, forwards to
         the appropriate execution channel.
         """
-        decision_payload = {
+        decision_payload = sign_decision({
             "trace_id": decision.trace_id,
             "type": decision.type.value,
             "reason": decision.reason,
@@ -561,9 +561,10 @@ class KernelService(BaseService):
             "risk_score": decision.risk_score,
             "issued_at": decision.issued_at,
             "expires_at": decision.expires_at,
-        }
+        })
 
-        # Publish decision — caller is waiting on this
+        # Publish decision (signed) — caller is waiting on this and will
+        # reject it unless the signature verifies.
         await self.event_bus.publish(f"decision.{trace_id}", decision_payload)
 
         # Track consecutive DENYs per channel for escalation
