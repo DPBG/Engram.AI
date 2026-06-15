@@ -34,6 +34,15 @@ def test_dangerous_pattern_defers():
     assert d.type == DecisionType.DEFER
 
 
+def test_defer_carries_expiry_deadline():
+    # Phase 1.9: a DEFER is not open-ended — it has a deadline so an unanswered
+    # human review can be failed closed (DENY) instead of lingering forever.
+    d = _ev().evaluate_code_proposal(_proposal(preview="subprocess.run(['ls'])"))
+    assert d.type == DecisionType.DEFER
+    assert d.expires_at is not None
+    assert d.expires_at > d.issued_at
+
+
 def test_clean_code_allowed():
     d = _ev().evaluate_code_proposal(_proposal(preview="def add(a, b):\n    return a + b\n"))
     assert d.type == DecisionType.ALLOW

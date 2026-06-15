@@ -32,6 +32,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
+from dashboard.auth import install_auth_middleware, authorize_websocket
+
 logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -630,6 +632,11 @@ class DashboardService:
             allow_methods=["*"], allow_headers=["*"],
         )
 
+        # Authenticate the control plane: when ENGRAM_DASHBOARD_TOKEN is set,
+        # every state-mutating request (POST/PUT/DELETE) must present it. No-op
+        # in dev when the token is unset (logs a one-time warning). See auth.py.
+        install_auth_middleware(self.app)
+
         static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 
         # Brain visualization (standalone Three.js app)
@@ -1150,6 +1157,14 @@ class DashboardService:
 
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
+            # The /ws channel carries state-changing commands (approval
+            # responses to the Kernel, motor guidance, training control). When
+            # auth is enabled, refuse connections that don't present the token —
+            # otherwise a forged approval_response could defeat the Kernel gate.
+            if not authorize_websocket(websocket):
+                await websocket.close(code=1008)  # policy violation
+                self.logger.warning("WS rejected: missing/invalid dashboard token")
+                return
             await websocket.accept()
             active_connections.append(websocket)
             self.skills.record_call("bus.websocket", 0)
