@@ -25,6 +25,12 @@ from activelearning.database import Database, get_database
 from activelearning.embeddings import EmbeddingService, get_embedding_service, embed_text, embed_batch
 from activelearning.config import ServiceConfig
 from activelearning.base_service import BaseService
+from activelearning.signing import (
+    sign_decision,
+    verify_decision,
+    signing_enabled,
+    DECISION_KEY_ENV,
+)
 
 __version__ = "0.1.0"
 
@@ -63,4 +69,9 @@ __all__ = [
     "ActuatorPlugin",
     "register_sensor",
     "register_actuator",
+    # Decision signing (safety gate authentication)
+    "sign_decision",
+    "verify_decision",
+    "signing_enabled",
+    "DECISION_KEY_ENV",
 ]

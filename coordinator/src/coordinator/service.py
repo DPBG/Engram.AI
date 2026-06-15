@@ -8,6 +8,7 @@ Integrates:
 """
 
 import asyncio
+import uuid
 from typing import Optional
 
 from activelearning import BaseService, get_embedding_service
@@ -15,6 +16,11 @@ from activelearning import BaseService, get_embedding_service
 from coordinator.sensor_manager import SensorManager
 from coordinator.learning_controller import LearningController
 from coordinator.task_coordinator import TaskCoordinator
+from coordinator.gate import (
+    KERNEL_PROPOSAL_SUBJECT,
+    build_execution_proposal,
+    decision_allows,
+)
 
 
 class CoordinatorService(BaseService):
@@ -94,7 +100,28 @@ class CoordinatorService(BaseService):
             match = await self._task_coordinator.find_task(query)
 
             if match["action"] == "execute":
-                # Execute existing task
+                # Gate every execution through the Kernel (Phase 1.6). The task
+                # only runs on an ALLOW/TRANSFORM decision; DENY/DEFER/timeout
+                # fail closed.
+                decision = await self._request_execution_approval(
+                    match["task_id"], parameters
+                )
+                if not decision_allows(decision):
+                    reason = (decision or {}).get("reason", "Kernel did not approve execution")
+                    self.logger.warning(
+                        f"Task execution blocked by Kernel: {match['task_id']} "
+                        f"({(decision or {}).get('type', 'NONE')}: {reason})"
+                    )
+                    await self.event_bus.publish("task.result", {
+                        "success": False,
+                        "blocked": True,
+                        "task_id": match["task_id"],
+                        "decision": (decision or {}).get("type", "NONE"),
+                        "reason": reason,
+                    })
+                    return
+
+                # Approved — execute existing task
                 self.logger.info(f"Executing task: {match['task_id']}")
                 result = await self._task_coordinator.execute_task(
                     match["task_id"],
@@ -134,6 +161,29 @@ class CoordinatorService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling task request: {e}", exc_info=True)
+
+    async def _request_execution_approval(
+        self,
+        task_id: str,
+        parameters: Optional[dict],
+    ) -> dict:
+        """Ask the Kernel to approve executing a task; fail closed on timeout.
+
+        Publishes an action proposal and waits for the signed ``decision.<trace>``
+        reply. A timeout (or any error) yields a synthetic DENY so the caller
+        declines to execute.
+        """
+        trace_id = str(uuid.uuid4())
+        proposal = build_execution_proposal(trace_id, task_id, parameters)
+        try:
+            await self.event_bus.publish(KERNEL_PROPOSAL_SUBJECT, proposal)
+            return await self.event_bus.wait_for_decision(trace_id, timeout=30.0)
+        except asyncio.TimeoutError:
+            self.logger.error(f"Kernel decision timeout for task {task_id} (trace={trace_id})")
+            return {"type": "DENY", "reason": "Kernel decision timeout"}
+        except Exception as e:
+            self.logger.error(f"Error requesting Kernel approval for {task_id}: {e}")
+            return {"type": "DENY", "reason": str(e)}
 
     async def _handle_demo_start(self, data: dict) -> None:
         """Handle demonstration start request."""

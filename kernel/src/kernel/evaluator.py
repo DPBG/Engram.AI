@@ -80,12 +80,47 @@ class KernelEvaluator:
         deny_threshold: float = 0.8,
         defer_threshold: float = 0.5,
         decision_ttl_ms: int = 60000,  # 1 minute
+        defer_ttl_ms: int = 300000,  # 5 minutes for a human to respond
         body_profile: Optional["BodyProfile"] = None,
     ):
         self.deny_threshold = deny_threshold
         self.defer_threshold = defer_threshold
         self.decision_ttl_ms = decision_ttl_ms
+        # A DEFER carries a deadline: if no human answers before it expires, the
+        # approval consumer must treat the pending proposal as DENY (fail-closed,
+        # Phase 1.9) rather than letting it linger indefinitely.
+        self.defer_ttl_ms = defer_ttl_ms
         self._body_profile: Optional["BodyProfile"] = body_profile
+        # SAFE_HALT kill switch (Phase 1.9). When halted, the Kernel — the sole
+        # authority that may approve anything — DENIES every proposal. Because
+        # actions, code deployments, and Coordinator task execution all route
+        # through here, one flag stops the whole system at once. Fail-safe.
+        self._halted = False
+        self._halt_reason = ""
+
+    @property
+    def is_halted(self) -> bool:
+        return self._halted
+
+    def halt(self, reason: str = "operator SAFE_HALT") -> None:
+        """Engage the kill switch: every subsequent proposal is DENIED."""
+        self._halted = True
+        self._halt_reason = reason or "operator SAFE_HALT"
+        logger.critical("KERNEL SAFE_HALT engaged: %s — denying all proposals", self._halt_reason)
+
+    def resume(self) -> None:
+        """Release the kill switch (operator action). Resumes normal evaluation."""
+        self._halted = False
+        self._halt_reason = ""
+        logger.warning("Kernel SAFE_HALT released — resuming normal evaluation")
+
+    def _halt_decision(self, trace_id: str) -> "KernelDecision":
+        return KernelDecision(
+            trace_id=trace_id,
+            type=DecisionType.DENY,
+            reason=f"SAFE_HALT active: {self._halt_reason}",
+            risk_score=1.0,
+        )
 
     def set_body_profile(self, profile: "BodyProfile") -> None:
         """Set or replace the active body profile.
@@ -116,6 +151,10 @@ class KernelEvaluator:
         """
         trace_id = proposal.get("trace_id", str(uuid.uuid4()))
         action = proposal.get("action", {})
+
+        # Kill switch: deny everything while halted.
+        if self._halted:
+            return self._halt_decision(trace_id)
 
         # Initialize risk score — clamp external input to [0.0, 1.0]
         risk_score = max(0.0, min(risk_analysis.risk_score, 1.0)) if risk_analysis else 0.0
@@ -179,6 +218,7 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Elevated risk ({risk_score:.2f}) - requires human approval",
                 risk_score=risk_score,
+                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
             )
 
         # Check for transformable actions
@@ -220,6 +260,10 @@ class KernelEvaluator:
         target_path = proposal.get("target_path", "")
         code_preview = proposal.get("code_preview", "")
 
+        # Kill switch: deny all code deployment while halted.
+        if self._halted:
+            return self._halt_decision(trace_id)
+
         # Initialize risk analysis
         risk_score = risk_analysis.risk_score if risk_analysis else 0.0
         flags = risk_analysis.flags.copy() if risk_analysis else []
@@ -241,10 +285,17 @@ class KernelEvaluator:
             risk_score = max(risk_score, 0.7)
             logger.warning(f"Dangerous patterns detected: {dangerous_flags}")
 
-        # Check for self-referential code
+        # Check for self-referential code — code that touches the safety/meta
+        # machinery itself (kernel, safety-supervisor, meta-programmer) is never
+        # auto-approved. Fail closed: DENY (not DEFER).
         if self._is_self_referential(code_preview):
             flags.append("SELF_REFERENTIAL")
-            risk_score = max(risk_score, 0.8)
+            return KernelDecision(
+                trace_id=trace_id,
+                type=DecisionType.DENY,
+                reason=f"Self-referential code touches system internals: {', '.join(flags)}",
+                risk_score=max(risk_score, 0.95),
+            )
 
         # Apply thresholds
         if risk_score >= self.deny_threshold:
@@ -261,6 +312,7 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Code requires human review: {', '.join(flags)}",
                 risk_score=risk_score,
+                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
             )
 
         return KernelDecision(
