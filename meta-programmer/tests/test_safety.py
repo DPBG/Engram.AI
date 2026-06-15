@@ -17,6 +17,7 @@ _spec.loader.exec_module(_safety)
 scan_source = _safety.scan_source
 is_dangerous = _safety.is_dangerous
 safe_deploy_path = _safety.safe_deploy_path
+deploy_atomically = _safety.deploy_atomically
 
 
 # ── full-source AST taint scan (1.5) ─────────────────────────────────────────
@@ -99,3 +100,47 @@ def test_dotdot_traversal_rejected():
 def test_empty_path_rejected():
     ok, _ = safe_deploy_path("", allowlist=["/data/plugins"])
     assert ok is False
+
+
+# ── atomic deploy with rollback (1.9) ─────────────────────────────────────────
+
+def test_deploy_new_valid_file():
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "plugin.py")
+        ok, detail = deploy_atomically(target, "x = 1\n")
+        assert ok is True
+        with open(target) as f:
+            assert f.read() == "x = 1\n"
+
+
+def test_deploy_syntax_error_to_new_path_leaves_nothing():
+    # A broken artifact must not survive: the newly-created file is removed.
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "broken.py")
+        ok, detail = deploy_atomically(target, "def broken(:\n    pass")
+        assert ok is False
+        assert "syntax" in detail.lower()
+        assert not os.path.exists(target)
+
+
+def test_deploy_syntax_error_over_existing_restores_original():
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "live.py")
+        with open(target, "w") as f:
+            f.write("GOOD = True\n")
+        ok, _ = deploy_atomically(target, "def broken(:\n    pass")
+        assert ok is False
+        # Original content must be restored intact.
+        with open(target) as f:
+            assert f.read() == "GOOD = True\n"
+
+
+def test_deploy_valid_over_existing_replaces():
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "live.py")
+        with open(target, "w") as f:
+            f.write("OLD = 1\n")
+        ok, _ = deploy_atomically(target, "NEW = 2\n")
+        assert ok is True
+        with open(target) as f:
+            assert f.read() == "NEW = 2\n"
