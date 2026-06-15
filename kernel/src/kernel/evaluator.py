@@ -80,11 +80,16 @@ class KernelEvaluator:
         deny_threshold: float = 0.8,
         defer_threshold: float = 0.5,
         decision_ttl_ms: int = 60000,  # 1 minute
+        defer_ttl_ms: int = 300000,  # 5 minutes for a human to respond
         body_profile: Optional["BodyProfile"] = None,
     ):
         self.deny_threshold = deny_threshold
         self.defer_threshold = defer_threshold
         self.decision_ttl_ms = decision_ttl_ms
+        # A DEFER carries a deadline: if no human answers before it expires, the
+        # approval consumer must treat the pending proposal as DENY (fail-closed,
+        # Phase 1.9) rather than letting it linger indefinitely.
+        self.defer_ttl_ms = defer_ttl_ms
         self._body_profile: Optional["BodyProfile"] = body_profile
 
     def set_body_profile(self, profile: "BodyProfile") -> None:
@@ -179,6 +184,7 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Elevated risk ({risk_score:.2f}) - requires human approval",
                 risk_score=risk_score,
+                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
             )
 
         # Check for transformable actions
@@ -268,6 +274,7 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Code requires human review: {', '.join(flags)}",
                 risk_score=risk_score,
+                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
             )
 
         return KernelDecision(
