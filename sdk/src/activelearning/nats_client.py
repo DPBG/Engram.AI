@@ -18,7 +18,16 @@ from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 from nats.js import JetStreamContext
 
+from pydantic import BaseModel
+
+from activelearning.messages import (
+    KernelDecisionMessage,
+    MessageValidationError,
+    schema_for_subject,
+    validate_payload,
+)
 from activelearning.signing import verify_decision
+from activelearning.subjects import decision_subject
 
 logger = logging.getLogger(__name__)
 
@@ -120,15 +129,24 @@ class EventBus:
             self._connected.clear()
             self._subscriptions.clear()
 
-    async def publish(self, subject: str, data: Any) -> None:
+    async def publish(
+        self,
+        subject: str,
+        data: Any,
+        *,
+        message_model: type[BaseModel] | None = None,
+    ) -> None:
         """
         Publish a message to a subject.
 
         Args:
             subject: NATS subject (e.g., "observation.camera")
             data: Message payload (dataclass or dict)
+            message_model: Optional pydantic model to validate dict payloads
         """
         await self._ensure_connected()
+        if isinstance(data, dict):
+            data = validate_payload(subject, data, message_model)  # type: ignore[arg-type]
         payload = serialize_message(data)
         await self._nc.publish(subject, payload)
         logger.debug(f"Published to {subject}: {len(payload)} bytes")
@@ -141,6 +159,7 @@ class EventBus:
         pending_msgs_limit: int = 65536,
         pending_bytes_limit: int = 128 * 1024 * 1024,
         is_request_handler: bool = False,
+        message_model: type[BaseModel] | None = None,
     ) -> None:
         """
         Subscribe to a subject with a message handler.
@@ -153,6 +172,7 @@ class EventBus:
             pending_bytes_limit: Max pending bytes before slow consumer (default 128 MB)
             is_request_handler: If True, handler receives (data, msg) so it can
                 reply to NATS request-reply messages via msg.respond()
+            message_model: Optional pydantic model; defaults to registry lookup
         """
         await self._ensure_connected()
 
@@ -160,13 +180,32 @@ class EventBus:
             logger.warning(f"Already subscribed to {subject}, unsubscribing first")
             await self.unsubscribe(subject)
 
+        wire_model = message_model or schema_for_subject(subject)
+
         async def message_callback(msg: Msg) -> None:
             try:
                 data = deserialize_message(msg.data)
+                if not isinstance(data, dict):
+                    raise MessageValidationError(
+                        subject,
+                        f"expected JSON object, got {type(data).__name__}",
+                    )
+                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
                 if is_request_handler:
                     await handler(data, msg)
                 else:
                     await handler(data)
+            except MessageValidationError as e:
+                logger.error(str(e))
+                if is_request_handler and msg.reply:
+                    try:
+                        await msg.respond(serialize_message({
+                            "error": "validation_failed",
+                            "detail": e.detail,
+                            "type": "error",
+                        }))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error(f"Error handling message on {subject}: {e}")
                 # For request-reply handlers, send an error response so the
@@ -240,7 +279,7 @@ class EventBus:
         Returns:
             Decision data as dict
         """
-        subject = f"decision.{trace_id}"
+        subject = decision_subject(trace_id)
         decision_received = asyncio.Event()
         result: dict[str, Any] = {}
 
@@ -259,7 +298,7 @@ class EventBus:
             result = data
             decision_received.set()
 
-        await self.subscribe(subject, handler)
+        await self.subscribe(subject, handler, message_model=KernelDecisionMessage)
         try:
             await asyncio.wait_for(decision_received.wait(), timeout=timeout)
             return result

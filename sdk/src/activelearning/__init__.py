@@ -31,6 +31,13 @@ from activelearning.signing import (
     signing_enabled,
     DECISION_KEY_ENV,
 )
+from activelearning.subjects import Subjects, code_decision_subject, decision_subject, observation_subject
+from activelearning.messages import (
+    MessageValidationError,
+    validate_payload,
+    schema_for_subject,
+    SUBJECT_SCHEMAS,
+)
 
 __version__ = "0.1.0"
 
@@ -74,4 +81,14 @@ __all__ = [
     "verify_decision",
     "signing_enabled",
     "DECISION_KEY_ENV",
+    # NATS subject registry
+    "Subjects",
+    "decision_subject",
+    "code_decision_subject",
+    "observation_subject",
+    # Wire models / validation
+    "MessageValidationError",
+    "validate_payload",
+    "schema_for_subject",
+    "SUBJECT_SCHEMAS",
 ]
