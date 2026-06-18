@@ -9,13 +9,13 @@ Safety rules:
 5. Human escalation for conflicts
 """
 
-import asyncio
-import json
 import logging
 import os
 import time
 import uuid
 from typing import Any
+
+from activelearning.nats_client import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,8 @@ class ExternalAPIManager:
     Manages external API queries with safety checks.
     """
 
-    def __init__(self, nats_client: Any, db: Any):
-        self.nats_client = nats_client
+    def __init__(self, event_bus: EventBus, db: Any):
+        self.event_bus = event_bus
         self.db = db
 
         # API keys from environment
@@ -144,26 +144,14 @@ class ExternalAPIManager:
             }
 
             # Publish to Kernel
-            await self.nats_client.publish("proposal.new", json.dumps(proposal).encode())
+            await self.event_bus.publish("proposal.new", proposal)
 
-            # Wait for decision
-            decision_subject = f"decision.{trace_id}"
-            future = asyncio.Future()
-
-            async def decision_handler(msg):
-                if not future.done():
-                    future.set_result(json.loads(msg.data.decode()))
-
-            sub = await self.nats_client.subscribe(decision_subject, cb=decision_handler)
-
-            try:
-                decision = await asyncio.wait_for(future, timeout=10.0)
-                return decision.get("type") == "ALLOW"
-            except TimeoutError:
-                logger.error("Timeout waiting for Kernel decision")
-                return False
-            finally:
-                await sub.unsubscribe()
+            # Wait for signed decision via EventBus
+            decision = await self.event_bus.wait_for_decision(trace_id, timeout=10.0)
+            return decision.get("type") == "ALLOW"
+        except TimeoutError:
+            logger.error("Timeout waiting for Kernel decision")
+            return False
 
         except Exception as e:
             logger.error(f"Error requesting Kernel approval: {e}")
@@ -267,18 +255,16 @@ class ExternalAPIManager:
         try:
             trace_id = str(uuid.uuid4())
 
-            await self.nats_client.publish(
+            await self.event_bus.publish(
                 "approval.request",
-                json.dumps(
-                    {
-                        "trace_id": trace_id,
-                        "type": "knowledge_conflict",
-                        "query": query,
-                        "external_response": external_response,
-                        "local_knowledge": local_knowledge,
-                        "message": "Conflicting knowledge detected. Which should be trusted?",
-                    }
-                ).encode(),
+                {
+                    "trace_id": trace_id,
+                    "type": "knowledge_conflict",
+                    "query": query,
+                    "external_response": external_response,
+                    "local_knowledge": local_knowledge,
+                    "message": "Conflicting knowledge detected. Which should be trusted?",
+                },
             )
 
             logger.info(f"Conflict escalated to human: {trace_id}")

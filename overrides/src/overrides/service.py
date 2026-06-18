@@ -10,28 +10,16 @@ Manages the flow:
 """
 
 import asyncio
-import json
-import logging
-import os
-import signal
-import sys
 from typing import Optional
 
-import aiosqlite
-import nats
+from activelearning import BaseService
+from activelearning.nats_client import serialize_message
 
 from overrides.verifier import HumanVerifier
 from overrides.processor import OverrideProcessor
 
-# Configure logging
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
 
-
-class OverrideService:
+class OverrideService(BaseService):
     """
     Human Override Service.
 
@@ -40,12 +28,7 @@ class OverrideService:
     """
 
     def __init__(self):
-        self.nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
-        self.sqlite_path = os.environ.get("SQLITE_PATH", "/data/sqlite/unified.db")
-
-        self._nc: Optional[nats.aio.client.Client] = None
-        self._db: Optional[aiosqlite.Connection] = None
-        self._shutdown_event = asyncio.Event()
+        super().__init__("overrides", use_database=True, use_event_bus=True)
 
         self._verifier: Optional[HumanVerifier] = None
         self._processor: Optional[OverrideProcessor] = None
@@ -56,55 +39,19 @@ class OverrideService:
         self._overrides_applied = 0
         self._overrides_rejected = 0
 
-    async def start(self) -> None:
-        """Start the override service."""
-        logger.info("Starting Human Override System...")
-
-        # Connect to NATS
-        logger.info(f"Connecting to NATS at {self.nats_url}")
-        self._nc = await nats.connect(self.nats_url)
-
-        # Connect to SQLite
-        logger.info(f"Connecting to SQLite at {self.sqlite_path}")
-        os.makedirs(os.path.dirname(self.sqlite_path), exist_ok=True)
-        self._db = await aiosqlite.connect(self.sqlite_path)
-
-        # Initialize components
+    async def _setup(self) -> None:
+        """Service-specific setup."""
         self._verifier = HumanVerifier()
-        self._processor = OverrideProcessor(self._nc, self._db)
+        self._processor = OverrideProcessor(self.event_bus, self.database)
 
-        # Subscribe to override requests
-        await self._nc.subscribe("override.request", cb=self._handle_override_request)
+        await self.event_bus.subscribe("override.request", self._handle_override_request)
+        await self.event_bus.subscribe(
+            "override.status",
+            self._handle_status,
+            is_request_handler=True,
+        )
 
-        # Subscribe to status requests
-        await self._nc.subscribe("override.status", cb=self._handle_status)
-
-        logger.info("Human Override System started successfully")
-
-    async def stop(self) -> None:
-        """Stop the override service."""
-        logger.info("Stopping Human Override System...")
-
-        if self._nc:
-            await self._nc.drain()
-            await self._nc.close()
-
-        if self._db:
-            await self._db.close()
-
-        logger.info("Human Override System stopped")
-
-    async def run(self) -> None:
-        """Run the service until shutdown."""
-        await self.start()
-        await self._shutdown_event.wait()
-        await self.stop()
-
-    def shutdown(self) -> None:
-        """Signal the service to shut down."""
-        self._shutdown_event.set()
-
-    async def _handle_override_request(self, msg) -> None:
+    async def _handle_override_request(self, data: dict) -> None:
         """
         Handle override request from user.
 
@@ -115,107 +62,111 @@ class OverrideService:
         4. Validate with Kernel (for safety-critical params)
         5. Apply override
         """
+        trace_id = data.get("trace_id", "")
+        prompt = data.get("prompt", "")
+
         try:
-            request = json.loads(msg.data.decode())
-            trace_id = request.get("trace_id", "")
-            prompt = request.get("prompt", "")
-
-            logger.info(f"Override request: {trace_id} - {prompt}")
-            self._overrides_requested += 1
-
-            # Step 1: Verify human presence
-            logger.info("Verifying human presence...")
-            verification = await self._verifier.verify_human()
-
-            if not verification["verified"]:
-                logger.warning(f"Human verification failed: {verification['error']}")
-                self._overrides_rejected += 1
-                await self._publish_override_result(
-                    trace_id=trace_id,
-                    success=False,
-                    message=f"Verification failed: {verification['error']}",
-                )
-                return
-
-            logger.info(f"Human verified via {verification['method']} (confidence: {verification['confidence']:.2f})")
-            self._overrides_verified += 1
-
-            # Step 2: Parse override prompt
-            parsed = await self._processor.parse_override(prompt)
-
-            if not parsed["success"]:
-                logger.error(f"Failed to parse override: {parsed['error']}")
-                self._overrides_rejected += 1
-                await self._publish_override_result(
-                    trace_id=trace_id,
-                    success=False,
-                    message=f"Parse error: {parsed['error']}",
-                )
-                return
-
-            parameter = parsed["parameter"]
-            value = parsed["value"]
-            requires_kernel = parsed["requires_kernel"]
-
-            # Step 3: Validate with Kernel if needed
-            if requires_kernel:
-                logger.info(f"Requesting Kernel validation for: {parameter}")
-                kernel_decision = await self._request_kernel_validation(
-                    trace_id=trace_id,
-                    parameter=parameter,
-                    value=value,
-                )
-
-                if kernel_decision.get("type") != "ALLOW":
-                    reason = kernel_decision.get("reason", "Unknown")
-                    logger.warning(f"Kernel rejected override: {reason}")
-                    self._overrides_rejected += 1
-                    await self._publish_override_result(
-                        trace_id=trace_id,
-                        success=False,
-                        message=f"Kernel rejected: {reason}",
-                    )
-                    return
-
-            # Step 4: Apply override
-            result = await self._processor.apply_override(
-                trace_id=trace_id,
-                parameter=parameter,
-                value=value,
-                verified_by=verification["method"],
-            )
-
-            if result["success"]:
-                logger.info(f"Override applied: {parameter} = {value}")
-                self._overrides_applied += 1
-                await self._publish_override_result(
-                    trace_id=trace_id,
-                    success=True,
-                    message=f"Override applied: {parameter} = {value}",
-                )
-            else:
-                logger.error(f"Failed to apply override: {result['error']}")
-                self._overrides_rejected += 1
-                await self._publish_override_result(
-                    trace_id=trace_id,
-                    success=False,
-                    message=f"Apply error: {result['error']}",
-                )
-
+            await self._process_override_request(trace_id, prompt)
         except Exception as e:
-            logger.error(f"Error handling override request: {e}", exc_info=True)
-            if 'trace_id' in locals():
+            self.logger.error(f"Error handling override request: {e}", exc_info=True)
+            if trace_id:
                 await self._publish_override_result(
                     trace_id=trace_id,
                     success=False,
                     message=str(e),
                 )
 
+    async def _process_override_request(self, trace_id: str, prompt: str) -> None:
+        self.logger.info(f"Override request: {trace_id} - {prompt}")
+        self._overrides_requested += 1
+
+        # Step 1: Verify human presence
+        self.logger.info("Verifying human presence...")
+        verification = await self._verifier.verify_human()
+
+        if not verification["verified"]:
+            self.logger.warning(f"Human verification failed: {verification['error']}")
+            self._overrides_rejected += 1
+            await self._publish_override_result(
+                trace_id=trace_id,
+                success=False,
+                message=f"Verification failed: {verification['error']}",
+            )
+            return
+
+        self.logger.info(
+            f"Human verified via {verification['method']} "
+            f"(confidence: {verification['confidence']:.2f})"
+        )
+        self._overrides_verified += 1
+
+        # Step 2: Parse override prompt
+        parsed = await self._processor.parse_override(prompt)
+
+        if not parsed["success"]:
+            self.logger.error(f"Failed to parse override: {parsed['error']}")
+            self._overrides_rejected += 1
+            await self._publish_override_result(
+                trace_id=trace_id,
+                success=False,
+                message=f"Parse error: {parsed['error']}",
+            )
+            return
+
+        parameter = parsed["parameter"]
+        value = parsed["value"]
+        requires_kernel = parsed["requires_kernel"]
+
+        # Step 3: Validate with Kernel if needed
+        if requires_kernel:
+            self.logger.info(f"Requesting Kernel validation for: {parameter}")
+            kernel_decision = await self._request_kernel_validation(
+                trace_id=trace_id,
+                parameter=parameter,
+                value=value,
+            )
+
+            if kernel_decision.get("type") != "ALLOW":
+                reason = kernel_decision.get("reason", "Unknown")
+                self.logger.warning(f"Kernel rejected override: {reason}")
+                self._overrides_rejected += 1
+                await self._publish_override_result(
+                    trace_id=trace_id,
+                    success=False,
+                    message=f"Kernel rejected: {reason}",
+                )
+                return
+
+        # Step 4: Apply override
+        result = await self._processor.apply_override(
+            trace_id=trace_id,
+            parameter=parameter,
+            value=value,
+            verified_by=verification["method"],
+        )
+
+        if result["success"]:
+            self.logger.info(f"Override applied: {parameter} = {value}")
+            self._overrides_applied += 1
+            await self._publish_override_result(
+                trace_id=trace_id,
+                success=True,
+                message=f"Override applied: {parameter} = {value}",
+            )
+        else:
+            self.logger.error(f"Failed to apply override: {result['error']}")
+            self._overrides_rejected += 1
+            await self._publish_override_result(
+                trace_id=trace_id,
+                success=False,
+                message=f"Apply error: {result['error']}",
+            )
+
     async def _request_kernel_validation(
         self,
         trace_id: str,
         parameter: str,
-        value: any,
+        value: object,
     ) -> dict:
         """Request Kernel validation for override."""
         try:
@@ -226,29 +177,13 @@ class OverrideService:
                 "value": value,
             }
 
-            await self._nc.publish("proposal.new", json.dumps(proposal).encode())
-
-            # Wait for decision
-            decision_subject = f"decision.{trace_id}"
-            future = asyncio.Future()
-
-            async def decision_handler(msg):
-                if not future.done():
-                    future.set_result(json.loads(msg.data.decode()))
-
-            sub = await self._nc.subscribe(decision_subject, cb=decision_handler)
-
-            try:
-                decision = await asyncio.wait_for(future, timeout=10.0)
-                return decision
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout waiting for Kernel decision: {trace_id}")
-                return {"type": "DENY", "reason": "Decision timeout"}
-            finally:
-                await sub.unsubscribe()
-
+            await self.event_bus.publish("proposal.new", proposal)
+            return await self.event_bus.wait_for_decision(trace_id, timeout=10.0)
+        except TimeoutError:
+            self.logger.error(f"Timeout waiting for Kernel decision: {trace_id}")
+            return {"type": "DENY", "reason": "Decision timeout"}
         except Exception as e:
-            logger.error(f"Error requesting Kernel validation: {e}")
+            self.logger.error(f"Error requesting Kernel validation: {e}")
             return {"type": "DENY", "reason": str(e)}
 
     async def _publish_override_result(
@@ -258,63 +193,40 @@ class OverrideService:
         message: str,
     ) -> None:
         """Publish override result."""
-        try:
-            await self._nc.publish(
-                f"override.result.{trace_id}",
-                json.dumps({
-                    "trace_id": trace_id,
-                    "success": success,
-                    "message": message,
-                }).encode(),
-            )
-        except Exception as e:
-            logger.error(f"Error publishing override result: {e}")
+        await self.event_bus.publish(
+            f"override.result.{trace_id}",
+            {
+                "trace_id": trace_id,
+                "success": success,
+                "message": message,
+            },
+        )
 
-    async def _handle_status(self, msg) -> None:
+    async def _handle_status(self, _data: dict, msg) -> None:
         """Handle status requests."""
-        try:
-            status = {
-                "status": "running",
-                "metrics": {
-                    "overrides_requested": self._overrides_requested,
-                    "overrides_verified": self._overrides_verified,
-                    "overrides_applied": self._overrides_applied,
-                    "overrides_rejected": self._overrides_rejected,
-                },
-                "verification_methods": {
-                    "camera": self._verifier._camera_available if self._verifier else False,
-                    "microphone": self._verifier._microphone_available if self._verifier else False,
-                    "button": self._verifier._physical_button_available if self._verifier else False,
-                },
-            }
+        status = {
+            "status": "running",
+            "metrics": {
+                "overrides_requested": self._overrides_requested,
+                "overrides_verified": self._overrides_verified,
+                "overrides_applied": self._overrides_applied,
+                "overrides_rejected": self._overrides_rejected,
+            },
+            "verification_methods": {
+                "camera": self._verifier._camera_available if self._verifier else False,
+                "microphone": self._verifier._microphone_available if self._verifier else False,
+                "button": self._verifier._physical_button_available if self._verifier else False,
+            },
+        }
 
-            if msg.reply:
-                await self._nc.publish(msg.reply, json.dumps(status).encode())
-        except Exception as e:
-            logger.error(f"Error getting status: {e}")
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
 
 async def main() -> None:
     """Main entry point."""
     service = OverrideService()
-
-    loop = asyncio.get_event_loop()
-
-    def signal_handler():
-        logger.info("Received shutdown signal")
-        service.shutdown()
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, signal_handler)
-        except NotImplementedError:
-            pass  # Windows: add_signal_handler unsupported; Ctrl+C still works
-
-    try:
-        await service.run()
-    except Exception as e:
-        logger.error(f"Service error: {e}")
-        sys.exit(1)
+    await service.run()
 
 
 if __name__ == "__main__":
