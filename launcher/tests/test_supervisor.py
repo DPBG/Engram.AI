@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -22,18 +23,24 @@ from launcher.supervisor import (
     _BACKOFF_INITIAL,
     _BACKOFF_MAX,
     _BACKOFF_RESET,
+    _SIGKILL,
 )
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = Path("/tmp/engram-test-data")
+# Use tempfile.gettempdir() so the path is valid on all platforms.
+_DATA_DIR = Path(tempfile.gettempdir()) / "engram-supervisor-test"
+
+# Mirror the SIGKILL sentinel from the production module so FakePopen.kill()
+# is consistent on Windows (where signal.SIGKILL is not defined).
+_SIGKILL_VAL: int = getattr(signal, "SIGKILL", 9)
 
 
 def _svc(
     name: str = "test-svc",
-    deps: tuple = (),
+    deps: tuple[str, ...] = (),
     readiness_timeout: float = 0.05,
 ) -> Service:
     return Service(
@@ -49,9 +56,7 @@ def _svc(
 class FakePopen:
     """Minimal subprocess.Popen stand-in."""
 
-    def __init__(self, exit_sequence: list[int | None]):
-        # exit_sequence: list of return values for successive poll() calls,
-        # followed by the final exit code returned by wait().
+    def __init__(self, exit_sequence: list[int | None]) -> None:
         self._exit_seq = list(exit_sequence)
         self._exit_code: int | None = None
         self._waited = threading.Event()
@@ -73,7 +78,7 @@ class FakePopen:
         self._waited.set()
 
     def kill(self) -> None:
-        self._exit_code = -signal.SIGKILL
+        self._exit_code = -_SIGKILL_VAL
         self._waited.set()
 
     def exit(self, code: int = 0) -> None:
@@ -82,9 +87,8 @@ class FakePopen:
         self._waited.set()
 
 
-def _make_supervisor() -> Supervisor:
-    base_env: dict = {}
-    sup = Supervisor(base_env, _DATA_DIR)
+def _make_supervisor(data_dir: Path | None = None) -> Supervisor:
+    sup = Supervisor({}, data_dir or _DATA_DIR)
     # Patch _service_env so we don't need real paths.
     sup._service_env = lambda svc: {}  # type: ignore[method-assign]
     return sup
@@ -96,13 +100,13 @@ def _make_supervisor() -> Supervisor:
 
 
 class TestManagedProcess:
-    def test_initial_state(self):
+    def test_initial_state(self) -> None:
         fp = FakePopen([])
         mp = ManagedProcess("svc", fp, "", _svc())
         assert mp.restart_count == 0
         assert not mp.ready.is_set()
 
-    def test_ready_event_starts_unset(self):
+    def test_ready_event_starts_unset(self) -> None:
         fp = FakePopen([])
         mp = ManagedProcess("svc", fp, "", _svc())
         assert not mp.ready.is_set()
@@ -114,7 +118,7 @@ class TestManagedProcess:
 
 
 class TestReadinessGating:
-    def test_ready_set_after_timeout(self):
+    def test_ready_set_after_timeout(self) -> None:
         sup = _make_supervisor()
         fp = FakePopen([])
         mp = ManagedProcess("svc", fp, "", _svc(readiness_timeout=0.05))
@@ -124,7 +128,7 @@ class TestReadinessGating:
         assert not mp.ready.is_set()
         assert mp.ready.wait(timeout=0.5), "ready should be set within 0.5s"
 
-    def test_ready_not_set_if_process_died(self):
+    def test_ready_not_set_if_process_died(self) -> None:
         sup = _make_supervisor()
         fp = FakePopen([])
         fp.exit(1)  # already dead
@@ -135,7 +139,7 @@ class TestReadinessGating:
         time.sleep(0.15)
         assert not mp.ready.is_set()
 
-    def test_ready_not_set_during_shutdown(self):
+    def test_ready_not_set_during_shutdown(self) -> None:
         sup = _make_supervisor()
         fp = FakePopen([])
         mp = ManagedProcess("svc", fp, "", _svc(readiness_timeout=0.05))
@@ -146,28 +150,83 @@ class TestReadinessGating:
         time.sleep(0.15)
         assert not mp.ready.is_set()
 
-    def test_start_waits_for_dep(self):
+    def test_schedule_ready_captures_proc_at_call_time(self) -> None:
+        """Ready check uses the proc captured at schedule time, not at wakeup."""
+        sup = _make_supervisor()
+        fp_old = FakePopen([])
+        mp = ManagedProcess("svc", fp_old, "", _svc(readiness_timeout=0.05))
+        sup.procs.append(mp)
+
+        # Schedule against fp_old, then replace mp.proc before the timer fires.
+        sup._schedule_ready(mp)
+        fp_old.exit(1)          # old proc is dead
+        fp_new = FakePopen([])  # new proc is alive, but wasn't the captured one
+        mp.proc = fp_new
+
+        time.sleep(0.15)
+        # fp_old is dead → ready must NOT be set despite fp_new being alive.
+        assert not mp.ready.is_set()
+
+    def test_ready_cleared_on_restart(self) -> None:
+        """mp.ready is cleared before the new proc is installed."""
+        sup = _make_supervisor()
+        svc = _svc(readiness_timeout=100.0)
+
+        spawns: list[FakePopen] = []
+
+        def _fake_spawn(s: Service) -> FakePopen:
+            fp = FakePopen([])
+            spawns.append(fp)
+            return fp
+
+        sup._spawn = _fake_spawn  # type: ignore[method-assign]
+
+        first = _fake_spawn(svc)
+        mp = ManagedProcess(svc.name, first, "", svc)
+        mp.ready.set()  # simulate it was ready before the crash
+        sup.procs.append(mp)
+
+        t = threading.Thread(target=sup._manage, args=(mp,), daemon=True)
+        t.start()
+
+        time.sleep(0.05)
+        first.exit(1)
+
+        # restart_count increments at the START of the backoff sleep, before
+        # the new proc is installed.  Wait until mp.proc actually changes so
+        # we know clear() + spawn have both completed.
+        deadline = time.time() + 3.0  # covers _BACKOFF_INITIAL (1 s) + overhead
+        while time.time() < deadline and mp.proc is first:
+            time.sleep(0.02)
+
+        assert mp.proc is not first, "restart should complete within 3 s"
+        # ready must have been cleared (readiness_timeout=100 s, so the new
+        # _schedule_ready thread won't re-set it for a very long time).
+        assert not mp.ready.is_set()
+
+        sup._stopping = True
+        mp.proc.exit(0)
+        t.join(timeout=2.0)
+
+    def test_start_waits_for_dep(self) -> None:
         sup = _make_supervisor()
 
-        # Pre-create the dep ManagedProcess but mark it not ready yet.
         dep_fp = FakePopen([])
         dep_svc = _svc(name="dep", readiness_timeout=0.05)
         dep_mp = ManagedProcess("dep", dep_fp, "", dep_svc)
         sup.procs.append(dep_mp)
 
         waited_for_ready = threading.Event()
-
         original_wait = dep_mp.ready.wait
 
-        def _patched_wait(timeout=None):
+        def _patched_wait(timeout: float | None = None) -> bool:
             result = original_wait(timeout=timeout)
             waited_for_ready.set()
             return result
 
         dep_mp.ready.wait = _patched_wait  # type: ignore[method-assign]
 
-        # Set dep ready after a brief delay.
-        def _set_ready():
+        def _set_ready() -> None:
             time.sleep(0.05)
             dep_mp.ready.set()
 
@@ -183,7 +242,6 @@ class TestReadinessGating:
 
         sup._spawn = _fake_spawn  # type: ignore[method-assign]
 
-        # Run start() in a thread (it blocks waiting for dep).
         t = threading.Thread(target=lambda: sup.start(child_svc, stagger=0.0), daemon=True)
         t.start()
         t.join(timeout=1.0)
@@ -191,10 +249,10 @@ class TestReadinessGating:
         assert waited_for_ready.is_set(), "supervisor should have waited on dep.ready"
         assert len(spawned) == 1, "child should have been spawned after dep was ready"
 
-    def test_start_proceeds_if_dep_not_started(self, caplog):
-        """A dep named in deps that was never started should be skipped with a warning."""
+    def test_start_proceeds_if_dep_not_started(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A dep listed in deps that was never started is skipped with a warning."""
         sup = _make_supervisor()
-        spawned: list = []
+        spawned: list[FakePopen] = []
 
         def _fake_spawn(svc: Service) -> FakePopen:
             fp = FakePopen([])
@@ -218,9 +276,9 @@ class TestReadinessGating:
 
 
 class TestRestartWithBackoff:
-    def test_process_restarted_after_crash(self):
+    def test_process_restarted_after_crash(self) -> None:
         sup = _make_supervisor()
-        svc = _svc(readiness_timeout=100.0)  # never auto-ready
+        svc = _svc(readiness_timeout=100.0)
 
         spawns: list[FakePopen] = []
 
@@ -238,11 +296,9 @@ class TestRestartWithBackoff:
         t = threading.Thread(target=sup._manage, args=(mp,), daemon=True)
         t.start()
 
-        # Let the drain start, then crash the first process.
         time.sleep(0.05)
         first.exit(1)
 
-        # The supervisor should restart within _BACKOFF_INITIAL + margin.
         deadline = time.time() + _BACKOFF_INITIAL + 0.5
         while time.time() < deadline:
             if mp.restart_count >= 1:
@@ -255,44 +311,67 @@ class TestRestartWithBackoff:
 
         assert mp.restart_count >= 1
 
-    def test_backoff_resets_after_long_uptime(self):
-        sup = _make_supervisor()
-        svc = _svc(readiness_timeout=100.0)
+    def test_backoff_resets_after_long_uptime(self, tmp_path: Path) -> None:
+        """Process that outlives _BACKOFF_RESET resets the backoff delay."""
+        with (
+            patch("launcher.supervisor._BACKOFF_RESET", 0.05),
+            patch("launcher.supervisor._BACKOFF_INITIAL", 0.05),
+            patch("launcher.supervisor._BACKOFF_FACTOR", 2.0),
+            patch("launcher.supervisor._BACKOFF_MAX", 2.0),
+        ):
+            sup = _make_supervisor(tmp_path)
+            svc = _svc(readiness_timeout=100.0)
+            spawns: list[FakePopen] = []
 
-        spawns: list[FakePopen] = []
+            def _fake_spawn(s: Service) -> FakePopen:
+                fp = FakePopen([])
+                spawns.append(fp)
+                return fp
 
-        def _fake_spawn(s: Service) -> FakePopen:
-            fp = FakePopen([])
-            spawns.append(fp)
-            return fp
+            sup._spawn = _fake_spawn  # type: ignore[method-assign]
 
-        sup._spawn = _fake_spawn  # type: ignore[method-assign]
+            first = _fake_spawn(svc)
+            mp = ManagedProcess(svc.name, first, "", svc)
+            sup.procs.append(mp)
 
-        first = _fake_spawn(svc)
-        mp = ManagedProcess(svc.name, first, "", svc)
-        sup.procs.append(mp)
+            t = threading.Thread(target=sup._manage, args=(mp,), daemon=True)
+            t.start()
 
-        # Simulate: first crash (delay → _BACKOFF_INITIAL*_BACKOFF_FACTOR),
-        # then a long-lived run resets delay back to _BACKOFF_INITIAL.
-        # We test this by checking the constant logic, not the real timing.
-        uptime_short = 0.1
-        uptime_long = _BACKOFF_RESET + 1.0
+            # Crash 1 immediately — uptime < BACKOFF_RESET → delay escalates.
+            time.sleep(0.01)
+            first.exit(1)
 
-        delay = _BACKOFF_INITIAL
-        # After short uptime: delay escalates
-        delay_after_short = min(delay * _BACKOFF_FACTOR, _BACKOFF_MAX)
-        # After long uptime: delay resets
-        delay_after_long = _BACKOFF_INITIAL
+            # Wait until the new proc is actually installed (restart_count
+            # increments at the start of the backoff sleep, before spawn, so
+            # checking restart_count alone is too early).
+            deadline = time.time() + 1.0
+            while time.time() < deadline and mp.proc is first:
+                time.sleep(0.01)
+            assert mp.proc is not first, "first restart should complete within 1 s"
+            second = mp.proc
 
-        assert delay_after_short > delay_after_long
+            # Let second proc live past BACKOFF_RESET (0.05 s) so the delay resets.
+            time.sleep(0.08)
+            second.exit(1)
 
-    def test_backoff_caps_at_max(self):
+            # Wait until the third proc is installed (second restart complete).
+            deadline = time.time() + 1.0
+            while time.time() < deadline and mp.proc is second:
+                time.sleep(0.01)
+            assert mp.proc is not second, "second restart should complete within 1 s (reset delay = 0.05 s)"
+            assert mp.restart_count >= 2, "restart_count should reflect both restarts"
+
+            sup._stopping = True
+            mp.proc.exit(0)
+            t.join(timeout=2.0)
+
+    def test_backoff_caps_at_max(self) -> None:
         delay = _BACKOFF_INITIAL
         for _ in range(20):
             delay = min(delay * _BACKOFF_FACTOR, _BACKOFF_MAX)
         assert delay == _BACKOFF_MAX
 
-    def test_no_restart_after_stopping(self):
+    def test_no_restart_after_stopping(self) -> None:
         sup = _make_supervisor()
         svc = _svc(readiness_timeout=100.0)
 
@@ -315,7 +394,6 @@ class TestRestartWithBackoff:
         first.exit(0)
         t.join(timeout=1.0)
 
-        # Only the initial spawn; no restart because _stopping was True.
         assert mp.restart_count == 0
 
 
@@ -326,11 +404,10 @@ class TestRestartWithBackoff:
 
 class TestProcessGroupCleanup:
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX only")
-    def test_kill_proc_uses_killpg_on_posix(self):
+    def test_kill_proc_uses_killpg_on_posix(self) -> None:
         sup = _make_supervisor()
         fp = FakePopen([])
-        # Use the current process's PID so getpgid() resolves without error.
-        fp.pid = os.getpid()
+        fp.pid = os.getpid()  # real PID so os.getpgid() resolves
         mp = ManagedProcess("svc", fp, "", _svc())
 
         killed_pgid: list[int] = []
@@ -347,23 +424,21 @@ class TestProcessGroupCleanup:
         assert len(killed_pgid) == 1
         assert killed_sig[0] == signal.SIGTERM
 
-    def test_kill_proc_skips_dead_process(self):
+    def test_kill_proc_skips_dead_process(self) -> None:
         sup = _make_supervisor()
         fp = FakePopen([])
         fp.exit(0)
         mp = ManagedProcess("svc", fp, "", _svc())
 
-        # Should not raise even if the process is already dead.
-        sup._kill_proc(mp, signal.SIGTERM)
+        sup._kill_proc(mp, signal.SIGTERM)  # must not raise
 
-    def test_shutdown_terminates_all_procs(self):
+    def test_shutdown_terminates_all_procs(self) -> None:
         sup = _make_supervisor()
         fps = [FakePopen([]) for _ in range(3)]
         for i, fp in enumerate(fps):
             mp = ManagedProcess(f"svc-{i}", fp, "", _svc())
             sup.procs.append(mp)
 
-        # Bypass the real OS kill; instead exit each FakePopen immediately.
         def _fake_kill(mp: ManagedProcess, sig: int) -> None:
             mp.proc.exit(0)
 
@@ -374,7 +449,7 @@ class TestProcessGroupCleanup:
         for fp in fps:
             assert fp.poll() is not None, "all processes should have been terminated"
 
-    def test_shutdown_is_idempotent(self):
+    def test_shutdown_is_idempotent(self) -> None:
         sup = _make_supervisor()
         fp = FakePopen([])
         mp = ManagedProcess("svc", fp, "", _svc())
@@ -385,7 +460,11 @@ class TestProcessGroupCleanup:
 
         sup._kill_proc = _fake_kill  # type: ignore[method-assign]
         sup.shutdown()
-        sup.shutdown()  # second call should be a no-op
+        sup.shutdown()  # second call must be a no-op
+
+    def test_sigkill_constant_is_safe_on_all_platforms(self) -> None:
+        """_SIGKILL is always an int regardless of platform."""
+        assert isinstance(_SIGKILL, int)
 
 
 # ---------------------------------------------------------------------------
@@ -394,11 +473,11 @@ class TestProcessGroupCleanup:
 
 
 class TestBackoffConstants:
-    def test_initial_less_than_max(self):
+    def test_initial_less_than_max(self) -> None:
         assert _BACKOFF_INITIAL < _BACKOFF_MAX
 
-    def test_factor_greater_than_one(self):
+    def test_factor_greater_than_one(self) -> None:
         assert _BACKOFF_FACTOR > 1.0
 
-    def test_reset_threshold_greater_than_initial(self):
+    def test_reset_threshold_greater_than_initial(self) -> None:
         assert _BACKOFF_RESET > _BACKOFF_INITIAL

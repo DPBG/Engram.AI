@@ -34,7 +34,7 @@ class Service:
     # One-line description shown by `--list`.
     note: str = ""
     # Names of services that must be ready before this one starts.
-    deps: tuple = ()
+    deps: tuple[str, ...] = ()
     # Seconds the process must stay alive before it is considered "ready".
     readiness_timeout: float = 3.0
 

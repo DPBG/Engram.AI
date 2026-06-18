@@ -36,9 +36,13 @@ _BACKOFF_FACTOR  = 2.0   # multiply delay by this on each consecutive crash
 _BACKOFF_MAX     = 30.0  # cap on per-restart delay
 _BACKOFF_RESET   = 10.0  # if the process lived this long, reset backoff to initial
 
+# signal.SIGKILL is not available on Windows; fall back to SIGTERM so the name
+# is always safe to reference.  _kill_proc uses proc.kill() on Windows anyway.
+_SIGKILL: int = getattr(signal, "SIGKILL", signal.SIGTERM)
+
 
 class ManagedProcess:
-    def __init__(self, name: str, proc: subprocess.Popen, color: str, svc: Service):
+    def __init__(self, name: str, proc: subprocess.Popen, color: str, svc: Service) -> None:
         self.name = name
         self.proc = proc
         self.color = color
@@ -49,7 +53,7 @@ class ManagedProcess:
 
 
 class Supervisor:
-    def __init__(self, base_env: dict, data_dir: Path):
+    def __init__(self, base_env: dict, data_dir: Path) -> None:
         self.base_env = base_env
         self.data_dir = data_dir
         self.sqlite_dir = data_dir / "sqlite"
@@ -116,10 +120,17 @@ class Supervisor:
     # -- readiness -----------------------------------------------------------
 
     def _schedule_ready(self, mp: ManagedProcess) -> None:
-        """Spawn a background thread that sets mp.ready after the readiness timeout."""
+        """Spawn a background thread that sets mp.ready after the readiness timeout.
+
+        The specific proc is captured at call time so that a restart replacing
+        mp.proc between schedule and wakeup does not cause us to check the
+        wrong process's liveness.
+        """
+        proc = mp.proc  # capture now — mp.proc may be replaced by a restart
+
         def _check() -> None:
             time.sleep(mp.svc.readiness_timeout)
-            if mp.proc.poll() is None and not self._stopping:
+            if proc.poll() is None and not self._stopping:
                 mp.ready.set()
                 logger.debug("%s is ready", mp.name)
 
@@ -135,9 +146,17 @@ class Supervisor:
 
         while True:
             started_at = time.monotonic()
-            self._drain(mp)
+
+            # Drain stdout in a background thread so that proc.wait() is never
+            # blocked by a grandchild that keeps the pipe open after the main
+            # service process has already exited.
+            drain_thread = threading.Thread(
+                target=self._drain, args=(mp,), daemon=True
+            )
+            drain_thread.start()
             code = mp.proc.wait()
             uptime = time.monotonic() - started_at
+            drain_thread.join(timeout=2.0)  # brief flush window for buffered output
 
             if self._stopping:
                 return
@@ -173,6 +192,9 @@ class Supervisor:
                 logger.error("failed to restart %s: %s", mp.name, exc)
                 return
 
+            # Clear ready so dependents re-wait if they ever re-check, and so
+            # _schedule_ready below reflects the new proc's uptime, not the old one's.
+            mp.ready.clear()
             mp.proc = new_proc
 
             with self._print_lock:
@@ -255,4 +277,4 @@ class Supervisor:
                 mp.proc.wait(timeout=remaining)
             except subprocess.TimeoutExpired:
                 logger.warning("force-killing %s", mp.name)
-                self._kill_proc(mp, signal.SIGKILL)
+                self._kill_proc(mp, _SIGKILL)
