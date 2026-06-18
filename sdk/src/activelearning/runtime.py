@@ -79,6 +79,7 @@ class SDKRuntime:
 
         # Close connections
         await self.bus.close()
+        await self.embeddings.close()
         await self.db.close()
 
         logger.info("SDK Runtime stopped")

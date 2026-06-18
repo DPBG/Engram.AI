@@ -48,6 +48,19 @@ class EmbeddingService:
         # key to the most-recently-used end, and eviction drops the LRU front.
         self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._cache_max_size = 10000  # Max cached embeddings
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Return a shared aiohttp session, creating one if needed."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        """Close the shared HTTP session."""
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
 
     async def embed_text(self, text: str) -> list[float]:
         """
@@ -68,18 +81,18 @@ class EmbeddingService:
 
         # Call Ollama embedding endpoint
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.ollama_host}/api/embeddings",
-                    json={"model": self.model, "prompt": text},
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise RuntimeError(f"Ollama embedding error: {error_text}")
+            session = await self._get_session()
+            async with session.post(
+                f"{self.ollama_host}/api/embeddings",
+                json={"model": self.model, "prompt": text},
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise RuntimeError(f"Ollama embedding error: {error_text}")
 
-                    result = await response.json()
-                    embedding = result["embedding"]
+                result = await response.json()
+                embedding = result["embedding"]
 
         except aiohttp.ClientError as e:
             logger.error(f"Failed to get embedding: {e}")
@@ -124,18 +137,18 @@ class EmbeddingService:
     async def is_available(self) -> bool:
         """Check if the embedding service is available."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.ollama_host}/api/tags",
-                    timeout=aiohttp.ClientTimeout(total=5),
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        models = [m["name"] for m in data.get("models", [])]
-                        return self.model in models or any(
-                            self.model in m for m in models
-                        )
-                    return False
+            session = await self._get_session()
+            async with session.get(
+                f"{self.ollama_host}/api/tags",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    models = [m["name"] for m in data.get("models", [])]
+                    return self.model in models or any(
+                        self.model in m for m in models
+                    )
+                return False
         except Exception as e:
             logger.warning(f"Embedding service not available: {e}")
             return False
