@@ -3,13 +3,15 @@
 This is the pure-Python replacement for `docker compose up`: it launches each
 service with `python -m <module>`, wires up the right environment and
 PYTHONPATH, streams every service's output to the console with a name prefix,
-and shuts everything down cleanly on Ctrl+C.
+restarts crashed services with exponential backoff, gates service startup on
+declared dependencies being ready, and shuts everything down cleanly on Ctrl+C.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -28,12 +30,22 @@ _COLORS = [
 _RESET = "\033[0m"
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
+# Restart-with-backoff parameters.
+_BACKOFF_INITIAL = 1.0   # seconds before first restart
+_BACKOFF_FACTOR  = 2.0   # multiply delay by this on each consecutive crash
+_BACKOFF_MAX     = 30.0  # cap on per-restart delay
+_BACKOFF_RESET   = 10.0  # if the process lived this long, reset backoff to initial
+
 
 class ManagedProcess:
-    def __init__(self, name: str, proc: subprocess.Popen, color: str):
+    def __init__(self, name: str, proc: subprocess.Popen, color: str, svc: Service):
         self.name = name
         self.proc = proc
         self.color = color
+        self.svc = svc
+        # Set once the process has been alive for svc.readiness_timeout seconds.
+        self.ready = threading.Event()
+        self.restart_count = 0
 
 
 class Supervisor:
@@ -46,12 +58,12 @@ class Supervisor:
         self._stopping = False
 
     # -- environment ---------------------------------------------------------
+
     def _service_env(self, svc: Service) -> dict:
         env = dict(self.base_env)
         env["PYTHONPATH"] = svc.pythonpath()
         env["PYTHONUNBUFFERED"] = "1"
 
-        # SQLite path: shared unified.db unless the service asks for its own.
         basename = svc.env.get("SQLITE_PATH_BASENAME", "unified.db")
         env["SQLITE_PATH"] = str(self.sqlite_dir / basename)
 
@@ -62,28 +74,32 @@ class Supervisor:
         return env
 
     # -- output streaming ----------------------------------------------------
-    def _pump(self, mp: ManagedProcess) -> None:
-        prefix = f"{mp.name:>17} | "
-        if _USE_COLOR:
-            prefix = f"{mp.color}{mp.name:>17}{_RESET} | "
-        assert mp.proc.stdout is not None
-        for raw in mp.proc.stdout:
-            line = raw.rstrip("\n")
-            with self._print_lock:
-                print(prefix + line, flush=True)
-        code = mp.proc.wait()
-        if not self._stopping:
-            with self._print_lock:
-                print(f"{prefix}*** exited with code {code} ***", flush=True)
 
-    # -- lifecycle -----------------------------------------------------------
-    def start(self, svc: Service, stagger: float = 0.4) -> None:
+    def _prefix(self, mp: ManagedProcess) -> str:
+        if _USE_COLOR:
+            return f"{mp.color}{mp.name:>17}{_RESET} | "
+        return f"{mp.name:>17} | "
+
+    def _drain(self, mp: ManagedProcess) -> None:
+        """Read stdout until EOF, printing each line with a service prefix."""
+        prefix = self._prefix(mp)
+        stdout = mp.proc.stdout
+        assert stdout is not None
+        for raw in stdout:
+            with self._print_lock:
+                print(prefix + raw.rstrip("\n"), flush=True)
+
+    # -- process spawning ----------------------------------------------------
+
+    def _spawn(self, svc: Service) -> subprocess.Popen:
+        """Start the service as a subprocess.
+
+        On POSIX, start_new_session=True places the child in its own process
+        group so that os.killpg() during shutdown reaches all grandchildren.
+        """
         env = self._service_env(svc)
         cmd = [sys.executable, "-u", "-m", svc.module, *svc.args]
-        color = _COLORS[len(self.procs) % len(_COLORS)]
-        logger.info("starting %s  (python -m %s)", svc.name, svc.module)
-        proc = subprocess.Popen(
-            cmd,
+        kwargs: dict = dict(
             cwd=str(ROOT),
             env=env,
             stdout=subprocess.PIPE,
@@ -93,9 +109,102 @@ class Supervisor:
             errors="replace",
             bufsize=1,
         )
-        mp = ManagedProcess(svc.name, proc, color)
+        if sys.platform != "win32":
+            kwargs["start_new_session"] = True
+        return subprocess.Popen(cmd, **kwargs)
+
+    # -- readiness -----------------------------------------------------------
+
+    def _schedule_ready(self, mp: ManagedProcess) -> None:
+        """Spawn a background thread that sets mp.ready after the readiness timeout."""
+        def _check() -> None:
+            time.sleep(mp.svc.readiness_timeout)
+            if mp.proc.poll() is None and not self._stopping:
+                mp.ready.set()
+                logger.debug("%s is ready", mp.name)
+
+        threading.Thread(target=_check, daemon=True).start()
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def _manage(self, mp: ManagedProcess) -> None:
+        """Output pump + restart-with-backoff loop for one managed service."""
+        prefix = self._prefix(mp)
+        delay = _BACKOFF_INITIAL
+        self._schedule_ready(mp)
+
+        while True:
+            started_at = time.monotonic()
+            self._drain(mp)
+            code = mp.proc.wait()
+            uptime = time.monotonic() - started_at
+
+            if self._stopping:
+                return
+
+            with self._print_lock:
+                print(f"{prefix}*** exited (code {code}) ***", flush=True)
+
+            # Long-lived processes get a fresh backoff budget.
+            if uptime >= _BACKOFF_RESET:
+                delay = _BACKOFF_INITIAL
+
+            actual_delay = min(delay, _BACKOFF_MAX)
+            mp.restart_count += 1
+            logger.info(
+                "restarting %s in %.1fs (attempt %d)",
+                mp.name, actual_delay, mp.restart_count,
+            )
+
+            # Interruptible sleep — exits immediately on shutdown.
+            deadline = time.monotonic() + actual_delay
+            while time.monotonic() < deadline:
+                if self._stopping:
+                    return
+                time.sleep(0.1)
+
+            # Guard against a shutdown that raced with the sleep above.
+            if self._stopping:
+                return
+
+            try:
+                new_proc = self._spawn(mp.svc)
+            except Exception as exc:
+                logger.error("failed to restart %s: %s", mp.name, exc)
+                return
+
+            mp.proc = new_proc
+
+            with self._print_lock:
+                print(f"{prefix}*** restarted (attempt {mp.restart_count}) ***", flush=True)
+
+            delay = min(delay * _BACKOFF_FACTOR, _BACKOFF_MAX)
+            self._schedule_ready(mp)
+
+    def start(self, svc: Service, stagger: float = 0.4) -> None:
+        """Wait for declared deps to be ready, then spawn and manage the service."""
+        for dep_name in svc.deps:
+            dep = next((m for m in self.procs if m.name == dep_name), None)
+            if dep is None:
+                logger.warning(
+                    "dep %r of %s was not started — skipping readiness wait",
+                    dep_name, svc.name,
+                )
+                continue
+            wait_secs = dep.svc.readiness_timeout + 5.0
+            logger.info("waiting for %s (dep of %s)…", dep_name, svc.name)
+            if not dep.ready.wait(timeout=wait_secs):
+                logger.warning(
+                    "%s dep %r not ready after %.1fs — starting anyway",
+                    svc.name, dep_name, wait_secs,
+                )
+
+        color = _COLORS[len(self.procs) % len(_COLORS)]
+        logger.info("starting %s  (python -m %s)", svc.name, svc.module)
+        proc = self._spawn(svc)
+        mp = ManagedProcess(svc.name, proc, color, svc)
         self.procs.append(mp)
-        threading.Thread(target=self._pump, args=(mp,), daemon=True).start()
+        threading.Thread(target=self._manage, args=(mp,), daemon=True).start()
         if stagger:
             time.sleep(stagger)
 
@@ -105,7 +214,7 @@ class Supervisor:
     def wait(self) -> None:
         """Block until interrupted; then shut everything down."""
         try:
-            while self.any_alive():
+            while not self._stopping:
                 time.sleep(0.5)
         except KeyboardInterrupt:
             print()  # newline after ^C
@@ -113,18 +222,32 @@ class Supervisor:
         finally:
             self.shutdown()
 
+    # -- shutdown ------------------------------------------------------------
+
+    def _kill_proc(self, mp: ManagedProcess, sig: int) -> None:
+        """Send a signal to the process group (POSIX) or the process (Windows)."""
+        proc = mp.proc
+        if proc.poll() is not None:
+            return
+        try:
+            if sys.platform != "win32":
+                os.killpg(os.getpgid(proc.pid), sig)
+            elif sig == signal.SIGTERM:
+                proc.terminate()
+            else:
+                proc.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
+        except Exception as exc:
+            logger.debug("_kill_proc %s: %s", mp.name, exc)
+
     def shutdown(self, grace: float = 6.0) -> None:
         if self._stopping:
             return
         self._stopping = True
-        # Polite terminate first.
         for mp in self.procs:
-            if mp.proc.poll() is None:
-                logger.info("stopping %s", mp.name)
-                try:
-                    mp.proc.terminate()
-                except Exception:
-                    pass
+            logger.info("stopping %s", mp.name)
+            self._kill_proc(mp, signal.SIGTERM)
         deadline = time.monotonic() + grace
         for mp in self.procs:
             remaining = max(0.0, deadline - time.monotonic())
@@ -132,7 +255,4 @@ class Supervisor:
                 mp.proc.wait(timeout=remaining)
             except subprocess.TimeoutExpired:
                 logger.warning("force-killing %s", mp.name)
-                try:
-                    mp.proc.kill()
-                except Exception:
-                    pass
+                self._kill_proc(mp, signal.SIGKILL)

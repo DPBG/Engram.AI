@@ -33,6 +33,10 @@ class Service:
     args: tuple = ()
     # One-line description shown by `--list`.
     note: str = ""
+    # Names of services that must be ready before this one starts.
+    deps: tuple = ()
+    # Seconds the process must stay alive before it is considered "ready".
+    readiness_timeout: float = 3.0
 
     @property
     def src_path(self) -> Path:
@@ -92,6 +96,7 @@ SERVICES: list[Service] = [
         module="planner.service",
         src="planner/src",
         profile="core",
+        deps=("kernel", "safety-supervisor"),
         note="Turns observations into action proposals",
     ),
     Service(
@@ -107,6 +112,7 @@ SERVICES: list[Service] = [
         src="neuromorphic/src",
         profile="core",
         env={"SQLITE_PATH_BASENAME": "neuromorphic.db", **_NEURO_SMALL},
+        deps=("kernel", "safety-supervisor", "beliefs"),
         note="The spiking-neural-network brain (NumPy/SciPy)",
     ),
     Service(
@@ -140,6 +146,7 @@ SERVICES: list[Service] = [
         src="coordinator/src",
         profile="full",
         needs_qdrant=True,
+        deps=("neuromorphic",),
         note="Multi-sensory learning + task coordination (requires Qdrant)",
     ),
     Service(
@@ -148,6 +155,7 @@ SERVICES: list[Service] = [
         src="neuromorphic/src",
         profile="full",
         needs_ollama=True,
+        deps=("neuromorphic",),
         note="Brain<->Ollama bridge (requires Ollama)",
     ),
     # --- extra profile: opt-in only (hardware / Docker / generic) ---
