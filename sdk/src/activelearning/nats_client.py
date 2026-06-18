@@ -17,10 +17,23 @@ import nats
 from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 from nats.js import JetStreamContext
+from nats.js.api import ConsumerConfig, DeliverPolicy, StreamConfig
 
 from activelearning.signing import verify_decision
 
 logger = logging.getLogger(__name__)
+
+# JetStream stream that guarantees delivery for every safety-critical subject.
+# Proposals and decisions must never be fire-and-forget.
+SAFETY_STREAM_NAME = "SAFETY_CRITICAL"
+_SAFETY_STREAM_SUBJECTS: list[str] = [
+    "proposal.new",
+    "code.proposal",
+    "decision.>",
+    "code.decision.>",
+]
+# Auto-delete idle waiter consumers after this many nanoseconds of inactivity.
+_CONSUMER_INACTIVE_NS: int = 60 * 1_000_000_000  # 60 s
 
 T = TypeVar("T")
 
@@ -84,6 +97,7 @@ class EventBus:
         self._js: Optional[JetStreamContext] = None
         self._subscriptions: dict[str, nats.aio.subscription.Subscription] = {}
         self._handlers: dict[str, MessageHandler] = {}
+        self._js_durables: dict[str, str] = {}  # subject -> durable consumer name
         self._connected = asyncio.Event()
 
     async def connect(self) -> None:
@@ -105,6 +119,7 @@ class EventBus:
 
         # Initialize JetStream for persistence
         self._js = self._nc.jetstream()
+        await self._ensure_safety_stream()
 
         self._connected.set()
         logger.info("Connected to NATS successfully")
@@ -120,9 +135,36 @@ class EventBus:
             self._connected.clear()
             self._subscriptions.clear()
 
+    async def _ensure_safety_stream(self) -> None:
+        """Create or update the durable JetStream stream for safety-critical subjects.
+
+        Idempotent — NATS upserts the stream if it already exists with a
+        compatible config. Raises on hard failures (JetStream not enabled, etc.).
+        """
+        assert self._js is not None
+        config = StreamConfig(
+            name=SAFETY_STREAM_NAME,
+            subjects=_SAFETY_STREAM_SUBJECTS,
+        )
+        await self._js.add_stream(config)
+        logger.info("JetStream stream '%s' ready", SAFETY_STREAM_NAME)
+
+    @staticmethod
+    def _is_safety_critical(subject: str) -> bool:
+        """Return True when this subject must use JetStream persistence."""
+        if subject in ("proposal.new", "code.proposal"):
+            return True
+        if subject.startswith("decision.") or subject.startswith("code.decision."):
+            return True
+        return False
+
     async def publish(self, subject: str, data: Any) -> None:
         """
         Publish a message to a subject.
+
+        Safety-critical subjects (proposal.new, code.proposal, decision.*)
+        are published via JetStream so they are persisted and survive a broker
+        restart.  All other subjects use core NATS.
 
         Args:
             subject: NATS subject (e.g., "observation.camera")
@@ -130,8 +172,13 @@ class EventBus:
         """
         await self._ensure_connected()
         payload = serialize_message(data)
-        await self._nc.publish(subject, payload)
-        logger.debug(f"Published to {subject}: {len(payload)} bytes")
+        if self._is_safety_critical(subject):
+            assert self._js is not None
+            ack = await self._js.publish(subject, payload)
+            logger.debug("JS-published to %s (seq=%d): %d bytes", subject, ack.seq, len(payload))
+        else:
+            await self._nc.publish(subject, payload)
+            logger.debug("Published to %s: %d bytes", subject, len(payload))
 
     async def subscribe(
         self,
@@ -191,6 +238,46 @@ class EventBus:
         self._handlers[subject] = handler
         logger.info(f"Subscribed to {subject}")
 
+    async def js_subscribe(
+        self,
+        subject: str,
+        handler: MessageHandler,
+        durable: str,
+    ) -> None:
+        """Subscribe to a JetStream subject with a named durable push consumer.
+
+        Unlike the core subscribe(), this consumer survives a broker restart —
+        any un-ACKed messages are redelivered when the connection is restored.
+        The caller's handler receives deserialized dicts as usual; ACK/NAK is
+        handled automatically by this wrapper.
+
+        Args:
+            subject: JetStream subject (must be covered by SAFETY_STREAM_NAME).
+            handler: Async function called with the deserialized payload dict.
+            durable: Unique consumer name; stable across restarts.
+        """
+        await self._ensure_connected()
+        assert self._js is not None
+
+        if subject in self._subscriptions:
+            logger.warning("Already subscribed to %s, unsubscribing first", subject)
+            await self.unsubscribe(subject)
+
+        async def _js_message_callback(msg: Msg) -> None:
+            try:
+                data = deserialize_message(msg.data)
+                await handler(data)
+                await msg.ack()
+            except Exception as e:
+                logger.error("Error handling JS message on %s: %s", subject, e)
+                await msg.nak()
+
+        sub = await self._js.subscribe(subject, cb=_js_message_callback, durable=durable)
+        self._subscriptions[subject] = sub
+        self._handlers[subject] = handler
+        self._js_durables[subject] = durable
+        logger.info("JS-subscribed to %s (durable=%s)", subject, durable)
+
     async def unsubscribe(self, subject: str) -> None:
         """Unsubscribe from a subject."""
         if subject in self._subscriptions:
@@ -198,6 +285,7 @@ class EventBus:
             del self._subscriptions[subject]
             if subject in self._handlers:
                 del self._handlers[subject]
+            self._js_durables.pop(subject, None)
             logger.info(f"Unsubscribed from {subject}")
 
     async def request(
@@ -233,6 +321,11 @@ class EventBus:
         """
         Wait for a Kernel decision on a specific trace_id.
 
+        Uses a JetStream durable consumer with deliver_all so that a decision
+        already stored in the stream (e.g. published while this client was
+        briefly reconnecting) is still received.  The consumer auto-expires
+        after 60 s of inactivity to avoid accumulation.
+
         Args:
             trace_id: The trace ID to wait for
             timeout: Timeout in seconds
@@ -241,11 +334,13 @@ class EventBus:
             Decision data as dict
         """
         subject = f"decision.{trace_id}"
+        durable = f"waiter-{trace_id}"
         decision_received = asyncio.Event()
         result: dict[str, Any] = {}
 
-        async def handler(data: dict[str, Any]) -> None:
+        async def _js_handler(msg: Msg) -> None:
             nonlocal result
+            data = deserialize_message(msg.data)
             # Authenticate the decision. A forged or unsigned decision (when
             # signing is enabled) is ignored, so it cannot satisfy the wait —
             # the caller times out and must fail closed (deny/halt).
@@ -255,61 +350,78 @@ class EventBus:
                     "(possible forgery) — ignoring and continuing to wait.",
                     subject,
                 )
+                await msg.ack()  # remove from stream; retrying won't fix a bad sig
                 return
             result = data
             decision_received.set()
+            await msg.ack()
 
-        await self.subscribe(subject, handler)
+        assert self._js is not None
+        sub = await self._js.subscribe(
+            subject,
+            cb=_js_handler,
+            durable=durable,
+            config=ConsumerConfig(
+                deliver_policy=DeliverPolicy.ALL,
+                inactive_threshold=_CONSUMER_INACTIVE_NS,
+            ),
+        )
         try:
             await asyncio.wait_for(decision_received.wait(), timeout=timeout)
             return result
         finally:
-            await self.unsubscribe(subject)
+            await sub.unsubscribe()
 
     async def force_reconnect(self) -> None:
         """Tear down a dead NATS connection and create a fresh one.
 
         nats-py's built-in reconnection sometimes fails silently -- is_connected
         returns False but no reconnect happens.  This method:
-        1. Saves current subscription subjects + handlers
+        1. Saves current subscription subjects + handlers (core and JS)
         2. Closes the dead connection (best-effort)
-        3. Creates a completely new connection
+        3. Creates a completely new connection (which re-ensures the safety stream)
         4. Re-subscribes all previously registered handlers
 
         Safe to call even if already connected (becomes a no-op reconnect).
         """
         saved_handlers: dict[str, tuple[MessageHandler, bool]] = {}
-        for subject, sub in self._subscriptions.items():
+        saved_js: dict[str, str] = dict(self._js_durables)  # subject -> durable name
+        for subject in self._subscriptions:
             handler = self._handlers.get(subject)
             if handler is not None:
-                # Detect if this was a request handler by checking stored metadata
-                # We store the original handler, not the wrapper
                 saved_handlers[subject] = (handler, False)
 
-        logger.warning(f"force_reconnect: tearing down NATS connection ({len(saved_handlers)} subs to restore)")
+        logger.warning(
+            "force_reconnect: tearing down NATS connection (%d subs to restore)",
+            len(saved_handlers),
+        )
 
         # Best-effort close of old connection
         if self._nc is not None:
             try:
                 await asyncio.wait_for(self._nc.close(), timeout=5.0)
             except Exception as e:
-                logger.warning(f"force_reconnect: close failed (expected): {e}")
+                logger.warning("force_reconnect: close failed (expected): %s", e)
             self._nc = None
             self._js = None
             self._connected.clear()
             self._subscriptions.clear()
+            self._js_durables.clear()
 
-        # Create fresh connection
+        # Create fresh connection (also re-ensures the safety stream)
         await self.connect()
 
-        # Re-subscribe all handlers
+        # Re-subscribe all handlers, preserving JS vs core distinction
         for subject, (handler, is_req) in saved_handlers.items():
             try:
-                await self.subscribe(subject, handler, is_request_handler=is_req)
+                if subject in saved_js:
+                    await self.js_subscribe(subject, handler, durable=saved_js[subject])
+                else:
+                    await self.subscribe(subject, handler, is_request_handler=is_req)
             except Exception as e:
-                logger.error(f"force_reconnect: failed to re-subscribe {subject}: {e}")
+                logger.error("force_reconnect: failed to re-subscribe %s: %s", subject, e)
 
-        logger.info(f"force_reconnect: complete, {len(self._subscriptions)} subs restored")
+        logger.info("force_reconnect: complete, %d subs restored", len(self._subscriptions))
 
     @property
     def is_connected(self) -> bool:
