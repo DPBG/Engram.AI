@@ -152,7 +152,6 @@ class ExternalAPIManager:
         except TimeoutError:
             logger.error("Timeout waiting for Kernel decision")
             return False
-
         except Exception as e:
             logger.error(f"Error requesting Kernel approval: {e}")
             return False

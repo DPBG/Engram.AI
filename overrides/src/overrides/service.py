@@ -193,14 +193,17 @@ class OverrideService(BaseService):
         message: str,
     ) -> None:
         """Publish override result."""
-        await self.event_bus.publish(
-            f"override.result.{trace_id}",
-            {
-                "trace_id": trace_id,
-                "success": success,
-                "message": message,
-            },
-        )
+        try:
+            await self.event_bus.publish(
+                f"override.result.{trace_id}",
+                {
+                    "trace_id": trace_id,
+                    "success": success,
+                    "message": message,
+                },
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to publish override result for {trace_id}: {e}")
 
     async def _handle_status(self, _data: dict, msg) -> None:
         """Handle status requests."""
