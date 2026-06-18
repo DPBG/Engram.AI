@@ -21,7 +21,6 @@ from coordinator.gate import (
     build_execution_proposal,
     decision_allows,
 )
-from activelearning.subjects import Subjects
 
 
 class CoordinatorService(BaseService):

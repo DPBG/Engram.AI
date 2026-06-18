@@ -4,7 +4,6 @@ import pytest
 
 from activelearning.messages import (
     ActionProposalMessage,
-    BeliefAddNodeMessage,
     KernelDecisionMessage,
     MessageValidationError,
     schema_for_subject,

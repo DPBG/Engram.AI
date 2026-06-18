@@ -91,10 +91,19 @@ class KernelService(BaseService):
 
     async def _setup(self) -> None:
         """Service-specific setup."""
-        # Subscribe to proposal events using EventBus
-        await self.event_bus.subscribe(Subjects.PROPOSAL_NEW, self._handle_action_proposal)
-        await self.event_bus.subscribe(Subjects.CODE_PROPOSAL, self._handle_code_proposal)
-        await self.event_bus.subscribe("kernel.status", self._handle_status)
+        # Subscribe to proposal events via durable JetStream consumers so that
+        # proposals published while this service was restarting are not lost.
+        await self.event_bus.js_subscribe(
+            Subjects.PROPOSAL_NEW,
+            self._handle_action_proposal,
+            durable="kernel-action-proposals",
+        )
+        await self.event_bus.js_subscribe(
+            Subjects.CODE_PROPOSAL,
+            self._handle_code_proposal,
+            durable="kernel-code-proposals",
+        )
+        await self.event_bus.subscribe(Subjects.KERNEL_STATUS, self._handle_status)
         await self.event_bus.subscribe(
             Subjects.POLICY_LOAD_PROFILE, self._handle_load_profile,
         )

@@ -53,17 +53,23 @@ class KernelDecisionMessage(WireModel):
 
 
 class PolicyRestrictMessage(WireModel):
+    """Motor limit restriction request (``policy.restrict``)."""
+
     motor_limits: dict[str, Any] | None = None
     reason: str = ""
     operator_id: str = "unknown"
 
 
 class SafetyHaltMessage(WireModel):
+    """System-wide kill switch engagement (``safety.halt``)."""
+
     reason: str = "operator SAFE_HALT"
     operator_id: str = "unknown"
 
 
 class OperatorActionMessage(WireModel):
+    """Operator-initiated action with optional identity (``safety.resume``)."""
+
     operator_id: str = "unknown"
 
 
@@ -83,6 +89,8 @@ class SafetyAnalyzeMessage(WireModel):
 
 
 class BeliefAddNodeMessage(WireModel):
+    """Add a node to the belief graph (``beliefs.add_node``)."""
+
     type: str
     content: str
     id: str = ""
@@ -92,6 +100,8 @@ class BeliefAddNodeMessage(WireModel):
 
 
 class BeliefAddEdgeMessage(WireModel):
+    """Add an edge to the belief graph (``beliefs.add_edge``)."""
+
     type: str
     source_id: str
     target_id: str
@@ -101,6 +111,8 @@ class BeliefAddEdgeMessage(WireModel):
 
 
 class BeliefUpdateMessage(WireModel):
+    """Update belief confidence from new evidence (``beliefs.update``)."""
+
     node_id: str
     evidence_strength: float
     supports: bool = True
@@ -108,6 +120,8 @@ class BeliefUpdateMessage(WireModel):
 
 
 class BeliefQueryMessage(WireModel):
+    """Query the belief graph (``beliefs.query`` / ``beliefs.query.request``)."""
+
     type: str = "by_id"
     node_id: str | None = None
     node_type: str | None = None
@@ -115,6 +129,8 @@ class BeliefQueryMessage(WireModel):
 
 
 class BeliefContradictionsMessage(WireModel):
+    """Find contradictory beliefs (``beliefs.contradictions``)."""
+
     threshold: float = 0.5
 
 
@@ -122,6 +138,8 @@ class BeliefContradictionsMessage(WireModel):
 
 
 class MemoryStoreMessage(WireModel):
+    """Store an episodic memory (``memory.store``)."""
+
     trace_id: str
     summary: str
     data: dict[str, Any] = Field(default_factory=dict)
@@ -132,12 +150,16 @@ class MemoryStoreMessage(WireModel):
 
 
 class MemoryQueryMessage(WireModel):
+    """Semantic memory search request (``memory.query``)."""
+
     query: str
     limit: int = 10
     min_score: float = 0.5
 
 
 class MemoryRecallMessage(WireModel):
+    """Recall memories by similarity, time window, or tags (``memory.recall``)."""
+
     type: str = "similarity"
     query: str | None = None
     start_time: int | None = None
@@ -150,11 +172,15 @@ class MemoryRecallMessage(WireModel):
 
 
 class TaskRequestMessage(WireModel):
+    """Coordinator task execution request (``task.request``)."""
+
     query: str = ""
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskResultMessage(WireModel):
+    """Coordinator task execution result (``task.result``)."""
+
     success: bool = False
 
 
@@ -162,11 +188,15 @@ class TaskResultMessage(WireModel):
 
 
 class PlannerModeMessage(WireModel):
+    """Planner mode change (``planner.mode``)."""
+
     mode: str
     reason: str = ""
 
 
 class SystemShutdownMessage(WireModel):
+    """Graceful system shutdown request (``system.shutdown``)."""
+
     reason: str = "shutdown requested"
 
 

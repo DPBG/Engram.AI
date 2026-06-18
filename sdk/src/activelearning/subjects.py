@@ -79,4 +79,4 @@ def code_decision_subject(trace_id: str) -> str:
 
 def observation_subject(sensor_id: str) -> str:
     """Per-sensor observation subject."""
-    return f"observation.{sensor_id}"
+    return f"{Subjects.OBSERVATION.removesuffix('*')}{sensor_id}"
