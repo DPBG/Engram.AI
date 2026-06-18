@@ -4,9 +4,12 @@ Metadata, neuron states, and small data go in SQLite.
 Synapse arrays (weights, eligibility, etc.) are saved as .npy files on disk
 for speed — no blob size limits and direct numpy save/load.
 
-Background saves use ``os.fork()`` (Redis BGSAVE pattern): the child process
-inherits the full address space via copy-on-write and writes to disk while
-the parent continues training with near-zero pause.
+Background saves use ``os.fork()`` on POSIX (Redis BGSAVE pattern): the child
+process inherits the full address space via copy-on-write and writes to disk
+while the parent continues training with near-zero pause.
+
+On Windows and other platforms without ``fork``, background saves run in a
+daemon thread that calls the same ``_child_save`` writer (no fork).
 
 Layout::
 
@@ -27,6 +30,7 @@ import logging
 import os
 import signal
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -36,6 +40,9 @@ from scipy import sparse
 import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+# POSIX fork is unavailable on Windows; use a background thread there instead.
+_FORK_BGSAVE = hasattr(os, "fork")
 
 # Keys saved/loaded from the network_aux JSON blob.
 # Defined once to avoid divergence between sync and async save paths.
@@ -107,24 +114,51 @@ _SYNAPSE_FIELDS = [
 ]
 
 
+def _snapshot_state_for_thread(state: dict[str, Any]) -> dict[str, Any]:
+    """Deep-copy NumPy arrays so a background thread sees a frozen snapshot.
+
+    Fork-based saves rely on copy-on-write; threads share address space, so the
+    caller's zero-copy state must be copied before the parent resumes training.
+    """
+
+    def _copy_value(value: Any) -> Any:
+        if isinstance(value, np.ndarray):
+            return np.copy(value)
+        if isinstance(value, dict):
+            return {k: _copy_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_copy_value(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(_copy_value(v) for v in value)
+        return value
+
+    return {key: _copy_value(value) for key, value in state.items()}
+
+
 # ------------------------------------------------------------------ #
 #  Child-process save (runs after fork — NO asyncio, NO parent fds)  #
 # ------------------------------------------------------------------ #
 
 def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
-    """Write state to disk from a forked child process.
+    """Write state to disk from a background writer (fork child or thread).
 
-    This function runs in a forked child.  It must NOT touch:
-    - The parent's asyncio event loop
-    - The parent's aiosqlite connection (file descriptors are shared)
-    - Any asyncio primitives
+    May run in either context:
 
-    It opens its own *synchronous* sqlite3 connection and writes .npy
-    files using atomic rename (write to .tmp, then rename).
+    * **Fork child (POSIX):** inherits the parent's address space via COW.
+      Must NOT touch the parent's asyncio event loop, aiosqlite connection,
+      or any asyncio primitives.  Opens a fresh synchronous ``sqlite3``
+      connection and writes ``.npy`` files with atomic rename.
+
+    * **Background thread (Windows / no-fork):** shares the parent's process
+      but receives a deep-copied ``state`` snapshot.  Still must NOT touch
+      ``aiosqlite`` or asyncio — use synchronous ``sqlite3`` only.
     """
-    # Ignore SIGTERM so we finish writing even if Docker sends stop signal.
-    # The parent handles SIGTERM and will waitpid() for us.
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    # Ignore SIGTERM in fork children so Docker stop doesn't interrupt the write.
+    # Not available from background threads (Windows thread-based bgsave).
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    except ValueError:
+        pass
 
     t0 = time.time()
     step = state.get("step_count", 0)
@@ -214,8 +248,12 @@ def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
         db.close()
 
     elapsed = time.time() - t0
-    # Write to stderr directly — logger may not be safe after fork
-    os.write(2, f"[bgsave-child] step {step} saved in {elapsed:.1f}s\n".encode())
+    msg = f"bgsave step {step} saved in {elapsed:.1f}s"
+    # Logger is unsafe after fork; thread path can use it safely.
+    if threading.current_thread() is threading.main_thread():
+        os.write(2, f"[bgsave-child] {msg}\n".encode())
+    else:
+        logger.debug(msg)
 
 
 # ------------------------------------------------------------------ #
@@ -229,8 +267,8 @@ class NeuromorphicPersistence:
 
     * ``save_state(state)`` — synchronous (blocking) save, used for
       final save on shutdown and for small-scale testing.
-    * ``save_background(state)`` — fork-based background save.  The
-      parent returns immediately; a child process writes the data.
+    * ``save_background(state)`` — background save.  On POSIX this forks a
+      child process; elsewhere a daemon thread runs the same writer.
     """
 
     def __init__(self, db_path: str):
@@ -238,8 +276,9 @@ class NeuromorphicPersistence:
         self._db: aiosqlite.Connection | None = None
         self._syn_dir = Path(db_path).parent / "synapses"
 
-        # Background save child PID (0 = no child running)
+        # Background save child PID (POSIX fork) or thread (other platforms)
         self._bg_child_pid: int = 0
+        self._bg_thread: threading.Thread | None = None
 
     async def open(self) -> None:
         self._db = await aiosqlite.connect(self.db_path)
@@ -260,35 +299,35 @@ class NeuromorphicPersistence:
     # ------------------------------------------------------------------ #
 
     def is_bg_save_running(self) -> bool:
-        """Check if a background save child is still running."""
-        if self._bg_child_pid == 0:
-            return False
-        # Non-blocking waitpid: reap if finished, else check alive
-        try:
-            pid, status = os.waitpid(self._bg_child_pid, os.WNOHANG)
-        except ChildProcessError:
-            # Child already reaped or doesn't exist
-            self._bg_child_pid = 0
-            return False
-        if pid != 0:
-            # Child finished — reap it
-            self._bg_child_pid = 0
-            if os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
-                logger.error(f"Background save child exited with status {os.WEXITSTATUS(status)}")
-            elif os.WIFSIGNALED(status):
-                logger.error(f"Background save child killed by signal {os.WTERMSIG(status)}")
-            return False
-        return True  # Still running
+        """Check if a background save is still running."""
+        if _FORK_BGSAVE:
+            if self._bg_child_pid == 0:
+                return False
+            # Non-blocking waitpid: reap if finished, else check alive
+            try:
+                pid, status = os.waitpid(self._bg_child_pid, os.WNOHANG)
+            except ChildProcessError:
+                # Child already reaped or doesn't exist
+                self._bg_child_pid = 0
+                return False
+            if pid != 0:
+                # Child finished — reap it
+                self._bg_child_pid = 0
+                if os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
+                    logger.error(f"Background save child exited with status {os.WEXITSTATUS(status)}")
+                elif os.WIFSIGNALED(status):
+                    logger.error(f"Background save child killed by signal {os.WTERMSIG(status)}")
+                return False
+            return True  # Still running
+
+        if self._bg_thread is not None and self._bg_thread.is_alive():
+            return True
+        self._bg_thread = None
+        return False
 
     def _reap_zombie(self) -> None:
-        """Reap any finished child process to prevent zombie accumulation.
-
-        Called proactively before each save attempt.  is_bg_save_running()
-        reaps the child too, but only when _bg_child_pid is set.  This
-        method handles the edge case where a child PID was cleared but
-        the process wasn't fully reaped by the OS yet.
-        """
-        if self._bg_child_pid == 0:
+        """Reap any finished fork child to prevent zombie accumulation."""
+        if not _FORK_BGSAVE or self._bg_child_pid == 0:
             return
         try:
             pid, status = os.waitpid(self._bg_child_pid, os.WNOHANG)
@@ -305,61 +344,92 @@ class NeuromorphicPersistence:
                 logger.debug(f"Reaped finished save child pid={pid}")
 
     async def wait_bg_save(self, timeout: float = 600) -> None:
-        """Wait for background save child to finish (up to timeout seconds)."""
-        if self._bg_child_pid == 0:
+        """Wait for background save to finish (up to timeout seconds)."""
+        if _FORK_BGSAVE:
+            if self._bg_child_pid == 0:
+                return
+            deadline = time.monotonic() + timeout
+            while self.is_bg_save_running():
+                if time.monotonic() > deadline:
+                    logger.warning(f"Background save child {self._bg_child_pid} timed out, killing")
+                    try:
+                        os.kill(self._bg_child_pid, signal.SIGKILL)
+                        os.waitpid(self._bg_child_pid, 0)
+                    except (ProcessLookupError, ChildProcessError):
+                        pass
+                    self._bg_child_pid = 0
+                    return
+                await asyncio.sleep(1.0)
+            return
+
+        if self._bg_thread is None:
             return
         deadline = time.monotonic() + timeout
-        while self.is_bg_save_running():
+        while self._bg_thread.is_alive():
             if time.monotonic() > deadline:
-                logger.warning(f"Background save child {self._bg_child_pid} timed out, killing")
-                try:
-                    os.kill(self._bg_child_pid, signal.SIGKILL)
-                    os.waitpid(self._bg_child_pid, 0)
-                except (ProcessLookupError, ChildProcessError):
-                    pass
-                self._bg_child_pid = 0
+                logger.warning("Background save thread timed out")
+                self._bg_thread = None
                 return
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.1)
+        self._bg_thread = None
 
     def save_background(self, state: dict[str, Any]) -> bool:
-        """Fork a child process to save state in the background.
+        """Save state in the background without blocking the training loop.
 
-        The caller must hold no asyncio locks when calling this — the
-        child inherits the parent's memory via copy-on-write, so the
-        state dict (which references numpy arrays in the network) is
-        visible to the child without any explicit copy.
+        On POSIX, forks a child process (copy-on-write snapshot).  On Windows
+        and other platforms without ``fork``, runs ``_child_save`` in a daemon
+        thread using the same on-disk layout.
 
-        Returns True if the fork succeeded, False if a previous save
+        Returns True if the background save started, False if a previous save
         is still running (caller should skip or wait).
         """
-        # Reap any finished child to prevent zombie accumulation.
-        # Even if is_bg_save_running() returns False, try reaping —
-        # a child may have exited between saves without being reaped.
-        self._reap_zombie()
+        if _FORK_BGSAVE:
+            self._reap_zombie()
+        else:
+            if self._bg_thread is not None and not self._bg_thread.is_alive():
+                self._bg_thread = None
 
         if self.is_bg_save_running():
             logger.warning("Previous background save still running, skipping this save")
             return False
 
-        pid = os.fork()
-        if pid == 0:
-            # ---- CHILD PROCESS ---- #
-            # Close inherited file descriptors we don't need.
-            # CRITICAL: Do NOT touch self._db (aiosqlite) — it shares
-            # the parent's fd and event loop.  We open a fresh sqlite3.
+        if _FORK_BGSAVE:
+            pid = os.fork()
+            if pid == 0:
+                # ---- CHILD PROCESS ---- #
+                try:
+                    _child_save(self.db_path, str(self._syn_dir), state)
+                except BaseException as exc:
+                    os.write(2, f"[bgsave-child] FAILED: {exc}\n".encode())
+                    os._exit(1)
+                os._exit(0)
+            else:
+                # ---- PARENT PROCESS ---- #
+                self._bg_child_pid = pid
+                logger.info(
+                    f"Background save started (fork child pid={pid}, "
+                    f"step={state.get('step_count', '?')})"
+                )
+                return True
+
+        state_snapshot = _snapshot_state_for_thread(state)
+
+        def _thread_save() -> None:
             try:
-                _child_save(self.db_path, str(self._syn_dir), state)
+                _child_save(self.db_path, str(self._syn_dir), state_snapshot)
             except BaseException as exc:
-                os.write(2, f"[bgsave-child] FAILED: {exc}\n".encode())
-                os._exit(1)
-            os._exit(0)
-            # NEVER REACHED — os._exit kills the child immediately.
-            # No finally blocks, no atexit handlers, no asyncio cleanup.
-        else:
-            # ---- PARENT PROCESS ---- #
-            self._bg_child_pid = pid
-            logger.info(f"Background save started (child pid={pid}, step={state.get('step_count', '?')})")
-            return True
+                logger.error(f"Background save failed: {exc}")
+
+        self._bg_thread = threading.Thread(
+            target=_thread_save,
+            name="neuromorphic-bgsave",
+            daemon=True,
+        )
+        self._bg_thread.start()
+        logger.info(
+            f"Background save started (thread, step={state.get('step_count', '?')})"
+        )
+        return True
 
     # ------------------------------------------------------------------ #
     #  Synchronous save (used for final save on shutdown / tests)        #
