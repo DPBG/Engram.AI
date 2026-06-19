@@ -4,6 +4,8 @@ import pytest
 
 from activelearning.messages import (
     ActionProposalMessage,
+    CognitiveQueryMessage,
+    CognitiveResponseValidateMessage,
     KernelDecisionMessage,
     MessageValidationError,
     schema_for_subject,
@@ -25,7 +27,9 @@ class TestSubjectHelpers:
 
     def test_schema_for_registered_subject(self):
         assert schema_for_subject(Subjects.PROPOSAL_NEW) is ActionProposalMessage
-        assert schema_for_subject(Subjects.COGNITIVE_EXECUTE) is not None
+        assert schema_for_subject(Subjects.COGNITIVE_EXECUTE) is CognitiveQueryMessage
+        assert schema_for_subject(Subjects.COGNITIVE_QUERY) is CognitiveQueryMessage
+        assert schema_for_subject(Subjects.COGNITIVE_RESPONSE_VALIDATE) is CognitiveResponseValidateMessage
         assert schema_for_subject("unknown.subject") is None
 
 
