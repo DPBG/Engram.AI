@@ -24,6 +24,8 @@ class Subjects:
     POLICY_ROLLBACK = "policy.rollback"
     POLICY_UPDATE = "policy.update"
     COGNITIVE_RESPONSE_VALIDATE = "cognitive.response.validate"
+    COGNITIVE_EXECUTE = "cognitive.execute"
+    COGNITIVE_QUERY = "cognitive.query"
 
     # Safety
     SAFETY_ANALYZE_ACTION = "safety.analyze.action"

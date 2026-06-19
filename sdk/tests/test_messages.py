@@ -25,6 +25,7 @@ class TestSubjectHelpers:
 
     def test_schema_for_registered_subject(self):
         assert schema_for_subject(Subjects.PROPOSAL_NEW) is ActionProposalMessage
+        assert schema_for_subject(Subjects.COGNITIVE_EXECUTE) is not None
         assert schema_for_subject("unknown.subject") is None
 
 
