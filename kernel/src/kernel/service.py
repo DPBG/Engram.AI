@@ -12,6 +12,11 @@ import uuid
 from typing import Any, Optional
 
 from activelearning import BaseService, sign_decision
+from activelearning.subjects import (
+    Subjects,
+    code_decision_subject,
+    decision_subject,
+)
 
 from kernel.evaluator import KernelEvaluator, KernelDecision, RiskAnalysis, DecisionType
 from kernel.policy import (
@@ -89,34 +94,34 @@ class KernelService(BaseService):
         # Subscribe to proposal events via durable JetStream consumers so that
         # proposals published while this service was restarting are not lost.
         await self.event_bus.js_subscribe(
-            "proposal.new",
+            Subjects.PROPOSAL_NEW,
             self._handle_action_proposal,
             durable="kernel-action-proposals",
         )
         await self.event_bus.js_subscribe(
-            "code.proposal",
+            Subjects.CODE_PROPOSAL,
             self._handle_code_proposal,
             durable="kernel-code-proposals",
         )
-        await self.event_bus.subscribe("kernel.status", self._handle_status)
+        await self.event_bus.subscribe(Subjects.KERNEL_STATUS, self._handle_status)
         await self.event_bus.subscribe(
-            "policy.load_profile", self._handle_load_profile,
+            Subjects.POLICY_LOAD_PROFILE, self._handle_load_profile,
         )
         await self.event_bus.subscribe(
-            "policy.restrict", self._handle_restrict,
+            Subjects.POLICY_RESTRICT, self._handle_restrict,
         )
         await self.event_bus.subscribe(
-            "policy.rollback", self._handle_rollback,
+            Subjects.POLICY_ROLLBACK, self._handle_rollback,
         )
         await self.event_bus.subscribe(
-            "policy.update", self._handle_policy_update,
+            Subjects.POLICY_UPDATE, self._handle_policy_update,
         )
         await self.event_bus.subscribe(
-            "cognitive.response.validate", self._handle_cognitive_validate,
+            Subjects.COGNITIVE_RESPONSE_VALIDATE, self._handle_cognitive_validate,
         )
         # SAFE_HALT kill switch (Phase 1.9)
-        await self.event_bus.subscribe("safety.halt", self._handle_safety_halt)
-        await self.event_bus.subscribe("safety.resume", self._handle_safety_resume)
+        await self.event_bus.subscribe(Subjects.SAFETY_HALT, self._handle_safety_halt)
+        await self.event_bus.subscribe(Subjects.SAFETY_RESUME, self._handle_safety_resume)
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
@@ -140,8 +145,8 @@ class KernelService(BaseService):
 
         # Propagate: stop the planner queue and zero all motor channels.
         try:
-            await self.event_bus.publish("planner.mode", {"mode": "SAFE_HALT", "reason": reason})
-            await self.event_bus.publish("policy.restrict", {
+            await self.event_bus.publish(Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason})
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, {
                 "motor_limits": {
                     ch: {"max_intensity": 0.0}
                     for ch in ("locomotion", "manipulation", "head", "speech")
@@ -152,7 +157,7 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"SAFE_HALT propagation error: {e}")
 
-        await self.event_bus.publish("safety.halt.status", {
+        await self.event_bus.publish(Subjects.SAFETY_HALT_STATUS, {
             "halted": True, "reason": reason, "operator_id": operator,
         })
 
@@ -166,7 +171,7 @@ class KernelService(BaseService):
         operator = data.get("operator_id", "unknown")
         self._evaluator.resume()
         self.logger.warning(f"SAFE_HALT released by {operator}")
-        await self.event_bus.publish("safety.halt.status", {
+        await self.event_bus.publish(Subjects.SAFETY_HALT_STATUS, {
             "halted": False, "operator_id": operator,
         })
 
@@ -460,7 +465,7 @@ class KernelService(BaseService):
                 flags=flags,
             )
             await self.event_bus.publish(
-                f"code.decision.{trace_id}",
+                code_decision_subject(trace_id),
                 sign_decision({
                     "trace_id": decision.trace_id,
                     "type": decision.type.value,
@@ -508,7 +513,7 @@ class KernelService(BaseService):
         """Request risk analysis from Safety Supervisor."""
         try:
             # Request analysis from Safety Supervisor
-            subject = "safety.analyze.code" if is_code else "safety.analyze.action"
+            subject = Subjects.SAFETY_ANALYZE_CODE if is_code else Subjects.SAFETY_ANALYZE_ACTION
 
             response = await self.event_bus.request(
                 subject,
@@ -541,7 +546,7 @@ class KernelService(BaseService):
         """
         try:
             response = await self.event_bus.request(
-                "beliefs.query.request",
+                Subjects.BELIEFS_QUERY_REQUEST,
                 {"type": "norms", "threshold": 0.8},
                 timeout=2.0,
             )
@@ -624,7 +629,7 @@ class KernelService(BaseService):
 
         # Publish decision (signed) — caller is waiting on this and will
         # reject it unless the signature verifies.
-        await self.event_bus.publish(f"decision.{trace_id}", decision_payload)
+        await self.event_bus.publish(decision_subject(trace_id), decision_payload)
 
         # Track consecutive DENYs per channel for escalation
         channel = ""
@@ -757,7 +762,7 @@ class KernelService(BaseService):
             f"{DecisionSequenceTracker.DISABLE_THRESHOLD} consecutive DENYs"
         )
         try:
-            await self.event_bus.publish("policy.restrict", {
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, {
                 "motor_limits": {channel: {"max_intensity": 0.0}},
                 "reason": f"Auto-disable: {channel} consecutive DENY threshold",
                 "operator_id": "system:deny_tracker",

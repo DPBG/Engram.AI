@@ -10,16 +10,25 @@ import json
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Optional, TypeVar, Awaitable
+from typing import Any, TypeVar
 
 import nats
 from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, DeliverPolicy, StreamConfig
+from pydantic import BaseModel
 
+from activelearning.messages import (
+    KernelDecisionMessage,
+    MessageValidationError,
+    schema_for_subject,
+    validate_payload,
+)
 from activelearning.signing import verify_decision
+from activelearning.subjects import Subjects, decision_subject
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +36,10 @@ logger = logging.getLogger(__name__)
 # Proposals and decisions must never be fire-and-forget.
 SAFETY_STREAM_NAME = "SAFETY_CRITICAL"
 _SAFETY_STREAM_SUBJECTS: list[str] = [
-    "proposal.new",
-    "code.proposal",
-    "decision.>",
-    "code.decision.>",
+    Subjects.PROPOSAL_NEW,
+    Subjects.CODE_PROPOSAL,
+    f"{Subjects.DECISION_PREFIX}>",
+    f"{Subjects.CODE_DECISION_PREFIX}>",
 ]
 # Auto-delete idle waiter consumers after this many nanoseconds of inactivity.
 _CONSUMER_INACTIVE_NS: int = 60 * 1_000_000_000  # 60 s
@@ -81,7 +90,7 @@ class EventBus:
 
     def __init__(
         self,
-        nats_url: Optional[str] = None,
+        nats_url: str | None = None,
         name: str = "activelearning",
     ):
         """
@@ -93,8 +102,8 @@ class EventBus:
         """
         self.nats_url = nats_url or os.environ.get("NATS_URL", "nats://localhost:4222")
         self.name = name
-        self._nc: Optional[NATSClient] = None
-        self._js: Optional[JetStreamContext] = None
+        self._nc: NATSClient | None = None
+        self._js: JetStreamContext | None = None
         self._subscriptions: dict[str, nats.aio.subscription.Subscription] = {}
         self._handlers: dict[str, MessageHandler] = {}
         self._js_durables: dict[str, str] = {}  # subject -> durable consumer name
@@ -152,13 +161,21 @@ class EventBus:
     @staticmethod
     def _is_safety_critical(subject: str) -> bool:
         """Return True when this subject must use JetStream persistence."""
-        if subject in ("proposal.new", "code.proposal"):
+        if subject in (Subjects.PROPOSAL_NEW, Subjects.CODE_PROPOSAL):
             return True
-        if subject.startswith("decision.") or subject.startswith("code.decision."):
+        if subject.startswith(Subjects.DECISION_PREFIX) or subject.startswith(
+            Subjects.CODE_DECISION_PREFIX,
+        ):
             return True
         return False
 
-    async def publish(self, subject: str, data: Any) -> None:
+    async def publish(
+        self,
+        subject: str,
+        data: Any,
+        *,
+        message_model: type[BaseModel] | None = None,
+    ) -> None:
         """
         Publish a message to a subject.
 
@@ -169,8 +186,11 @@ class EventBus:
         Args:
             subject: NATS subject (e.g., "observation.camera")
             data: Message payload (dataclass or dict)
+            message_model: Optional pydantic model to validate dict payloads
         """
         await self._ensure_connected()
+        if isinstance(data, dict):
+            data = validate_payload(subject, data, message_model)  # type: ignore[arg-type]
         payload = serialize_message(data)
         if self._is_safety_critical(subject):
             assert self._js is not None
@@ -184,10 +204,11 @@ class EventBus:
         self,
         subject: str,
         handler: MessageHandler,
-        queue: Optional[str] = None,
+        queue: str | None = None,
         pending_msgs_limit: int = 65536,
         pending_bytes_limit: int = 128 * 1024 * 1024,
         is_request_handler: bool = False,
+        message_model: type[BaseModel] | None = None,
     ) -> None:
         """
         Subscribe to a subject with a message handler.
@@ -200,6 +221,7 @@ class EventBus:
             pending_bytes_limit: Max pending bytes before slow consumer (default 128 MB)
             is_request_handler: If True, handler receives (data, msg) so it can
                 reply to NATS request-reply messages via msg.respond()
+            message_model: Optional pydantic model; defaults to registry lookup
         """
         await self._ensure_connected()
 
@@ -207,13 +229,32 @@ class EventBus:
             logger.warning(f"Already subscribed to {subject}, unsubscribing first")
             await self.unsubscribe(subject)
 
+        wire_model = message_model or schema_for_subject(subject)
+
         async def message_callback(msg: Msg) -> None:
             try:
                 data = deserialize_message(msg.data)
+                if not isinstance(data, dict):
+                    raise MessageValidationError(
+                        subject,
+                        f"expected JSON object, got {type(data).__name__}",
+                    )
+                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
                 if is_request_handler:
                     await handler(data, msg)
                 else:
                     await handler(data)
+            except MessageValidationError as e:
+                logger.error(str(e))
+                if is_request_handler and msg.reply:
+                    try:
+                        await msg.respond(serialize_message({
+                            "error": "validation_failed",
+                            "detail": e.detail,
+                            "type": "error",
+                        }))
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error(f"Error handling message on {subject}: {e}")
                 # For request-reply handlers, send an error response so the
@@ -243,6 +284,7 @@ class EventBus:
         subject: str,
         handler: MessageHandler,
         durable: str,
+        message_model: type[BaseModel] | None = None,
     ) -> None:
         """Subscribe to a JetStream subject with a named durable push consumer.
 
@@ -255,6 +297,7 @@ class EventBus:
             subject: JetStream subject (must be covered by SAFETY_STREAM_NAME).
             handler: Async function called with the deserialized payload dict.
             durable: Unique consumer name; stable across restarts.
+            message_model: Optional pydantic model; defaults to registry lookup
         """
         await self._ensure_connected()
         assert self._js is not None
@@ -263,11 +306,22 @@ class EventBus:
             logger.warning("Already subscribed to %s, unsubscribing first", subject)
             await self.unsubscribe(subject)
 
+        wire_model = message_model or schema_for_subject(subject)
+
         async def _js_message_callback(msg: Msg) -> None:
             try:
                 data = deserialize_message(msg.data)
+                if not isinstance(data, dict):
+                    raise MessageValidationError(
+                        subject,
+                        f"expected JSON object, got {type(data).__name__}",
+                    )
+                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
                 await handler(data)
                 await msg.ack()
+            except MessageValidationError as e:
+                logger.error(str(e))
+                await msg.nak()
             except Exception as e:
                 logger.error("Error handling JS message on %s: %s", subject, e)
                 await msg.nak()
@@ -333,28 +387,38 @@ class EventBus:
         Returns:
             Decision data as dict
         """
-        subject = f"decision.{trace_id}"
+        subject = decision_subject(trace_id)
         durable = f"waiter-{trace_id}"
         decision_received = asyncio.Event()
         result: dict[str, Any] = {}
 
         async def _js_handler(msg: Msg) -> None:
             nonlocal result
-            data = deserialize_message(msg.data)
-            # Authenticate the decision. A forged or unsigned decision (when
-            # signing is enabled) is ignored, so it cannot satisfy the wait —
-            # the caller times out and must fail closed (deny/halt).
-            if not verify_decision(data):
-                logger.error(
-                    "Rejected decision on %s: missing/invalid signature "
-                    "(possible forgery) — ignoring and continuing to wait.",
-                    subject,
-                )
-                await msg.ack()  # remove from stream; retrying won't fix a bad sig
-                return
-            result = data
-            decision_received.set()
-            await msg.ack()
+            try:
+                data = deserialize_message(msg.data)
+                if not isinstance(data, dict):
+                    raise MessageValidationError(
+                        subject,
+                        f"expected JSON object, got {type(data).__name__}",
+                    )
+                data = validate_payload(subject, data, KernelDecisionMessage)
+                # Authenticate the decision. A forged or unsigned decision (when
+                # signing is enabled) is ignored, so it cannot satisfy the wait —
+                # the caller times out and must fail closed (deny/halt).
+                if not verify_decision(data):
+                    logger.error(
+                        "Rejected decision on %s: missing/invalid signature "
+                        "(possible forgery) — ignoring and continuing to wait.",
+                        subject,
+                    )
+                    await msg.ack()  # remove from stream; retrying won't fix a bad sig
+                    return
+                result = data
+                decision_received.set()
+                await msg.ack()
+            except MessageValidationError as e:
+                logger.error(str(e))
+                await msg.ack()
 
         assert self._js is not None
         sub = await self._js.subscribe(
@@ -438,7 +502,7 @@ class EventBus:
             try:
                 await asyncio.wait_for(self._connected.wait(), timeout=10.0)
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         raise RuntimeError("Not connected to NATS. Call connect() first.")
 
@@ -473,7 +537,7 @@ class EventBus:
 
 
 # Global event bus instance for convenience
-_global_bus: Optional[EventBus] = None
+_global_bus: EventBus | None = None
 
 
 async def get_event_bus() -> EventBus:
@@ -494,7 +558,7 @@ async def publish(subject: str, data: Any) -> None:
 async def subscribe(
     subject: str,
     handler: MessageHandler,
-    queue: Optional[str] = None,
+    queue: str | None = None,
 ) -> None:
     """Convenience function to subscribe via global bus."""
     bus = await get_event_bus()
