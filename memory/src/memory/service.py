@@ -275,9 +275,10 @@ class MemoryService(BaseService):
 
     async def _handle_recall(self, data: dict) -> None:
         """Handle memory recall requests."""
-        try:
-            recall_type = data.get("type", "similarity")
+        query_id = data.get("query_id")
+        recall_type = data.get("query_type") or data.get("type", "similarity")
 
+        try:
             if recall_type == "time_window":
                 results = await self.recall_by_time_window(
                     data["start_time"],
@@ -290,13 +291,35 @@ class MemoryService(BaseService):
                     data.get("limit", 100),
                 )
             else:
+                query_text = data.get("query_text") or data.get("query", "")
                 results = await self.recall_by_similarity(
-                    data["query"],
+                    query_text,
                     data.get("limit", 10),
                     data.get("min_score", 0.5),
                 )
         except Exception as e:
             self.logger.error(f"Error recalling memory: {e}")
+            if query_id:
+                await self.event_bus.publish(
+                    f"memory.recall.result.{query_id}",
+                    {
+                        "query_id": query_id,
+                        "results": [],
+                        "count": 0,
+                        "error": str(e),
+                    },
+                )
+            return
+
+        if query_id:
+            await self.event_bus.publish(
+                f"memory.recall.result.{query_id}",
+                {
+                    "query_id": query_id,
+                    "results": [asdict(result) for result in results],
+                    "count": len(results),
+                },
+            )
 
 
 async def main() -> None:
