@@ -84,6 +84,7 @@ class EventBus:
         self._js: Optional[JetStreamContext] = None
         self._subscriptions: dict[str, nats.aio.subscription.Subscription] = {}
         self._handlers: dict[str, MessageHandler] = {}
+        self._request_handlers: set[str] = set()
         self._connected = asyncio.Event()
 
     async def connect(self) -> None:
@@ -119,6 +120,8 @@ class EventBus:
             self._js = None
             self._connected.clear()
             self._subscriptions.clear()
+            self._handlers.clear()
+            self._request_handlers.clear()
 
     async def publish(self, subject: str, data: Any) -> None:
         """
@@ -189,6 +192,10 @@ class EventBus:
         )
         self._subscriptions[subject] = sub
         self._handlers[subject] = handler
+        if is_request_handler:
+            self._request_handlers.add(subject)
+        else:
+            self._request_handlers.discard(subject)
         logger.info(f"Subscribed to {subject}")
 
     async def unsubscribe(self, subject: str) -> None:
@@ -198,6 +205,7 @@ class EventBus:
             del self._subscriptions[subject]
             if subject in self._handlers:
                 del self._handlers[subject]
+            self._request_handlers.discard(subject)
             logger.info(f"Unsubscribed from {subject}")
 
     async def request(
@@ -279,12 +287,8 @@ class EventBus:
         Safe to call even if already connected (becomes a no-op reconnect).
         """
         saved_handlers: dict[str, tuple[MessageHandler, bool]] = {}
-        for subject, sub in self._subscriptions.items():
-            handler = self._handlers.get(subject)
-            if handler is not None:
-                # Detect if this was a request handler by checking stored metadata
-                # We store the original handler, not the wrapper
-                saved_handlers[subject] = (handler, False)
+        for subject, handler in self._handlers.items():
+            saved_handlers[subject] = (handler, subject in self._request_handlers)
 
         logger.warning(f"force_reconnect: tearing down NATS connection ({len(saved_handlers)} subs to restore)")
 
@@ -298,6 +302,8 @@ class EventBus:
             self._js = None
             self._connected.clear()
             self._subscriptions.clear()
+            self._handlers.clear()
+            self._request_handlers.clear()
 
         # Create fresh connection
         await self.connect()
