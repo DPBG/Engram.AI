@@ -8,7 +8,9 @@ Autopilot mode:
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
+
+from activelearning.nats_client import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +23,8 @@ class AutopilotController:
     minimizes live LLM calls.
     """
 
-    def __init__(self, nats_client: Any, llm_cache: Any):
-        self.nats_client = nats_client
+    def __init__(self, event_bus: EventBus, llm_cache: Any):
+        self.event_bus = event_bus
         self.llm_cache = llm_cache
 
         self._enabled = False
@@ -111,13 +113,12 @@ class AutopilotController:
     ) -> None:
         """Publish cache hit/miss event."""
         try:
-            import json
-            await self.nats_client.publish(
+            await self.event_bus.publish(
                 f"llm.cache.{event_type}",
-                json.dumps({
+                {
                     "prompt_preview": prompt[:100],
                     "confidence": confidence,
-                }).encode(),
+                },
             )
         except Exception as e:
             logger.error(f"Error publishing cache event: {e}")
