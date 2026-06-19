@@ -154,6 +154,30 @@ class TestKernelDecision:
         )
         assert decision.is_expired()
 
+    def test_decision_risk_score_bounds(self):
+        with pytest.raises(ValueError, match="risk_score must be between"):
+            KernelDecision(
+                trace_id="test-123",
+                type=KernelDecisionType.ALLOW,
+                risk_score=-0.1,
+            )
+        with pytest.raises(ValueError, match="risk_score must be between"):
+            KernelDecision(
+                trace_id="test-123",
+                type=KernelDecisionType.ALLOW,
+                risk_score=1.5,
+            )
+        KernelDecision(
+            trace_id="test-123",
+            type=KernelDecisionType.ALLOW,
+            risk_score=0.0,
+        )
+        KernelDecision(
+            trace_id="test-123",
+            type=KernelDecisionType.ALLOW,
+            risk_score=1.0,
+        )
+
 
 class TestKernelDecisionTtl:
     """Tests for KernelDecision.remaining_ttl_ms()."""
