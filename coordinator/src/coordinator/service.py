@@ -11,7 +11,7 @@ import asyncio
 import uuid
 from typing import Optional
 
-from activelearning import BaseService, get_embedding_service
+from activelearning import BaseService
 
 from coordinator.sensor_manager import SensorManager
 from coordinator.learning_controller import LearningController
@@ -33,13 +33,11 @@ class CoordinatorService(BaseService):
 
         self.tasks_root = self.config.tasks_root
         self.qdrant_url = self.config.qdrant_url
-        self.ollama_url = self.config.ollama_url
 
         # Components
         self._sensor_manager: Optional[SensorManager] = None
         self._learning_controller: Optional[LearningController] = None
         self._task_coordinator: Optional[TaskCoordinator] = None
-        self._embedding_service = get_embedding_service()
 
     async def _setup(self) -> None:
         """Setup service-specific resources and NATS subscriptions."""
@@ -58,9 +56,9 @@ class CoordinatorService(BaseService):
         self._task_coordinator = TaskCoordinator(
             nats_client=self.event_bus._nc,
             qdrant_url=self.qdrant_url,
-            ollama_url=self.ollama_url,
             tasks_root=self.tasks_root,
         )
+        await self._task_coordinator.setup()
 
         # Track devices already forwarded to meta-programmer (prevent flooding)
         self._pending_device_gaps: set[str] = set()
@@ -77,8 +75,8 @@ class CoordinatorService(BaseService):
 
     async def _cleanup(self) -> None:
         """Cleanup service-specific resources."""
-        # Unsubscribe from topics if needed
-        pass
+        if self._task_coordinator:
+            await self._task_coordinator.close()
 
     async def _handle_task_request(self, data: dict) -> None:
         """
@@ -160,7 +158,13 @@ class CoordinatorService(BaseService):
                 })
 
         except Exception as e:
+            # Surface failures (e.g. the embedding service being down) to the
+            # requester instead of leaving the request unanswered.
             self.logger.error(f"Error handling task request: {e}", exc_info=True)
+            await self.event_bus.publish("task.result", {
+                "success": False,
+                "error": str(e),
+            })
 
     async def _request_execution_approval(
         self,

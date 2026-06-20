@@ -34,9 +34,9 @@ class CacheService(BaseService):
         """Service-specific setup."""
         self._llm_cache = LLMCache(
             qdrant_url=self.config.qdrant_url,
-            ollama_url=self.config.ollama_url,
             db=self.database,
         )
+        await self._llm_cache.setup()
 
         self._autopilot = AutopilotController(
             event_bus=self.event_bus,
@@ -67,6 +67,8 @@ class CacheService(BaseService):
         """Service-specific cleanup."""
         if self._invalidator:
             await self._invalidator.stop()
+        if self._llm_cache:
+            await self._llm_cache.close()
 
     async def _handle_cache_query(self, data: dict, msg) -> None:
         """Handle cache query request."""

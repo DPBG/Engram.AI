@@ -80,14 +80,15 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard safety tests
+      - name: Run Kernel + Meta-Programmer + Coordinator + Cache + Dashboard safety tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src
+          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:cache/src:dashboard/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
-        # Coordinator gate + dashboard auth tests load their module under test
-        # directly (pure stdlib), so they need no extra service deps.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests -o addopts="" -v
+        # Coordinator/cache tests load their module under test directly and inject
+        # mocks (no Qdrant/Ollama), so they need no extra service deps. They drive
+        # coroutines with asyncio.run, so no pytest-asyncio is required.
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests -o addopts="" -v
 
   lint:
     name: Lint

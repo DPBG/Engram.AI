@@ -23,6 +23,7 @@ from activelearning.nats_client import EventBus, get_event_bus
 from activelearning.plugins import SensorPlugin, ActuatorPlugin, register_sensor, register_actuator
 from activelearning.database import Database, get_database
 from activelearning.embeddings import EmbeddingService, get_embedding_service, embed_text, embed_batch
+from activelearning.qdrant_store import QdrantStore, QdrantHit, QdrantPoint
 from activelearning.config import ServiceConfig
 from activelearning.base_service import BaseService
 from activelearning.signing import (
@@ -60,6 +61,10 @@ __all__ = [
     "get_embedding_service",
     "embed_text",
     "embed_batch",
+    # Vector store
+    "QdrantStore",
+    "QdrantHit",
+    "QdrantPoint",
     # Configuration
     "ServiceConfig",
     # Base service
