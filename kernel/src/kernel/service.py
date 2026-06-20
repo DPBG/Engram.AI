@@ -12,6 +12,7 @@ import uuid
 from typing import Any, Optional
 
 from activelearning import BaseService, sign_decision
+from activelearning.nats_client import serialize_message
 
 from kernel.evaluator import KernelEvaluator, KernelDecision, RiskAnalysis, DecisionType
 from kernel.policy import (
@@ -89,7 +90,9 @@ class KernelService(BaseService):
         # Subscribe to proposal events using EventBus
         await self.event_bus.subscribe("proposal.new", self._handle_action_proposal)
         await self.event_bus.subscribe("code.proposal", self._handle_code_proposal)
-        await self.event_bus.subscribe("kernel.status", self._handle_status)
+        await self.event_bus.subscribe(
+            "kernel.status", self._handle_status, is_request_handler=True,
+        )
         await self.event_bus.subscribe(
             "policy.load_profile", self._handle_load_profile,
         )
@@ -470,26 +473,22 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
 
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status requests."""
-        try:
-            status = {
-                "status": "running",
-                "body_profile": self._body_profile,
-                "has_rollback": self._rollback.has_rollback,
-                "deny_sequences": self._deny_tracker.get_state(),
-                "metrics": {
-                    "allow_count": self._allow_count,
-                    "transform_count": self._transform_count,
-                    "deny_count": self._deny_count,
-                    "defer_count": self._defer_count,
-                },
-            }
-
-            # Publish status response
-            await self.event_bus.publish("kernel.status.response", status)
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict, msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = {
+            "status": "running",
+            "body_profile": self._body_profile,
+            "has_rollback": self._rollback.has_rollback,
+            "deny_sequences": self._deny_tracker.get_state(),
+            "metrics": {
+                "allow_count": self._allow_count,
+                "transform_count": self._transform_count,
+                "deny_count": self._deny_count,
+                "defer_count": self._defer_count,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
     async def _get_risk_analysis(
         self,

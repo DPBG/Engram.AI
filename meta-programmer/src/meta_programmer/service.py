@@ -12,6 +12,7 @@ import time
 from typing import Any, Optional
 
 from activelearning import BaseService
+from activelearning.nats_client import serialize_message
 
 from meta_programmer.sandbox_manager import SandboxManager
 from meta_programmer.staging import StagingManager
@@ -75,8 +76,10 @@ class MetaProgrammerService(BaseService):
         # Subscribe to knowledge gaps
         await self.event_bus.subscribe("knowledge.gap", self._handle_knowledge_gap)
 
-        # Subscribe to status requests
-        await self.event_bus.subscribe("metaprogrammer.status", self._handle_status)
+        # Subscribe to status requests (request-reply)
+        await self.event_bus.subscribe(
+            "metaprogrammer.status", self._handle_status, is_request_handler=True,
+        )
 
         # Periodically fail-close DEFERs that no human ever answered.
         self._sweep_task = asyncio.create_task(self._expire_reviews_loop())
@@ -345,24 +348,20 @@ class MetaProgrammerService(BaseService):
         except Exception as e:
             self.logger.error(f"Error publishing gap result: {e}")
 
-    async def _handle_status(self, data: dict[str, Any]) -> None:
-        """Handle status requests."""
-        try:
-            status = {
-                "status": "running",
-                "metrics": {
-                    "gaps_processed": self._gaps_processed,
-                    "code_generated": self._code_generated,
-                    "tests_passed": self._tests_passed,
-                    "tests_failed": self._tests_failed,
-                    "deployments": self._deployments,
-                },
-            }
-
-            # Publish status response
-            await self.event_bus.publish("metaprogrammer.status.response", status)
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict[str, Any], msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = {
+            "status": "running",
+            "metrics": {
+                "gaps_processed": self._gaps_processed,
+                "code_generated": self._code_generated,
+                "tests_passed": self._tests_passed,
+                "tests_failed": self._tests_failed,
+                "deployments": self._deployments,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
 
 async def main() -> None:
