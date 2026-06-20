@@ -11,6 +11,8 @@ Team Structure:
 import logging
 from typing import Any, Optional
 
+from activelearning.llm import LLMClient, LLMConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,8 +45,17 @@ class MetaProgrammerTeam:
         self.staging_manager = staging_manager
         self.db = db
 
-        # Uses direct Ollama HTTP API for code generation
+        # Code generation runs through the shared SDK LLM client (one reused
+        # session, central timeout/retry). Low temperature keeps code stable.
         self.model_name = "deepseek-coder:6.7b"
+        self._llm = LLMClient(
+            LLMConfig(
+                host=ollama_url,
+                model=self.model_name,
+                timeout=120.0,
+                options={"temperature": 0.2, "top_p": 0.9},
+            )
+        )
         logger.info(f"Meta-Programmer team initialized with model: {self.model_name}")
 
     async def generate_code(
@@ -248,44 +259,20 @@ Generate the tests:"""
 
     async def _call_ollama(self, prompt: str) -> str:
         """
-        Call Ollama API for code generation.
+        Generate code via the shared SDK LLM client and strip any markdown.
 
-        Uses aiohttp to call the Ollama REST API.
+        Raises on failure so the caller fails the gap closed.
         """
-        import aiohttp
-        import json
-
         try:
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "model": self.model_name,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.2,  # Low temperature for code
-                        "top_p": 0.9,
-                    }
-                }
-
-                async with session.post(
-                    f"{self.ollama_url}/api/generate",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as response:
-                    if response.status != 200:
-                        raise Exception(f"Ollama API error: {response.status}")
-
-                    data = await response.json()
-                    generated_text = data.get("response", "")
-
-                    # Clean up the generated code
-                    generated_text = self._clean_generated_code(generated_text)
-
-                    return generated_text
-
+            generated_text = await self._llm.generate(prompt)
+            return self._clean_generated_code(generated_text)
         except Exception as e:
             logger.error(f"Ollama API call failed: {e}")
             raise
+
+    async def close(self) -> None:
+        """Release the shared LLM HTTP session."""
+        await self._llm.close()
 
     def _clean_generated_code(self, text: str) -> str:
         """

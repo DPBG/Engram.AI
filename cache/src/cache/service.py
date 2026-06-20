@@ -67,6 +67,8 @@ class CacheService(BaseService):
         """Service-specific cleanup."""
         if self._invalidator:
             await self._invalidator.stop()
+        if self._llm_cache:
+            await self._llm_cache.close()
 
     async def _handle_cache_query(self, data: dict, msg) -> None:
         """Handle cache query request."""
