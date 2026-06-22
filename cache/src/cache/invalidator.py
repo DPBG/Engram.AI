@@ -13,6 +13,8 @@ import logging
 import time
 from typing import Any
 
+from activelearning.nats_client import EventBus
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,8 +23,10 @@ class CacheInvalidator:
     Manages cache invalidation based on system events and age.
     """
 
-    def __init__(self, nats_client: Any, llm_cache: Any, db: Any):
-        self.nats_client = nats_client
+    _SUBJECTS = ("code.deployed", "override.applied.*", "task.saved")
+
+    def __init__(self, event_bus: EventBus, llm_cache: Any, db: Any):
+        self.event_bus = event_bus
         self.llm_cache = llm_cache
         self.db = db
 
@@ -31,6 +35,7 @@ class CacheInvalidator:
         self.unused_age_days = 3  # Delete if not used in this many days
 
         self._running = False
+        self._cleanup_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Start the invalidator."""
@@ -38,64 +43,47 @@ class CacheInvalidator:
 
         self._running = True
 
-        # Subscribe to invalidation events
-        await self.nats_client.subscribe("code.deployed", cb=self._on_code_deployed)
-        await self.nats_client.subscribe("override.applied.*", cb=self._on_override_applied)
-        await self.nats_client.subscribe("task.saved", cb=self._on_task_saved)
+        await self.event_bus.subscribe("code.deployed", self._on_code_deployed)
+        await self.event_bus.subscribe("override.applied.*", self._on_override_applied)
+        await self.event_bus.subscribe("task.saved", self._on_task_saved)
 
-        # Start periodic cleanup task
-        asyncio.create_task(self._periodic_cleanup())
+        self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
 
         logger.info("Cache invalidator started")
 
     async def stop(self) -> None:
         """Stop the invalidator."""
         self._running = False
+
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
+
+        for subject in self._SUBJECTS:
+            await self.event_bus.unsubscribe(subject)
+
         logger.info("Cache invalidator stopped")
 
-    async def _on_code_deployed(self, msg) -> None:
+    async def _on_code_deployed(self, data: dict) -> None:
         """Invalidate cache when code is deployed."""
-        try:
-            import json
-            data = json.loads(msg.data.decode())
-            logger.info(f"Code deployed: invalidating related cache entries")
+        logger.info(f"Code deployed: invalidating related cache entries ({data})")
+        await self._invalidate_by_tag("code_generation")
 
-            # Invalidate all code generation related entries
-            # TODO: More targeted invalidation based on what was deployed
-            await self._invalidate_by_tag("code_generation")
-
-        except Exception as e:
-            logger.error(f"Error handling code deployment: {e}")
-
-    async def _on_override_applied(self, msg) -> None:
+    async def _on_override_applied(self, data: dict) -> None:
         """Invalidate cache when override is applied."""
-        try:
-            import json
-            data = json.loads(msg.data.decode())
-            parameter = data.get("parameter", "")
+        parameter = data.get("parameter", "")
+        logger.info(f"Override applied to {parameter}: invalidating cache")
+        await self._invalidate_by_tag("configuration")
 
-            logger.info(f"Override applied to {parameter}: invalidating cache")
-
-            # Invalidate entries that might be affected by the override
-            await self._invalidate_by_tag("configuration")
-
-        except Exception as e:
-            logger.error(f"Error handling override: {e}")
-
-    async def _on_task_saved(self, msg) -> None:
+    async def _on_task_saved(self, data: dict) -> None:
         """Invalidate cache when new task is saved."""
-        try:
-            import json
-            data = json.loads(msg.data.decode())
-            task_id = data.get("task_id", "")
-
-            logger.info(f"Task saved: {task_id}")
-
-            # Invalidate task-related queries
-            await self._invalidate_by_tag("task_query")
-
-        except Exception as e:
-            logger.error(f"Error handling task save: {e}")
+        task_id = data.get("task_id", "")
+        logger.info(f"Task saved: {task_id}")
+        await self._invalidate_by_tag("task_query")
 
     async def _invalidate_by_tag(self, tag: str) -> None:
         """
@@ -144,6 +132,8 @@ class CacheInvalidator:
                 if deleted_count > 0:
                     logger.info(f"Deleted {deleted_count} old cache entries")
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error(f"Error in periodic cleanup: {e}", exc_info=True)
 

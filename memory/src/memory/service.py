@@ -14,6 +14,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from activelearning import BaseService, get_embedding_service
+from activelearning.subjects import Subjects
 
 from memory.models import Episode, MemoryQuery, MemoryResult
 
@@ -45,9 +46,9 @@ class MemoryService(BaseService):
         await self._ensure_collection()
 
         # Subscribe to memory events using EventBus
-        await self.event_bus.subscribe("memory.store", self._handle_store)
-        await self.event_bus.subscribe("memory.query", self._handle_query)
-        await self.event_bus.subscribe("memory.recall", self._handle_recall)
+        await self.event_bus.subscribe(Subjects.MEMORY_STORE, self._handle_store)
+        await self.event_bus.subscribe(Subjects.MEMORY_QUERY, self._handle_query)
+        await self.event_bus.subscribe(Subjects.MEMORY_RECALL, self._handle_recall)
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
@@ -275,9 +276,10 @@ class MemoryService(BaseService):
 
     async def _handle_recall(self, data: dict) -> None:
         """Handle memory recall requests."""
-        try:
-            recall_type = data.get("type", "similarity")
+        query_id = data.get("query_id")
+        recall_type = data.get("query_type") or data.get("type", "similarity")
 
+        try:
             if recall_type == "time_window":
                 results = await self.recall_by_time_window(
                     data["start_time"],
@@ -290,13 +292,35 @@ class MemoryService(BaseService):
                     data.get("limit", 100),
                 )
             else:
+                query_text = data.get("query_text") or data.get("query", "")
                 results = await self.recall_by_similarity(
-                    data["query"],
+                    query_text,
                     data.get("limit", 10),
                     data.get("min_score", 0.5),
                 )
         except Exception as e:
             self.logger.error(f"Error recalling memory: {e}")
+            if query_id:
+                await self.event_bus.publish(
+                    f"memory.recall.result.{query_id}",
+                    {
+                        "query_id": query_id,
+                        "results": [],
+                        "count": 0,
+                        "error": str(e),
+                    },
+                )
+            return
+
+        if query_id:
+            await self.event_bus.publish(
+                f"memory.recall.result.{query_id}",
+                {
+                    "query_id": query_id,
+                    "results": [asdict(result) for result in results],
+                    "count": len(results),
+                },
+            )
 
 
 async def main() -> None:

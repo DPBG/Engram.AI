@@ -10,6 +10,8 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from activelearning.database import default_sqlite_path
+
 
 @dataclass
 class ServiceConfig:
@@ -49,7 +51,7 @@ class ServiceConfig:
         return cls(
             service_name=service_name,
             nats_url=os.environ.get("NATS_URL", "nats://localhost:4222"),
-            sqlite_path=os.environ.get("SQLITE_PATH", "/data/sqlite/unified.db"),
+            sqlite_path=default_sqlite_path(),
             ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
             qdrant_url=os.environ.get("QDRANT_URL", "http://localhost:6333"),
             tasks_root=os.environ.get("TASKS_ROOT", "/data/tasks"),

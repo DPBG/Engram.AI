@@ -56,6 +56,7 @@ class MetaProgrammerService(BaseService):
         self._code_generated = 0
         self._tests_passed = 0
         self._tests_failed = 0
+        self._sandbox_unavailable = 0  # fail-closed blocks (containment could not run)
         self._deployments = 0
         self._reviews_expired = 0
 
@@ -229,6 +230,21 @@ class MetaProgrammerService(BaseService):
                 test_path=os.path.join(os.path.dirname(staged_path), "tests.py") if test_content else None,
             )
 
+            # Fail closed: if containment itself could not run (no Docker daemon,
+            # missing image, spawn failure) we must NOT deploy. This is distinct
+            # from a genuine test failure — untested code is never deployed.
+            if test_result.get("sandbox_unavailable"):
+                reason = test_result.get("error", "Sandbox unavailable")
+                self.logger.error(
+                    "FAIL-CLOSED: sandbox unavailable for %s — blocking deploy. %s",
+                    trace_id,
+                    reason,
+                )
+                self._sandbox_unavailable += 1
+                self._staging_manager.stage_rejected(trace_id, reason)
+                await self._publish_gap_result(trace_id, False, reason, fail_closed=True)
+                return
+
             if test_result["success"]:
                 self.logger.info(f"Tests passed for: {trace_id}")
                 self._tests_passed += 1
@@ -348,8 +364,19 @@ class MetaProgrammerService(BaseService):
             self.logger.error(f"Error deploying code: {e}")
             raise
 
-    async def _publish_gap_result(self, trace_id: str, success: bool, message: str) -> None:
-        """Publish knowledge gap processing result."""
+    async def _publish_gap_result(
+        self,
+        trace_id: str,
+        success: bool,
+        message: str,
+        fail_closed: bool = False,
+    ) -> None:
+        """Publish knowledge gap processing result.
+
+        fail_closed=True marks results where containment could not run, so
+        downstream consumers/metrics can distinguish a safety block from an
+        ordinary test failure.
+        """
         try:
             await self.event_bus.publish(
                 f"knowledge.gap.result.{trace_id}",
@@ -357,6 +384,7 @@ class MetaProgrammerService(BaseService):
                     "trace_id": trace_id,
                     "success": success,
                     "message": message,
+                    "fail_closed": fail_closed,
                 },
             )
         except Exception as e:
@@ -375,6 +403,10 @@ class MetaProgrammerService(BaseService):
                     "tests_failed": self._tests_failed + (ac.tests_failed if ac else 0),
                     "deployments": self._deployments + (ac.deployments if ac else 0),
                     "reviews_expired": self._reviews_expired,
+                    "tests_passed": self._tests_passed,
+                    "tests_failed": self._tests_failed,
+                    "sandbox_unavailable": self._sandbox_unavailable,
+                    "deployments": self._deployments,
                 },
             }
 
