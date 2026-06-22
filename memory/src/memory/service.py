@@ -83,9 +83,11 @@ class MemoryService(BaseService):
         """
         # Generate embedding
         embedding = await self._embed_text(episode.summary)
-        if is_zero_vector(embedding):
+        embed_ok = not is_zero_vector(embedding)
+        if not embed_ok:
             self.logger.warning(
-                "Skipping vector storage for episode %s: embedding unavailable",
+                "Skipping Qdrant vector storage for episode %s: embedding unavailable "
+                "(episode stored in SQLite only)",
                 episode.id,
             )
 
@@ -96,7 +98,7 @@ class MemoryService(BaseService):
                 "id": episode.id,
                 "trace_id": episode.trace_id,
                 "timestamp": episode.timestamp,
-                "embedding_ref": episode.id,  # Points to Qdrant point ID
+                "embedding_ref": episode.id if embed_ok else None,
                 "semantic_tags": json.dumps(episode.tags),
                 "utility_score": episode.utility_score,
                 "data": json.dumps(episode.data),
@@ -104,7 +106,7 @@ class MemoryService(BaseService):
         )
 
         # Store embedding in Qdrant (skip sentinel zero vectors)
-        if not is_zero_vector(embedding):
+        if embed_ok:
             await self._qdrant.upsert(
                 collection_name=COLLECTION_NAME,
                 points=[
