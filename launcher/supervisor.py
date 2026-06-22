@@ -53,10 +53,19 @@ class ManagedProcess:
 
 
 class Supervisor:
-    def __init__(self, base_env: dict, data_dir: Path) -> None:
+    def __init__(
+        self,
+        base_env: dict,
+        data_dir: Path,
+        creds_dir: Path | None = None,
+    ) -> None:
         self.base_env = base_env
         self.data_dir = data_dir
         self.sqlite_dir = data_dir / "sqlite"
+        # Directory containing per-service .creds files (secrets/<name>.creds).
+        # When set, _service_env() injects NATS_CREDS for each service whose
+        # creds file exists. Missing files are silently skipped (dev fallback).
+        self.creds_dir = creds_dir
         self.procs: list[ManagedProcess] = []
         self._print_lock = threading.Lock()
         self._stopping = False
@@ -75,6 +84,16 @@ class Supervisor:
             if key == "SQLITE_PATH_BASENAME":
                 continue
             env[key] = value
+
+        # Inject per-service NATS credentials when the creds file exists.
+        # The SDK logs a warning and falls back gracefully when the path is set
+        # but the file is absent, so we only set it when the file is present.
+        if self.creds_dir is not None:
+            creds_file = self.creds_dir / f"{svc.name}.creds"
+            if creds_file.is_file():
+                env["NATS_CREDS"] = str(creds_file)
+                logger.debug("injecting NATS_CREDS=%s for %s", creds_file, svc.name)
+
         return env
 
     # -- output streaming ----------------------------------------------------

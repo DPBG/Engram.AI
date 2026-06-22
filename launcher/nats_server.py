@@ -191,8 +191,16 @@ def ensure_binary() -> Path:
     return _download_binary()
 
 
+RESOLVER_CONF = LOCALRUN / "nats" / "resolver.conf"
+
+
 def start(log_file: Path | None = None) -> subprocess.Popen | None:
     """Start nats-server (with JetStream) unless one is already running.
+
+    When deploy/scripts/gen-creds.sh has been run, a resolver.conf is present
+    at .localrun/nats/resolver.conf and the server starts with the operator /
+    account model so that per-service credentials are enforced. Without that
+    file the server starts in the usual unauthenticated JetStream mode.
 
     Returns the Popen handle, or None if an external NATS is reused.
     """
@@ -204,16 +212,25 @@ def start(log_file: Path | None = None) -> subprocess.Popen | None:
 
     binary = ensure_binary()
     NATS_DATA.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        str(binary),
-        "--jetstream",
-        "--store_dir",
-        str(NATS_DATA),
-        "-m",
-        str(MONITOR_PORT),
-        "-p",
-        str(CLIENT_PORT),
-    ]
+
+    if RESOLVER_CONF.exists():
+        # Credentials have been generated — start with account resolver so the
+        # broker enforces per-service subject permissions.
+        cmd = [str(binary), "-c", str(RESOLVER_CONF)]
+        logger.info(
+            "Starting NATS with resolver config (per-service auth enabled): %s",
+            RESOLVER_CONF,
+        )
+    else:
+        # Default: unauthenticated JetStream (dev mode).
+        cmd = [
+            str(binary),
+            "--jetstream",
+            "--store_dir", str(NATS_DATA),
+            "-m", str(MONITOR_PORT),
+            "-p", str(CLIENT_PORT),
+        ]
+
     logger.info("Starting NATS: %s", " ".join(cmd))
     out = open(log_file, "ab") if log_file else subprocess.DEVNULL
     proc = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)

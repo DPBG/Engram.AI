@@ -28,6 +28,7 @@ from activelearning.embeddings import (
     embed_text,
     get_embedding_service,
 )
+from activelearning.llm import LLMClient, LLMConfig, LLMError
 from activelearning.messages import (
     SUBJECT_SCHEMAS,
     MessageValidationError,
@@ -77,6 +78,10 @@ __all__ = [
     "get_embedding_service",
     "embed_text",
     "embed_batch",
+    # LLM (text generation / chat)
+    "LLMClient",
+    "LLMConfig",
+    "LLMError",
     # Configuration
     "ServiceConfig",
     # Base service

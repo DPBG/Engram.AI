@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional
 import aiohttp
 
-from activelearning import current_timestamp
+from activelearning import EmbeddingService, current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class LLMCache:
         ollama_url: str,
         db: Any,
         hit_threshold: float = 0.95,
+        embedding_service: Optional[EmbeddingService] = None,
     ):
         self.qdrant_url = qdrant_url
         self.ollama_url = ollama_url
@@ -36,6 +37,10 @@ class LLMCache:
         self.hit_threshold = hit_threshold
 
         self.collection_name = "llm_cache"
+
+        # Embeddings go through the shared SDK service (reused session + LRU
+        # cache) rather than a hand-rolled per-call Ollama request.
+        self._embeddings = embedding_service or EmbeddingService(ollama_host=ollama_url)
 
         # Metrics
         self._cache_hits = 0
@@ -164,28 +169,16 @@ class LLMCache:
             return False
 
     async def _get_embedding(self, text: str) -> List[float]:
-        """Get text embedding from Ollama."""
+        """Get text embedding via the shared SDK embedding service."""
         try:
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "model": "nomic-embed-text",
-                    "prompt": text,
-                }
-
-                async with session.post(
-                    f"{self.ollama_url}/api/embeddings",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status != 200:
-                        raise Exception(f"Ollama embeddings error: {response.status}")
-
-                    data = await response.json()
-                    return data.get("embedding", [])
-
+            return await self._embeddings.embed_text(text)
         except Exception as e:
             logger.error(f"Error getting embedding: {e}")
             return [0.0] * 768
+
+    async def close(self) -> None:
+        """Release the shared embedding HTTP session."""
+        await self._embeddings.close()
 
     async def _search_cache(self, embedding: List[float]) -> List[Dict]:
         """Search cache for similar prompts."""

@@ -10,19 +10,36 @@ Uses Ollama's embedding models to generate text embeddings for:
 
 import hashlib
 import logging
-import os
 from collections import OrderedDict
 from typing import Optional
 
 import aiohttp
 
+from activelearning.llm import _OllamaSession
+
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingService:
+def zero_vector(dimensions: int) -> list[float]:
+    """Return a zero embedding of the requested dimensionality."""
+    if dimensions <= 0:
+        raise ValueError("Embedding dimensions must be a positive integer")
+    return [0.0] * dimensions
+
+
+def is_zero_vector(vector: list[float]) -> bool:
+    """True when every component is zero (embedding failure sentinel)."""
+    return bool(vector) and all(v == 0.0 for v in vector)
+
+
+class EmbeddingService(_OllamaSession):
     """
     Generates text embeddings using Ollama's embedding model.
     Caches embeddings in memory to avoid regeneration.
+
+    Reuses the shared :class:`~activelearning.llm._OllamaSession` for session
+    lifecycle (``_get_session``/``close``), so the HTTP plumbing lives in one
+    place alongside :class:`~activelearning.llm.LLMClient`.
     """
 
     def __init__(
@@ -39,28 +56,13 @@ class EmbeddingService:
             model: Embedding model name (default: nomic-embed-text)
             dimensions: Expected embedding dimensions
         """
-        self.ollama_host = ollama_host or os.environ.get(
-            "OLLAMA_URL", "http://localhost:11434"
-        )
+        super().__init__(ollama_host)
         self.model = model
         self.dimensions = dimensions
         # Insertion-ordered map used as a true LRU: a cache hit promotes the
         # key to the most-recently-used end, and eviction drops the LRU front.
         self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._cache_max_size = 10000  # Max cached embeddings
-        self._session: Optional[aiohttp.ClientSession] = None
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Return a shared aiohttp session, creating one if needed."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
-
-    async def close(self) -> None:
-        """Close the shared HTTP session."""
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
-        self._session = None
 
     async def embed_text(self, text: str) -> list[float]:
         """
@@ -89,14 +91,45 @@ class EmbeddingService:
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise RuntimeError(f"Ollama embedding error: {error_text}")
+                    logger.error(
+                        "Embedding backend returned HTTP %s: %s",
+                        response.status,
+                        error_text,
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
 
                 result = await response.json()
-                embedding = result["embedding"]
+                embedding = result.get("embedding")
+                if not isinstance(embedding, list):
+                    logger.error(
+                        "Embedding backend returned invalid payload",
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
+                if len(embedding) != self.dimensions:
+                    logger.error(
+                        "Embedding dimension mismatch: expected %d, got %d",
+                        self.dimensions,
+                        len(embedding),
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
+                if not all(isinstance(v, (int, float)) for v in embedding):
+                    logger.error(
+                        "Embedding payload contains non-numeric components",
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
+                embedding = [float(v) for v in embedding]
 
-        except aiohttp.ClientError as e:
-            logger.error(f"Failed to get embedding: {e}")
-            raise RuntimeError(f"Embedding service unavailable: {e}") from e
+        except Exception as e:
+            logger.error(
+                "Failed to get embedding: %s",
+                e,
+                extra={"cache_key": cache_key[:8], "model": self.model},
+            )
+            return self._zero_vector()
 
         # Cache the result
         self._add_to_cache(cache_key, embedding)
@@ -115,6 +148,10 @@ class EmbeddingService:
         # TODO: Ollama may support batch embeddings in the future
         # For now, we process sequentially with caching
         return [await self.embed_text(t) for t in texts]
+
+    def _zero_vector(self) -> list[float]:
+        """Sentinel vector returned when embedding generation fails."""
+        return zero_vector(self.dimensions)
 
     def _cache_key(self, text: str) -> str:
         """Generate cache key for text."""
