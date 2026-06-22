@@ -18,7 +18,7 @@ import nats
 from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 from nats.js import JetStreamContext
-from nats.js.api import ConsumerConfig, DeliverPolicy, StreamConfig
+from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
 from pydantic import BaseModel
 
 from activelearning.messages import (
@@ -43,6 +43,25 @@ _SAFETY_STREAM_SUBJECTS: list[str] = [
 ]
 # Auto-delete idle waiter consumers after this many seconds of inactivity.
 _CONSUMER_INACTIVE_THRESHOLD_S: float = 60.0
+
+# Durable-consumer defaults for safety-critical streams (E2.3.3).
+# Explicit ack with bounded redelivery: a handler that fails is retried with
+# backoff up to MAX_DELIVER times, after which the message is routed to the
+# poison/dead-letter path instead of redelivering forever or being dropped.
+DEFAULT_ACK_WAIT_SECONDS: float = 30.0
+DEFAULT_MAX_DELIVER: int = 5
+# Backoff between redeliveries (seconds); length should be MAX_DELIVER - 1 so
+# every retry has its own interval. The server uses backoff[0] as the ack-wait.
+DEFAULT_REDELIVERY_BACKOFF: list[float] = [1.0, 5.0, 15.0, 30.0]
+# Exhausted or unprocessable messages are republished here (core NATS, not the
+# JetStream-backed safety stream) so they are observable, never silently dropped.
+DLQ_SUBJECT_PREFIX: str = "dlq."
+
+
+def poison_subject(subject: str) -> str:
+    """Dead-letter subject for a poisoned safety-critical message."""
+    return f"{DLQ_SUBJECT_PREFIX}{subject}"
+
 
 T = TypeVar("T")
 
@@ -108,6 +127,9 @@ class EventBus:
         self._handlers: dict[str, MessageHandler] = {}
         self._request_handlers: set[str] = set()
         self._js_durables: dict[str, str] = {}  # subject -> durable consumer name
+        # subject -> async callback invoked when a message is poisoned (exhausted
+        # redelivery or unprocessable). Optional; the DLQ subject is always used.
+        self._poison_handlers: dict[str, MessageHandler] = {}
         self._connected = asyncio.Event()
 
     async def connect(self) -> None:
@@ -147,6 +169,7 @@ class EventBus:
             self._handlers.clear()
             self._request_handlers.clear()
             self._js_durables.clear()
+            self._poison_handlers.clear()
 
     async def _ensure_safety_stream(self) -> None:
         """Create or update the durable JetStream stream for safety-critical subjects.
@@ -293,19 +316,39 @@ class EventBus:
         handler: MessageHandler,
         durable: str,
         message_model: type[BaseModel] | None = None,
+        *,
+        ack_wait: float = DEFAULT_ACK_WAIT_SECONDS,
+        max_deliver: int = DEFAULT_MAX_DELIVER,
+        backoff: list[float] | None = None,
+        poison_handler: MessageHandler | None = None,
     ) -> None:
-        """Subscribe to a JetStream subject with a named durable push consumer.
+        """Subscribe to a JetStream subject with a durable, explicit-ack consumer.
 
-        Unlike the core subscribe(), this consumer survives a broker restart —
-        any un-ACKed messages are redelivered when the connection is restored.
-        The caller's handler receives deserialized dicts as usual; ACK/NAK is
-        handled automatically by this wrapper.
+        Reliability semantics for safety-critical streams (E2.3.3):
+
+        - **Explicit ack on success** — the message is acked exactly once only
+          after the handler returns. A consumer killed mid-processing never acks,
+          so the broker redelivers; the message is not lost.
+        - **Bounded redelivery with backoff** — a handler that raises causes a
+          ``nak``; the server redelivers after ``backoff`` intervals, up to
+          ``max_deliver`` total attempts.
+        - **Poison path** — once attempts reach ``max_deliver`` (or the message
+          is structurally unprocessable), it is routed to the dead-letter subject
+          ``dlq.<subject>`` (and an optional ``poison_handler``) and ``term``-ed,
+          so it stops redelivering but is never silently dropped.
 
         Args:
             subject: JetStream subject (must be covered by SAFETY_STREAM_NAME).
             handler: Async function called with the deserialized payload dict.
             durable: Unique consumer name; stable across restarts.
-            message_model: Optional pydantic model; defaults to registry lookup
+            message_model: Optional pydantic model; defaults to registry lookup.
+            ack_wait: Seconds the server waits for an ack before redelivering
+                (used when no explicit backoff is given).
+            max_deliver: Maximum delivery attempts before poisoning.
+            backoff: Per-retry delays in seconds; the server uses ``backoff[0]``
+                as the ack-wait. Defaults to DEFAULT_REDELIVERY_BACKOFF.
+            poison_handler: Optional async callback invoked with the poison
+                envelope when a message is dead-lettered.
         """
         await self._ensure_connected()
         assert self._js is not None
@@ -315,8 +358,12 @@ class EventBus:
             await self.unsubscribe(subject)
 
         wire_model = message_model or schema_for_subject(subject)
+        backoff = backoff if backoff is not None else DEFAULT_REDELIVERY_BACKOFF
+        if poison_handler is not None:
+            self._poison_handlers[subject] = poison_handler
 
         async def _js_message_callback(msg: Msg) -> None:
+            # Structurally bad messages can never succeed on retry → poison now.
             try:
                 data = deserialize_message(msg.data)
                 if not isinstance(data, dict):
@@ -325,20 +372,90 @@ class EventBus:
                         f"expected JSON object, got {type(data).__name__}",
                     )
                 data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
-                await handler(data)
-                await msg.ack()
             except MessageValidationError as e:
-                logger.error(str(e))
+                logger.error("Poisoning unprocessable message on %s: %s", subject, e)
+                await self._route_to_poison(subject, msg, f"validation_error: {e}")
                 await msg.term()
-            except Exception as e:
-                logger.error("Error handling JS message on %s: %s", subject, e)
-                await msg.nak()
+                return
 
-        sub = await self._js.subscribe(subject, cb=_js_message_callback, durable=durable)
+            try:
+                await handler(data)
+                await msg.ack()  # exactly-once ack, only after success
+            except Exception as e:
+                delivered = self._num_delivered(msg)
+                if delivered >= max_deliver:
+                    # Exhausted bounded redelivery → dead-letter, then term so it
+                    # stops redelivering (never an infinite loop, never dropped).
+                    logger.error(
+                        "Poisoning %s after %d/%d deliveries: %s",
+                        subject, delivered, max_deliver, e,
+                    )
+                    await self._route_to_poison(
+                        subject, msg, f"max_deliver_exhausted({delivered}): {e}"
+                    )
+                    await msg.term()
+                else:
+                    logger.warning(
+                        "Handler failed on %s (delivery %d/%d), will redeliver: %s",
+                        subject, delivered, max_deliver, e,
+                    )
+                    await msg.nak()
+
+        config = ConsumerConfig(
+            durable_name=durable,
+            ack_policy=AckPolicy.EXPLICIT,
+            max_deliver=max_deliver,
+            # When backoff is set the server derives ack-wait from backoff[0];
+            # passing both can be rejected, so set only one.
+            **({"backoff": [float(b) for b in backoff]} if backoff else {"ack_wait": float(ack_wait)}),
+        )
+        sub = await self._js.subscribe(
+            subject,
+            cb=_js_message_callback,
+            durable=durable,
+            manual_ack=True,
+            config=config,
+        )
         self._subscriptions[subject] = sub
         self._handlers[subject] = handler
         self._js_durables[subject] = durable
-        logger.info("JS-subscribed to %s (durable=%s)", subject, durable)
+        logger.info(
+            "JS-subscribed to %s (durable=%s, max_deliver=%d)", subject, durable, max_deliver
+        )
+
+    @staticmethod
+    def _num_delivered(msg: Msg) -> int:
+        """Delivery attempt count for a JetStream message (1 on first delivery)."""
+        try:
+            return int(msg.metadata.num_delivered)
+        except Exception:
+            return 1
+
+    async def _route_to_poison(self, subject: str, msg: Msg, reason: str) -> None:
+        """Dead-letter a message: republish to dlq.<subject> + call any handler.
+
+        Best-effort and never raises — a failure here must not crash the consumer
+        callback (which still needs to term/nak the original message).
+        """
+        envelope = {
+            "original_subject": subject,
+            "reason": reason,
+            "num_delivered": self._num_delivered(msg),
+            "payload": msg.data.decode("utf-8", errors="replace"),
+        }
+        dlq = poison_subject(subject)
+        try:
+            assert self._nc is not None
+            await self._nc.publish(dlq, serialize_message(envelope))
+            logger.error("Dead-lettered message from %s to %s: %s", subject, dlq, reason)
+        except Exception as e:  # noqa: BLE001 — poison routing is best-effort
+            logger.error("Failed to publish poison message to %s: %s", dlq, e)
+        ph = self._poison_handlers.get(subject)
+        if ph is not None:
+            try:
+                await ph(envelope)
+            except Exception as e:  # noqa: BLE001 — handler must not crash callback
+                logger.error("Poison handler for %s raised: %s", subject, e)
 
     async def unsubscribe(self, subject: str) -> None:
         """Unsubscribe from a subject."""
@@ -349,6 +466,7 @@ class EventBus:
                 del self._handlers[subject]
             self._request_handlers.discard(subject)
             self._js_durables.pop(subject, None)
+            self._poison_handlers.pop(subject, None)
             logger.info(f"Unsubscribed from {subject}")
 
     async def request(
@@ -459,6 +577,7 @@ class EventBus:
         """
         saved_handlers: dict[str, tuple[MessageHandler, bool]] = {}
         saved_js: dict[str, str] = dict(self._js_durables)  # subject -> durable name
+        saved_poison: dict[str, MessageHandler] = dict(self._poison_handlers)
         for subject, handler in self._handlers.items():
             saved_handlers[subject] = (handler, subject in self._request_handlers)
 
@@ -480,6 +599,7 @@ class EventBus:
             self._handlers.clear()
             self._request_handlers.clear()
             self._js_durables.clear()
+            self._poison_handlers.clear()
 
         # Create fresh connection (also re-ensures the safety stream)
         await self.connect()
@@ -488,7 +608,10 @@ class EventBus:
         for subject, (handler, is_req) in saved_handlers.items():
             try:
                 if subject in saved_js:
-                    await self.js_subscribe(subject, handler, durable=saved_js[subject])
+                    await self.js_subscribe(
+                        subject, handler, durable=saved_js[subject],
+                        poison_handler=saved_poison.get(subject),
+                    )
                 else:
                     await self.subscribe(subject, handler, is_request_handler=is_req)
             except Exception as e:
