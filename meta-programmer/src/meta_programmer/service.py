@@ -14,6 +14,7 @@ from typing import Any, Optional
 from activelearning import BaseService
 from activelearning.nats_client import serialize_message
 
+from meta_programmer.approval_consumer import ApprovalConsumer
 from meta_programmer.sandbox_manager import SandboxManager
 from meta_programmer.staging import StagingManager
 from meta_programmer.agents import MetaProgrammerTeam
@@ -44,6 +45,7 @@ class MetaProgrammerService(BaseService):
         self._sandbox_manager = SandboxManager()
         self._staging_manager = StagingManager(self.staging_root)
         self._team: Optional[MetaProgrammerTeam] = None
+        self._approval_consumer: Optional[ApprovalConsumer] = None
 
         # A deferred (human-review) proposal that no one answers is failed
         # closed after this TTL (Phase 1.9), rather than lingering forever.
@@ -74,12 +76,27 @@ class MetaProgrammerService(BaseService):
             db=self.database._connection,
         )
 
+        # Approval consumer — handles Dashboard responses to DEFER requests.
+        self._approval_consumer = ApprovalConsumer(
+            staging=self._staging_manager,
+            defer_ttl_ms=self.defer_ttl_ms,
+            run_tests=self._sandbox_manager.run_tests,
+            deploy=self._deploy_code,
+            publish_gap_result=self._publish_gap_result,
+            log=self.logger,
+        )
+
         # Subscribe to knowledge gaps
         await self.event_bus.subscribe("knowledge.gap", self._handle_knowledge_gap)
 
         # Subscribe to status requests (request-reply)
         await self.event_bus.subscribe(
             "metaprogrammer.status", self._handle_status, is_request_handler=True,
+        )
+
+        # Subscribe to human approval/denial responses from the Dashboard.
+        await self.event_bus.subscribe(
+            "approval.response.*", self._approval_consumer.handle_approval_response
         )
 
         # Periodically fail-close DEFERs that no human ever answered.
@@ -89,6 +106,8 @@ class MetaProgrammerService(BaseService):
         """Service-specific cleanup."""
         if self._sweep_task:
             self._sweep_task.cancel()
+        if self._team:
+            await self._team.close()
 
     async def _expire_reviews_loop(self) -> None:
         """Background loop: sweep expired human-review items (Phase 1.9)."""
@@ -378,15 +397,17 @@ class MetaProgrammerService(BaseService):
 
     async def _handle_status(self, _data: dict[str, Any], msg) -> None:
         """Reply to status requests via request-reply."""
+        ac = self._approval_consumer
         status = {
             "status": "running",
             "metrics": {
                 "gaps_processed": self._gaps_processed,
                 "code_generated": self._code_generated,
-                "tests_passed": self._tests_passed,
-                "tests_failed": self._tests_failed,
+                "tests_passed": self._tests_passed + (ac.tests_passed if ac else 0),
+                "tests_failed": self._tests_failed + (ac.tests_failed if ac else 0),
+                "deployments": self._deployments + (ac.deployments if ac else 0),
+                "reviews_expired": self._reviews_expired,
                 "sandbox_unavailable": self._sandbox_unavailable,
-                "deployments": self._deployments,
             },
         }
         if msg.reply:

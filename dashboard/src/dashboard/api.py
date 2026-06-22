@@ -33,6 +33,10 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from dashboard.auth import install_auth_middleware, authorize_websocket
+from dashboard.safe_halt import (
+    get_halt_state, update_halt_state,
+    sanitize_halt_payload, sanitize_resume_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1185,6 +1189,7 @@ class DashboardService:
                         "neuromorphic": _neuro_metrics,
                         "gateway": _gateway_status,
                         "video_sessions": list(_video_sessions.values()),
+                        "halt_state": get_halt_state(),
                     },
                 })
 
@@ -1319,6 +1324,42 @@ class DashboardService:
                                     )
                                 except Exception as e:
                                     self.logger.error(f"Guidance publish failed: {e}")
+                        elif payload.get("type") == "safe_halt":
+                            ok, reason, operator_id = sanitize_halt_payload(
+                                payload.get("data", {})
+                            )
+                            if not ok:
+                                await websocket.send_json({"type": "error", "data": {"message": "Invalid SAFE_HALT payload"}})
+                            elif not self._nc:
+                                await websocket.send_json({"type": "error", "data": {"message": "NATS not connected — SAFE_HALT not delivered"}})
+                            else:
+                                try:
+                                    await self._nc.publish(
+                                        "safety.halt",
+                                        json.dumps({"reason": reason, "operator_id": operator_id}).encode(),
+                                    )
+                                    self.logger.critical("SAFE_HALT published by %s: %s", operator_id, reason)
+                                except Exception as e:
+                                    self.logger.error(f"Failed to publish safety.halt: {e}")
+                                    await websocket.send_json({"type": "error", "data": {"message": "SAFE_HALT delivery failed"}})
+                        elif payload.get("type") == "safe_resume":
+                            ok, operator_id = sanitize_resume_payload(
+                                payload.get("data", {})
+                            )
+                            if not ok:
+                                await websocket.send_json({"type": "error", "data": {"message": "Invalid SAFE_RESUME payload"}})
+                            elif not self._nc:
+                                await websocket.send_json({"type": "error", "data": {"message": "NATS not connected — SAFE_RESUME not delivered"}})
+                            else:
+                                try:
+                                    await self._nc.publish(
+                                        "safety.resume",
+                                        json.dumps({"operator_id": operator_id}).encode(),
+                                    )
+                                    self.logger.warning("SAFE_HALT released by %s", operator_id)
+                                except Exception as e:
+                                    self.logger.error(f"Failed to publish safety.resume: {e}")
+                                    await websocket.send_json({"type": "error", "data": {"message": "SAFE_RESUME delivery failed"}})
                         elif payload.get("type") == "ping":
                             await websocket.send_json({"type": "pong"})
                     except json.JSONDecodeError:
@@ -1593,6 +1634,15 @@ class DashboardService:
                 except Exception as e:
                     self.logger.error(f"Error handling speech execute: {e}")
 
+            async def handle_safe_halt_status(msg):
+                """Cache and broadcast Kernel SAFE_HALT status updates."""
+                try:
+                    data = json.loads(msg.data.decode())
+                    update_halt_state(data)
+                    await self._broadcast({"type": "safe_halt_status", "data": data})
+                except Exception as e:
+                    self.logger.error(f"Error handling safety.halt.status: {e}")
+
             # Subjects handled by dedicated callbacks — add to skip set
             _dedicated_subjects.add("sensory.gateway.status")
             _dedicated_subjects.add("video.training.status")
@@ -1603,6 +1653,7 @@ class DashboardService:
             _dedicated_subjects.add("safety.deny_escalation")
             _dedicated_subjects.add("speech.execute")
             _dedicated_subjects.add("observation.visual.body")
+            _dedicated_subjects.add("safety.halt.status")
 
             await nc.subscribe(">", cb=handle_msg)
             await nc.subscribe("heartbeat.*", cb=handle_heartbeat)
@@ -1617,6 +1668,7 @@ class DashboardService:
             await nc.subscribe("safety.deny_escalation", cb=handle_deny_escalation)
             await nc.subscribe("speech.execute", cb=handle_speech_execute)
             await nc.subscribe("observation.visual.body", cb=handle_visual_body)
+            await nc.subscribe("safety.halt.status", cb=handle_safe_halt_status)
         except Exception as e:
             self.logger.warning(f"NATS failed (non-fatal): {e}")
             self._nats_connected = False
