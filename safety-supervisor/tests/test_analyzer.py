@@ -417,3 +417,34 @@ def test_code_proposal_empty_dict_flagged() -> None:
     result = _analyzer().analyze_code({})
     assert "MALFORMED_PROPOSAL" in result.flags
     assert result.risk_score >= 0.5
+
+
+def test_code_proposal_blank_target_path_flagged() -> None:
+    result = _analyzer().analyze_code({"trace_id": "t", "target_path": "   ", "code_preview": "x = 1"})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_code_proposal_whitespace_target_path_not_assessed() -> None:
+    # A whitespace-only path must not silently produce zero risk.
+    result = _analyzer().analyze_code({"trace_id": "t", "target_path": "\t\n", "code_preview": "x = 1"})
+    assert result.risk_score >= 0.5
+
+
+def test_action_type_non_string_flagged_as_malformed() -> None:
+    # An integer type field must not raise AttributeError — fail closed instead.
+    result = _analyzer().analyze_action({"trace_id": "t", "action": {"type": 1}})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_action_type_padded_shutdown_flagged_high_risk() -> None:
+    # Whitespace padding must not bypass HIGH_RISK_ACTION matching.
+    result = _analyzer().analyze_action(_action_proposal(" shutdown "))
+    assert "HIGH_RISK_ACTION" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_action_type_padded_deploy_flagged_medium_risk() -> None:
+    result = _analyzer().analyze_action(_action_proposal("  deploy  "))
+    assert "MEDIUM_RISK_ACTION" in result.flags

@@ -134,6 +134,14 @@ class RiskAnalyzer:
             )
             return analysis
 
+        # Fail closed: a blank target_path cannot be assessed against protected
+        # paths or allowlists, so treat it as a malformed proposal.
+        if not target_path.strip():
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append("Code proposal 'target_path' is blank")
+            return analysis
+
         # Check protected paths
         if self._is_protected_path(target_path):
             analysis.flags.append("PROTECTED_PATH")
@@ -157,6 +165,17 @@ class RiskAnalyzer:
         """Analyze based on action type."""
         high_risk_types = {"shutdown", "restart", "delete", "format", "reset"}
         medium_risk_types = {"move", "execute", "run", "deploy"}
+
+        # Fail closed: a non-string type cannot be categorized and indicates a
+        # malformed proposal — flag it rather than raising AttributeError.
+        if not isinstance(action_type, str):
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append("Action type is not a string")
+            return
+
+        # Normalize whitespace so " shutdown " matches "shutdown".
+        action_type = action_type.strip()
 
         if not action_type:
             # Fail closed: an empty/missing action type cannot be categorized safely.
