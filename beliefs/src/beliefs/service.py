@@ -11,6 +11,7 @@ import json
 from dataclasses import asdict
 
 from activelearning import BaseService
+from activelearning.subjects import Subjects
 from activelearning.nats_client import serialize_message
 
 from beliefs.graph import BeliefGraph, BeliefNode, BeliefEdge, NodeType, EdgeType
@@ -38,14 +39,14 @@ class BeliefsService(BaseService):
         self._graph.seed_constitutional_beliefs()
 
         # Subscribe to belief events using EventBus
-        await self.event_bus.subscribe("beliefs.add_node", self._handle_add_node)
-        await self.event_bus.subscribe("beliefs.add_edge", self._handle_add_edge)
-        await self.event_bus.subscribe("beliefs.update", self._handle_update)
-        await self.event_bus.subscribe("beliefs.query", self._handle_query)
-        await self.event_bus.subscribe("beliefs.contradictions", self._handle_contradictions)
+        await self.event_bus.subscribe(Subjects.BELIEFS_ADD_NODE, self._handle_add_node)
+        await self.event_bus.subscribe(Subjects.BELIEFS_ADD_EDGE, self._handle_add_edge)
+        await self.event_bus.subscribe(Subjects.BELIEFS_UPDATE, self._handle_update)
+        await self.event_bus.subscribe(Subjects.BELIEFS_QUERY, self._handle_query)
+        await self.event_bus.subscribe(Subjects.BELIEFS_CONTRADICTIONS, self._handle_contradictions)
         # Request-reply query for synchronous callers (Kernel safety checks)
         await self.event_bus.subscribe(
-            "beliefs.query.request",
+            Subjects.BELIEFS_QUERY_REQUEST,
             self._handle_query_request,
             is_request_handler=True,
         )

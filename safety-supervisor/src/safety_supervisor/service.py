@@ -14,6 +14,7 @@ from dataclasses import asdict
 
 from activelearning import BaseService
 from activelearning.nats_client import serialize_message
+from activelearning.subjects import Subjects
 
 from safety_supervisor.analyzer import RiskAnalyzer
 
@@ -38,19 +39,19 @@ class SafetySupervisorService(BaseService):
         """Service-specific setup."""
         # Subscribe to analysis requests (from Kernel) as request-reply handlers
         await self.event_bus.subscribe(
-            "safety.analyze.action",
+            Subjects.SAFETY_ANALYZE_ACTION,
             self._handle_action_analysis,
             is_request_handler=True,
         )
         await self.event_bus.subscribe(
-            "safety.analyze.code",
+            Subjects.SAFETY_ANALYZE_CODE,
             self._handle_code_analysis,
             is_request_handler=True,
         )
 
         # Subscribe to status requests (request-reply)
         await self.event_bus.subscribe(
-            "safety.status", self._handle_status, is_request_handler=True,
+            Subjects.SAFETY_STATUS, self._handle_status, is_request_handler=True,
         )
 
     async def _cleanup(self) -> None:
