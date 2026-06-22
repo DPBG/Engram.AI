@@ -18,7 +18,9 @@ from __future__ import annotations
 from typing import Any, Optional
 
 #: Subject the Kernel listens on for action proposals.
-KERNEL_PROPOSAL_SUBJECT = "proposal.new"
+from activelearning.subjects import Subjects
+
+KERNEL_PROPOSAL_SUBJECT = Subjects.PROPOSAL_NEW
 
 #: Decision types that permit execution. Everything else is denied.
 APPROVED_TYPES = frozenset({"ALLOW", "TRANSFORM"})

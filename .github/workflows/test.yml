@@ -80,14 +80,30 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard safety tests
+      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Beliefs safety tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src
+          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:beliefs/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
         # Coordinator gate + dashboard auth tests load their module under test
-        # directly (pure stdlib), so they need no extra service deps.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests -o addopts="" -v
+        # directly (pure stdlib), so they need no extra service deps. Beliefs
+        # tests need networkx (the belief graph backend).
+        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests beliefs/tests -o addopts="" -v
+
+  sandbox:
+    name: Sandbox image build + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Builds activelearning-sandbox:latest via the build-only compose profile,
+      # then runs a passing + failing generated test set inside the hardened
+      # container and asserts network/read-only isolation. Mirrors the runtime
+      # flags in meta-programmer/.../sandbox_manager.py.
+      - name: Build sandbox image + run smoke tests
+        run: bash sandbox/smoke/run_smoke.sh
 
   lint:
     name: Lint
