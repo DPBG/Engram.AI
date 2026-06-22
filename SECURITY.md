@@ -11,7 +11,8 @@ We will acknowledge receipt within 48 hours and provide a timeline for a fix.
 - **Kernel**: Immutable safety gate. All motor commands and code proposals pass through the Kernel before execution. Cannot be modified or bypassed.
 - **Safety Supervisor**: Risk analysis layer. Evaluates proposals for dangerous patterns.
 - **Sandbox**: Ephemeral containers with no network, read-only filesystem, and resource limits for testing generated code.
-- **NATS Authentication**: Production deployments use token-based auth. Tokens are stored in `.env` (git-ignored) and GitHub Actions secrets.
+- **NATS Authentication**: Production deployments use token-based auth today; ADR 0001 defines per-service least-privilege credentials (in progress). Tokens are stored in `.env` (git-ignored) and GitHub Actions secrets.
+- **Forged ALLOW regression (E1.1.9)**: `tests/red_team/test_broker_rejects_privileged_publish.py` boots NATS with enforced publish allowlists and asserts non-kernel identities cannot publish `decision.*`, `code.decision.*`, `policy.*`, or `cognitive.response.validated`. This is the canonical broker-layer regression; application-layer signing is covered separately in `sdk/tests/test_signing.py`.
 
 ## Secrets Management
 
