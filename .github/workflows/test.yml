@@ -58,6 +58,17 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
+      - name: Install nats-server
+        run: |
+          set -euo pipefail
+          VERSION=v2.10.22
+          ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
+          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
+          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+          tar -xzf "${ASSET}"
+          sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
+
       - name: Run SDK tests with coverage
         working-directory: sdk
         run: uv run --extra dev python -m pytest tests/ -v --cov=activelearning --cov-report=term-missing
