@@ -305,7 +305,7 @@ class MetaProgrammerService(BaseService):
             await self.event_bus.publish("code.proposal", proposal)
 
             # Wait for decision
-            decision = await self._wait_for_decision(trace_id, subject_prefix="code.decision")
+            decision = await self._wait_for_decision(trace_id, code=True)
             return decision
 
         except Exception as e:
@@ -315,12 +315,15 @@ class MetaProgrammerService(BaseService):
     async def _wait_for_decision(
         self,
         trace_id: str,
-        subject_prefix: str = "decision",
+        *,
+        code: bool = False,
         timeout: float = 30.0,
     ) -> dict:
         """Wait for a Kernel decision."""
         try:
-            decision = await self.event_bus.wait_for_decision(trace_id, timeout=timeout)
+            decision = await self.event_bus.wait_for_decision(
+                trace_id, timeout=timeout, code=code,
+            )
             return decision
         except asyncio.TimeoutError:
             self.logger.error(f"Timeout waiting for decision: {trace_id}")
