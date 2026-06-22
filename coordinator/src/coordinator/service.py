@@ -14,6 +14,7 @@ from typing import Optional
 from activelearning import BaseService, get_embedding_service
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import Subjects
+from nats.aio.msg import Msg
 
 from coordinator.sensor_manager import SensorManager
 from coordinator.learning_controller import LearningController
@@ -297,7 +298,7 @@ class CoordinatorService(BaseService):
             # Allow re-discovery if device is unplugged and re-plugged.
             self._pending_device_gaps.discard(device_id)
 
-    async def _handle_status(self, _data: dict, msg) -> None:
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
         status = {
             "status": "running",

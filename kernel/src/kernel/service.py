@@ -18,6 +18,7 @@ from activelearning.subjects import (
     code_decision_subject,
     decision_subject,
 )
+from nats.aio.msg import Msg
 
 from kernel.evaluator import KernelEvaluator, KernelDecision, RiskAnalysis, DecisionType
 from kernel.policy import (
@@ -487,7 +488,7 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
 
-    async def _handle_status(self, _data: dict, msg) -> None:
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
         status = {
             "status": "running",

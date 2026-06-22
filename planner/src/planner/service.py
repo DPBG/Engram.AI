@@ -13,6 +13,7 @@ import uuid
 
 from activelearning import BaseService
 from activelearning.nats_client import serialize_message
+from nats.aio.msg import Msg
 
 from planner.scheduler import Scheduler, SchedulerMode, PendingAction
 
@@ -193,7 +194,7 @@ class PlannerService(BaseService):
         except Exception as e:
             self.logger.error(f"Error changing mode: {e}")
 
-    async def _handle_status(self, _data: dict, msg) -> None:
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
         status = self._scheduler.get_queue_status()
         if msg.reply:

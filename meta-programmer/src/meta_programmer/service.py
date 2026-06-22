@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from activelearning import BaseService
 from activelearning.nats_client import serialize_message
+from nats.aio.msg import Msg
 
 from meta_programmer.approval_consumer import ApprovalConsumer
 from meta_programmer.sandbox_manager import SandboxManager
@@ -395,7 +396,7 @@ class MetaProgrammerService(BaseService):
         except Exception as e:
             self.logger.error(f"Error publishing gap result: {e}")
 
-    async def _handle_status(self, _data: dict[str, Any], msg) -> None:
+    async def _handle_status(self, _data: dict[str, Any], msg: Msg) -> None:
         """Reply to status requests via request-reply."""
         ac = self._approval_consumer
         status = {

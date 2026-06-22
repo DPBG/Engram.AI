@@ -332,7 +332,9 @@ async def test_coordinator_status(nats_client: NATSClient):
     )
 
     status = json.loads(response.data.decode())
-    # Status should have 'status' field
+    assert status.get("status") == "running"
+    assert "sensors" in status
+    assert "learning" in status
 
 
 # =============================================================================

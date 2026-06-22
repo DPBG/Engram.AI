@@ -15,6 +15,7 @@ from dataclasses import asdict
 from activelearning import BaseService
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import Subjects
+from nats.aio.msg import Msg
 
 from safety_supervisor.analyzer import RiskAnalyzer
 
@@ -122,7 +123,7 @@ class SafetySupervisorService(BaseService):
         except Exception as e:
             self.logger.error(f"Error analyzing code: {e}")
 
-    async def _handle_status(self, _data: dict, msg) -> None:
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
         status = {
             "status": "running",
