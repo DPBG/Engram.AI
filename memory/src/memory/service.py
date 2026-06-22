@@ -14,6 +14,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from activelearning import BaseService, get_embedding_service
+from activelearning.subjects import Subjects
 
 from memory.models import Episode, MemoryQuery, MemoryResult
 
@@ -45,9 +46,9 @@ class MemoryService(BaseService):
         await self._ensure_collection()
 
         # Subscribe to memory events using EventBus
-        await self.event_bus.subscribe("memory.store", self._handle_store)
-        await self.event_bus.subscribe("memory.query", self._handle_query)
-        await self.event_bus.subscribe("memory.recall", self._handle_recall)
+        await self.event_bus.subscribe(Subjects.MEMORY_STORE, self._handle_store)
+        await self.event_bus.subscribe(Subjects.MEMORY_QUERY, self._handle_query)
+        await self.event_bus.subscribe(Subjects.MEMORY_RECALL, self._handle_recall)
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
