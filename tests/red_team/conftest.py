@@ -6,8 +6,8 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
-import uuid
 from collections.abc import Generator
 from pathlib import Path
 
@@ -48,22 +48,22 @@ def authz_nats_url() -> Generator[str, None, None]:
     host = "127.0.0.1"
     port = _free_port(host)
     monitor_port = _free_port(host)
-    data_dir = Path("/tmp") / f"engram-nats-authz-{uuid.uuid4().hex}"
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    # Render config with ephemeral client/monitor ports.
-    conf_text = AUTHZ_CONF.read_text(encoding="utf-8")
-    conf_text = conf_text.replace("127.0.0.1:4222", f"{host}:{port}")
-    conf_text = conf_text.replace("127.0.0.1:8222", f"{host}:{monitor_port}")
-    conf_text = conf_text.replace(
-        'store_dir: "/tmp/engram-nats-authz-js"',
-        f'store_dir: "{data_dir / "jetstream"}"',
-    )
-    rendered_conf = data_dir / "nats.conf"
-    rendered_conf.write_text(conf_text, encoding="utf-8")
+    data_dir = Path(tempfile.mkdtemp(prefix="engram-nats-authz-"))
 
     proc = subprocess.Popen(
-        [binary, "-c", str(rendered_conf)],
+        [
+            binary,
+            "-c",
+            str(AUTHZ_CONF),
+            "-a",
+            host,
+            "-p",
+            str(port),
+            "-m",
+            str(monitor_port),
+            "-sd",
+            str(data_dir / "jetstream"),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

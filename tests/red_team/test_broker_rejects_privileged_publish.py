@@ -76,6 +76,7 @@ async def test_non_kernel_privileged_publish_rejected(
         subject=subject,
     )
     assert errors, f"{user} publish to {subject!r} should be broker-rejected"
+    # nats-py async error_cb format: "Permissions Violation for Publish to <subject>"
     assert any("permissions violation" in err.lower() for err in errors), errors
 
 

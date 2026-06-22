@@ -8,6 +8,7 @@ PRIVILEGED_PUBLISH_SUBJECTS: tuple[str, ...] = (
     "code.decision.red-team-forged-trace",
     "policy.update",
     "policy.restrict",
+    "policy.update.status",
     "cognitive.response.validated",
 )
 
