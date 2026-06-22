@@ -105,15 +105,16 @@ jobs:
         # Coordinator gate + dashboard auth tests load their module under test
         # directly (pure stdlib), so they need no extra service deps.
         run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests -o addopts="" -v
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Beliefs safety tests
+      - name: Run Kernel + Meta-Programmer + Coordinator + Cache + Dashboard + Beliefs safety tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:beliefs/src
+          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:cache/src:dashboard/src:beliefs/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
-        # Coordinator gate + dashboard auth tests load their module under test
-        # directly (pure stdlib), so they need no extra service deps. Beliefs
-        # tests need networkx (the belief graph backend).
-        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests beliefs/tests -o addopts="" -v
+        # Coordinator/cache tests load their module under test directly and inject
+        # mocks (no Qdrant/Ollama), and drive coroutines with asyncio.run, so no
+        # pytest-asyncio is needed. Beliefs tests need networkx (the belief graph
+        # backend).
+        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
 
   sandbox:
     name: Sandbox image build + smoke
