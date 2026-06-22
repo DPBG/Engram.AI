@@ -33,12 +33,13 @@ class CoordinatorService(BaseService):
 
         self.tasks_root = self.config.tasks_root
         self.qdrant_url = self.config.qdrant_url
-        self.ollama_url = self.config.ollama_url
 
         # Components
         self._sensor_manager: Optional[SensorManager] = None
         self._learning_controller: Optional[LearningController] = None
         self._task_coordinator: Optional[TaskCoordinator] = None
+        # One shared embedding client per service, injected into the task
+        # coordinator and closed on shutdown.
         self._embedding_service = get_embedding_service()
 
     async def _setup(self) -> None:
@@ -58,10 +59,10 @@ class CoordinatorService(BaseService):
         self._task_coordinator = TaskCoordinator(
             nats_client=self.event_bus._nc,
             qdrant_url=self.qdrant_url,
-            ollama_url=self.ollama_url,
             tasks_root=self.tasks_root,
             embedding_service=self._embedding_service,
         )
+        await self._task_coordinator.setup()
 
         # Track devices already forwarded to meta-programmer (prevent flooding)
         self._pending_device_gaps: set[str] = set()
@@ -78,6 +79,8 @@ class CoordinatorService(BaseService):
 
     async def _cleanup(self) -> None:
         """Cleanup service-specific resources."""
+        if self._task_coordinator:
+            await self._task_coordinator.close()
         await self._embedding_service.close()
 
     async def _handle_task_request(self, data: dict) -> None:
@@ -160,7 +163,16 @@ class CoordinatorService(BaseService):
                 })
 
         except Exception as e:
+            # Surface failures (e.g. the embedding service being down) to the
+            # requester instead of leaving the request unanswered.
             self.logger.error(f"Error handling task request: {e}", exc_info=True)
+            await self.event_bus.publish(Subjects.TASK_RESULT, {
+                "success": False,
+                "error": str(e),
+                # Echo the query so consumers can correlate the failure (no
+                # task_id/trace_id exists yet when find_task itself fails).
+                "query": query,
+            })
 
     async def _request_execution_approval(
         self,

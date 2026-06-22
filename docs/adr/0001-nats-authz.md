@@ -217,6 +217,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `cognitive.response.validate` | neuro | kernel | Brain asks Kernel to validate an LLM response. |
 | `cognitive.response.validated` | **kernel only** | neuro | Kernel's attestation. |
 | `cognitive.response.rejected` | kernel | neuro, dashboard | |
+| `cognitive.query` | neuro | cognitive-bridge | Legacy direct query; superseded by `proposal.new` → `cognitive.execute`. |
 
 ### Safety
 

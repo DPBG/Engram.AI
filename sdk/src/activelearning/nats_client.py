@@ -92,6 +92,7 @@ class EventBus:
         self,
         nats_url: str | None = None,
         name: str = "activelearning",
+        nats_creds: str | None = None,
     ):
         """
         Initialize the EventBus.
@@ -99,9 +100,14 @@ class EventBus:
         Args:
             nats_url: NATS server URL (defaults to NATS_URL env var or localhost)
             name: Client name for identification
+            nats_creds: Path to a NATS .creds file (NKEY/JWT). Falls back to
+                the NATS_CREDS env var. When the file is absent at connect time
+                the bus logs a warning and connects without credentials (dev
+                fallback) rather than crashing.
         """
         self.nats_url = nats_url or os.environ.get("NATS_URL", "nats://localhost:4222")
         self.name = name
+        self.nats_creds: str | None = nats_creds or os.environ.get("NATS_CREDS") or None
         self._nc: NATSClient | None = None
         self._js: JetStreamContext | None = None
         self._subscriptions: dict[str, nats.aio.subscription.Subscription] = {}
@@ -116,23 +122,39 @@ class EventBus:
             logger.debug("Already connected to NATS")
             return
 
-        logger.info(f"Connecting to NATS at {self.nats_url}")
+        connect_kwargs: dict[str, Any] = {
+            "name": self.name,
+            "error_cb": self._error_callback,
+            "disconnected_cb": self._disconnected_callback,
+            "reconnected_cb": self._reconnected_callback,
+            "max_reconnect_attempts": -1,
+        }
 
-        self._nc = await nats.connect(
-            self.nats_url,
-            name=self.name,
-            error_cb=self._error_callback,
-            disconnected_cb=self._disconnected_callback,
-            reconnected_cb=self._reconnected_callback,
-            max_reconnect_attempts=-1,  # Unlimited reconnection attempts
-        )
+        if self.nats_creds:
+            if os.path.isfile(self.nats_creds):
+                connect_kwargs["user_credentials"] = self.nats_creds
+                logger.info("Connecting to NATS at %s with credentials %s", self.nats_url, self.nats_creds)
+            else:
+                # Credentials configured but file absent — dev fallback, never
+                # crash so local runs work before gen-creds.sh has been run.
+                logger.warning(
+                    "NATS_CREDS=%s not found — connecting without per-service "
+                    "credentials (dev fallback). Run deploy/scripts/gen-creds.sh "
+                    "to enable per-service identities.",
+                    self.nats_creds,
+                )
+                logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
+        else:
+            logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
+
+        self._nc = await nats.connect(self.nats_url, **connect_kwargs)
 
         # Initialize JetStream for persistence
         self._js = self._nc.jetstream()
         await self._ensure_safety_stream()
 
         self._connected.set()
-        logger.info("Connected to NATS successfully")
+        logger.info("Connected to NATS successfully (name=%s)", self.name)
 
     async def close(self) -> None:
         """Close the NATS connection."""
@@ -481,7 +503,7 @@ class EventBus:
             self._request_handlers.clear()
             self._js_durables.clear()
 
-        # Create fresh connection (also re-ensures the safety stream)
+        # Create fresh connection (preserves nats_creds; also re-ensures the safety stream)
         await self.connect()
 
         # Re-subscribe all handlers, preserving JS vs core distinction
