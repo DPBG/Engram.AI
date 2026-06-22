@@ -10,19 +10,24 @@ Uses Ollama's embedding models to generate text embeddings for:
 
 import hashlib
 import logging
-import os
 from collections import OrderedDict
 from typing import Optional
 
 import aiohttp
 
+from activelearning.llm import _OllamaSession
+
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingService:
+class EmbeddingService(_OllamaSession):
     """
     Generates text embeddings using Ollama's embedding model.
     Caches embeddings in memory to avoid regeneration.
+
+    Reuses the shared :class:`~activelearning.llm._OllamaSession` for session
+    lifecycle (``_get_session``/``close``), so the HTTP plumbing lives in one
+    place alongside :class:`~activelearning.llm.LLMClient`.
     """
 
     def __init__(
@@ -39,28 +44,13 @@ class EmbeddingService:
             model: Embedding model name (default: nomic-embed-text)
             dimensions: Expected embedding dimensions
         """
-        self.ollama_host = ollama_host or os.environ.get(
-            "OLLAMA_URL", "http://localhost:11434"
-        )
+        super().__init__(ollama_host)
         self.model = model
         self.dimensions = dimensions
         # Insertion-ordered map used as a true LRU: a cache hit promotes the
         # key to the most-recently-used end, and eviction drops the LRU front.
         self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._cache_max_size = 10000  # Max cached embeddings
-        self._session: Optional[aiohttp.ClientSession] = None
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Return a shared aiohttp session, creating one if needed."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
-
-    async def close(self) -> None:
-        """Close the shared HTTP session."""
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
-        self._session = None
 
     async def embed_text(self, text: str) -> list[float]:
         """

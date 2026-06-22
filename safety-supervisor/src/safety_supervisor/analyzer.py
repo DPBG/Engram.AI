@@ -77,10 +77,22 @@ class RiskAnalyzer:
         Returns:
             RiskAnalysis
         """
-        trace_id = proposal.get("trace_id", "")
-        action = proposal.get("action", {})
-
+        trace_id = proposal.get("trace_id", "") if isinstance(proposal, dict) else ""
         analysis = RiskAnalysis(trace_id=trace_id)
+
+        # Fail closed: a non-dict or missing "action" field cannot be analyzed safely.
+        if not isinstance(proposal, dict):
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append("Action proposal is not a dict")
+            return analysis
+
+        action = proposal.get("action")
+        if not isinstance(action, dict):
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append("Proposal missing a valid 'action' field")
+            return analysis
 
         # Check action type risks
         action_type = action.get("type", "")
@@ -101,11 +113,34 @@ class RiskAnalyzer:
         Returns:
             RiskAnalysis
         """
-        trace_id = proposal.get("trace_id", "")
-        target_path = proposal.get("target_path", "")
-        code_preview = proposal.get("code_preview", "")
-
+        trace_id = proposal.get("trace_id", "") if isinstance(proposal, dict) else ""
         analysis = RiskAnalysis(trace_id=trace_id)
+
+        # Fail closed: a non-dict or missing required fields cannot be analyzed safely.
+        if not isinstance(proposal, dict):
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append("Code proposal is not a dict")
+            return analysis
+
+        target_path = proposal.get("target_path")
+        code_preview = proposal.get("code_preview")
+
+        if not isinstance(target_path, str) or not isinstance(code_preview, str):
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append(
+                "Code proposal missing required 'target_path' or 'code_preview' field"
+            )
+            return analysis
+
+        # Fail closed: a blank target_path cannot be assessed against protected
+        # paths or allowlists, so treat it as a malformed proposal.
+        if not target_path.strip():
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append("Code proposal 'target_path' is blank")
+            return analysis
 
         # Check protected paths
         if self._is_protected_path(target_path):
@@ -131,11 +166,26 @@ class RiskAnalyzer:
         high_risk_types = {"shutdown", "restart", "delete", "format", "reset"}
         medium_risk_types = {"move", "execute", "run", "deploy"}
 
-        if action_type.lower() in high_risk_types:
+        # Fail closed: a non-string type cannot be categorized and indicates a
+        # malformed proposal — flag it rather than raising AttributeError.
+        if not isinstance(action_type, str):
+            analysis.flags.append("MALFORMED_PROPOSAL")
+            analysis.risk_score += 0.5
+            analysis.recommendations.append("Action type is not a string")
+            return
+
+        # Normalize whitespace so " shutdown " matches "shutdown".
+        action_type = action_type.strip()
+
+        if not action_type:
+            # Fail closed: an empty/missing action type cannot be categorized safely.
+            analysis.flags.append("UNKNOWN_ACTION_TYPE")
+            analysis.risk_score += 0.1
+            analysis.recommendations.append("Action type is missing or empty")
+        elif action_type.lower() in high_risk_types:
             analysis.flags.append("HIGH_RISK_ACTION")
             analysis.risk_score += 0.5
             analysis.recommendations.append(f"High-risk action type: {action_type}")
-
         elif action_type.lower() in medium_risk_types:
             analysis.flags.append("MEDIUM_RISK_ACTION")
             analysis.risk_score += 0.2

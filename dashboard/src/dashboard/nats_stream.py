@@ -14,6 +14,7 @@ import os
 import time
 from typing import Optional
 
+from dashboard.safe_halt import update_halt_state
 from dashboard.state import DashboardState
 from dashboard.util import now_iso
 
@@ -30,6 +31,7 @@ DEDICATED_SUBJECTS = frozenset({
     "safety.deny_escalation",
     "speech.execute",
     "observation.visual.body",
+    "safety.halt.status",
 })
 
 
@@ -119,6 +121,7 @@ class NatsStreamManager:
             await nc.subscribe("safety.deny_escalation", cb=self._handle_deny_escalation)
             await nc.subscribe("speech.execute", cb=self._handle_speech_execute)
             await nc.subscribe("observation.visual.body", cb=self._handle_visual_body)
+            await nc.subscribe("safety.halt.status", cb=self._handle_safe_halt_status)
         except Exception as e:
             self.logger.warning(f"NATS failed (non-fatal): {e}")
             self._connected = False
@@ -326,3 +329,12 @@ class NatsStreamManager:
             await self._broadcast({"type": "speech_execute", "data": data})
         except Exception as e:
             self.logger.error(f"Error handling speech execute: {e}")
+
+    async def _handle_safe_halt_status(self, msg):
+        """Cache and broadcast Kernel SAFE_HALT status updates."""
+        try:
+            data = json.loads(msg.data.decode())
+            update_halt_state(data)
+            await self._broadcast({"type": "safe_halt_status", "data": data})
+        except Exception as e:
+            self.logger.error(f"Error handling safety.halt.status: {e}")

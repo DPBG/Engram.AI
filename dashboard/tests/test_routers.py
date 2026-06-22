@@ -201,6 +201,37 @@ def test_stream_router_websocket_init_and_ping():
     assert ("sensory.gateway.command", {"action": "go"}) in nats.published
 
 
+def test_stream_router_safe_halt_and_resume_publish_to_kernel():
+    from dashboard import safe_halt
+    safe_halt.update_halt_state({"halted": False})
+    ctx, nats, _, _ = _ctx(nats_connected=True)
+    client = _client(build_stream_router(ctx))
+
+    with client.websocket_connect("/ws") as ws:
+        assert "halt_state" in ws.receive_json()["data"]  # init snapshot
+        ws.send_json({"type": "safe_halt", "data": {"reason": "r", "operator_id": "op"}})
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        ws.send_json({"type": "safe_resume", "data": {"operator_id": "op"}})
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+
+    assert ("safety.halt", {"reason": "r", "operator_id": "op"}) in nats.published
+    assert ("safety.resume", {"operator_id": "op"}) in nats.published
+
+
+def test_stream_router_safe_halt_invalid_payload_fails_closed():
+    ctx, nats, _, _ = _ctx(nats_connected=True)
+    client = _client(build_stream_router(ctx))
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # init
+        ws.send_json({"type": "safe_halt", "data": "not-a-dict"})
+        assert ws.receive_json() == {
+            "type": "error", "data": {"message": "Invalid SAFE_HALT payload"},
+        }
+    assert nats.published == []
+
+
 def test_stream_router_chat_over_websocket():
     ctx, _, chat, _ = _ctx()
     client = _client(build_stream_router(ctx))

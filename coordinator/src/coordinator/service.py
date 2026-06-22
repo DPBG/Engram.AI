@@ -54,12 +54,13 @@ class CoordinatorService(BaseService):
             tasks_root=self.tasks_root,
         )
 
-        # Initialize task coordinator
+        # Initialize task coordinator (shares the service's embedding client)
         self._task_coordinator = TaskCoordinator(
             nats_client=self.event_bus._nc,
             qdrant_url=self.qdrant_url,
             ollama_url=self.ollama_url,
             tasks_root=self.tasks_root,
+            embedding_service=self._embedding_service,
         )
 
         # Track devices already forwarded to meta-programmer (prevent flooding)
@@ -77,8 +78,7 @@ class CoordinatorService(BaseService):
 
     async def _cleanup(self) -> None:
         """Cleanup service-specific resources."""
-        # Unsubscribe from topics if needed
-        pass
+        await self._embedding_service.close()
 
     async def _handle_task_request(self, data: dict) -> None:
         """

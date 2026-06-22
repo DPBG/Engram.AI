@@ -124,6 +124,17 @@ def test_handle_video_training_status_stores_real_session():
     assert ws.sent[-1]["type"] == "video_training_update"
 
 
+def test_handle_safe_halt_status_caches_and_broadcasts():
+    from dashboard import safe_halt
+    mgr, state, ws = _manager()
+    asyncio.run(mgr._handle_safe_halt_status(
+        _FakeMsg("safety.halt.status", {"halted": True, "reason": "kernel"})
+    ))
+    assert safe_halt.get_halt_state() == {"halted": True, "reason": "kernel"}
+    assert ws.sent[-1] == {"type": "safe_halt_status", "data": {"halted": True, "reason": "kernel"}}
+    assert "safety.halt.status" in DEDICATED_SUBJECTS
+
+
 def test_dedicated_subjects_skipped_by_wildcard_handler():
     mgr, state, ws = _manager()
     # A subject owned by a dedicated callback must be ignored by the > handler.
