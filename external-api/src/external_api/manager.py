@@ -11,10 +11,9 @@ Safety rules:
 
 import logging
 import os
-import time
-import uuid
 from typing import Any
 
+from activelearning import current_timestamp, generate_trace_id
 from activelearning.nats_client import EventBus
 
 logger = logging.getLogger(__name__)
@@ -135,7 +134,7 @@ class ExternalAPIManager:
     async def _request_kernel_approval(self, query: str) -> bool:
         """Request Kernel approval for external query."""
         try:
-            trace_id = str(uuid.uuid4())
+            trace_id = generate_trace_id()
 
             proposal = {
                 "trace_id": trace_id,
@@ -233,11 +232,11 @@ class ExternalAPIManager:
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (
-                    str(uuid.uuid4()),
+                    generate_trace_id(),
                     query,
                     response,
                     conflict,
-                    int(time.time() * 1000),
+                    current_timestamp(),
                 ),
             )
             await self.db.commit()
@@ -252,7 +251,7 @@ class ExternalAPIManager:
     ) -> None:
         """Escalate knowledge conflict to human."""
         try:
-            trace_id = str(uuid.uuid4())
+            trace_id = generate_trace_id()
 
             await self.event_bus.publish(
                 "approval.request",

@@ -8,10 +8,9 @@ tests in isolated sandboxes, and deploys after Kernel approval.
 import asyncio
 import json
 import os
-import time
 from typing import Any, Optional
 
-from activelearning import BaseService
+from activelearning import BaseService, current_timestamp, generate_trace_id
 
 from meta_programmer.sandbox_manager import SandboxManager
 from meta_programmer.staging import StagingManager
@@ -94,7 +93,7 @@ class MetaProgrammerService(BaseService):
         while True:
             try:
                 await asyncio.sleep(interval)
-                await self._sweep_expired_reviews(int(time.time() * 1000))
+                await self._sweep_expired_reviews(current_timestamp())
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001 — a sweep error must not kill the loop
@@ -332,11 +331,10 @@ class MetaProgrammerService(BaseService):
             self.logger.info(f"Deployed code to: {target_path}")
 
             # Log deployment
-            import uuid
             await self.database.insert(
                 "deployments",
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": generate_trace_id(),
                     "trace_id": trace_id,
                     "target_path": target_path,
                     "timestamp": int(asyncio.get_event_loop().time() * 1000),

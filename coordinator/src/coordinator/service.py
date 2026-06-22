@@ -8,10 +8,9 @@ Integrates:
 """
 
 import asyncio
-import uuid
 from typing import Optional
 
-from activelearning import BaseService, get_embedding_service
+from activelearning import BaseService, generate_trace_id, get_embedding_service
 from activelearning.subjects import Subjects
 
 from coordinator.sensor_manager import SensorManager
@@ -173,7 +172,7 @@ class CoordinatorService(BaseService):
         reply. A timeout (or any error) yields a synthetic DENY so the caller
         declines to execute.
         """
-        trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
         proposal = build_execution_proposal(trace_id, task_id, parameters)
         try:
             await self.event_bus.publish(Subjects.PROPOSAL_NEW, proposal)

@@ -10,6 +10,8 @@ import logging
 from typing import Any, Dict, List, Optional
 import aiohttp
 
+from activelearning import current_timestamp
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,13 +121,12 @@ class LLMCache:
             embedding = await self._get_embedding(prompt)
 
             # Create cache entry
-            import time
             cache_entry = {
                 "id": prompt_hash,
                 "prompt": prompt,
                 "response": response,
                 "model": model,
-                "cached_at": int(time.time() * 1000),
+                "cached_at": current_timestamp(),
                 "hit_count": 0,
                 "last_hit_at": None,
             }
@@ -237,8 +238,7 @@ class LLMCache:
     async def _update_hit_stats(self, cache_id: str) -> None:
         """Update cache hit statistics."""
         try:
-            import time
-            now = int(time.time() * 1000)
+            now = current_timestamp()
 
             await self.db.execute(
                 """

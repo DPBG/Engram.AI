@@ -8,10 +8,9 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 import asyncio
 import json
 import os
-import uuid
 from typing import Any, Optional
 
-from activelearning import BaseService, sign_decision
+from activelearning import BaseService, generate_trace_id, sign_decision
 from activelearning.subjects import (
     Subjects,
     code_decision_subject,
@@ -713,7 +712,7 @@ class KernelService(BaseService):
             await self.database.insert(
                 "kernel_decisions",
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": generate_trace_id(),
                     "trace_id": trace_id,
                     "proposal_type": proposal_type,
                     "decision_type": decision.type.value,

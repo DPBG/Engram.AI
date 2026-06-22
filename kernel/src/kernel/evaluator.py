@@ -13,12 +13,15 @@ Body-profile integration:
 
 import logging
 import re
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional, TYPE_CHECKING
-import time
 
-from activelearning import KernelDecisionType as DecisionType, RiskAnalysis
+from activelearning import (
+    KernelDecisionType as DecisionType,
+    RiskAnalysis,
+    current_timestamp,
+    generate_trace_id,
+)
 
 if TYPE_CHECKING:
     from beliefs.profiles import BodyProfile
@@ -34,7 +37,7 @@ class KernelDecision:
     reason: Optional[str] = None
     transformations: Optional[list[dict[str, Any]]] = None
     risk_score: float = 0.0
-    issued_at: int = field(default_factory=lambda: int(time.time() * 1000))
+    issued_at: int = field(default_factory=current_timestamp)
     expires_at: Optional[int] = None
 
 
@@ -149,7 +152,7 @@ class KernelEvaluator:
         Returns:
             KernelDecision
         """
-        trace_id = proposal.get("trace_id", str(uuid.uuid4()))
+        trace_id = proposal.get("trace_id", generate_trace_id())
         action = proposal.get("action", {})
 
         # Kill switch: deny everything while halted.
@@ -187,7 +190,7 @@ class KernelEvaluator:
                 risk_score=profile_result.get("risk_score", 0.9),
                 transformations=profile_result.get("transformations"),
                 expires_at=(
-                    int(time.time() * 1000) + self.decision_ttl_ms
+                    current_timestamp() + self.decision_ttl_ms
                     if profile_result["type"] == DecisionType.TRANSFORM
                     else None
                 ),
@@ -218,7 +221,7 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Elevated risk ({risk_score:.2f}) - requires human approval",
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
+                expires_at=current_timestamp() + self.defer_ttl_ms,
             )
 
         # Check for transformable actions
@@ -230,7 +233,7 @@ class KernelEvaluator:
                 reason="Action transformed for safety",
                 transformations=transformations,
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+                expires_at=current_timestamp() + self.decision_ttl_ms,
             )
 
         # Allow
@@ -238,7 +241,7 @@ class KernelEvaluator:
             trace_id=trace_id,
             type=DecisionType.ALLOW,
             risk_score=risk_score,
-            expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+            expires_at=current_timestamp() + self.decision_ttl_ms,
         )
 
     def evaluate_code_proposal(
@@ -256,7 +259,7 @@ class KernelEvaluator:
         Returns:
             KernelDecision
         """
-        trace_id = proposal.get("trace_id", str(uuid.uuid4()))
+        trace_id = proposal.get("trace_id", generate_trace_id())
         target_path = proposal.get("target_path", "")
         code_preview = proposal.get("code_preview", "")
 
@@ -312,14 +315,14 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Code requires human review: {', '.join(flags)}",
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
+                expires_at=current_timestamp() + self.defer_ttl_ms,
             )
 
         return KernelDecision(
             trace_id=trace_id,
             type=DecisionType.ALLOW,
             risk_score=risk_score,
-            expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+            expires_at=current_timestamp() + self.decision_ttl_ms,
         )
 
     def _is_protected_path(self, path: str) -> bool:

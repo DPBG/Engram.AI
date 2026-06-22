@@ -14,6 +14,8 @@ import os
 from typing import Any, Dict, List, Optional
 import aiohttp
 
+from activelearning import generate_trace_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -184,8 +186,7 @@ class TaskCoordinator:
         Returns:
             trace_id
         """
-        import uuid
-        trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
 
         gap = {
             "trace_id": trace_id,
