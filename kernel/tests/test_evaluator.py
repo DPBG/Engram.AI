@@ -2,6 +2,8 @@
 
 from kernel.evaluator import KernelEvaluator
 from activelearning import KernelDecisionType as DecisionType
+from activelearning.core import RiskAnalysis
+from beliefs.profiles import BodyProfile, MotorLimits
 
 
 def _ev():
@@ -77,3 +79,71 @@ def test_resume_restores_normal_evaluation():
     assert ev.is_halted is False
     d = ev.evaluate_code_proposal(_proposal(preview="def add(a, b):\n    return a + b\n"))
     assert d.type == DecisionType.ALLOW
+
+
+# ── Body-profile motor clamp must not mask the risk gate (issue #85) ──────────
+
+def _profile():
+    """A profile that allows manipulation but caps its intensity at 0.5."""
+    return BodyProfile(
+        name="test-bot",
+        motor_limits={"manipulation": MotorLimits(max_intensity=0.5)},
+        capabilities={"can_manipulate": True},
+    )
+
+
+def _over_cap_action():
+    # intensity 0.9 exceeds the profile cap of 0.5 -> would trigger the clamp
+    return {"trace_id": "t", "action": {"channel": "manipulation", "intensity": 0.9}}
+
+
+def test_clamp_does_not_mask_deny_level_risk():
+    # A DENY-level risk (>= deny_threshold) must DENY even when the action also
+    # exceeds a profile motor cap. The clamp must not short-circuit the DENY.
+    ev = _ev()
+    ev.set_body_profile(_profile())
+    risk = RiskAnalysis(trace_id="t", risk_score=0.95, flags=["SUPERVISOR_HIGH_RISK"])
+    d = ev.evaluate_action_proposal(_over_cap_action(), risk_analysis=risk)
+    assert d.type == DecisionType.DENY
+    assert d.risk_score == 0.95
+
+
+def test_clamp_does_not_mask_defer_level_risk():
+    # Elevated (defer-range) risk must DEFER for human approval, not be
+    # auto-applied as a clamp TRANSFORM.
+    ev = _ev()
+    ev.set_body_profile(_profile())
+    risk = RiskAnalysis(trace_id="t", risk_score=0.6, flags=["SUPERVISOR_MED_RISK"])
+    d = ev.evaluate_action_proposal(_over_cap_action(), risk_analysis=risk)
+    assert d.type == DecisionType.DEFER
+
+
+def test_deny_level_risk_via_norm_violations_not_masked():
+    # The same masking must not happen when the elevated risk comes from a
+    # Beliefs norm-violation boost instead of the Supervisor risk_analysis.
+    ev = _ev()
+    ev.set_body_profile(_profile())
+    norms = [{"norm_id": "no-force-at-person", "content": "...", "risk_boost": 0.9}]
+    d = ev.evaluate_action_proposal(_over_cap_action(), norm_violations=norms)
+    assert d.type == DecisionType.DENY
+
+
+def test_clamp_still_applies_for_subthreshold_risk():
+    # With low risk, the motor clamp must still work: TRANSFORM the action and
+    # cap the intensity at the profile limit.
+    ev = _ev()
+    ev.set_body_profile(_profile())
+    risk = RiskAnalysis(trace_id="t", risk_score=0.1)
+    d = ev.evaluate_action_proposal(_over_cap_action(), risk_analysis=risk)
+    assert d.type == DecisionType.TRANSFORM
+    assert d.transformations[0]["intensity"] == 0.5
+
+
+def test_disabled_channel_still_hard_denied():
+    # Capability denials remain eager DENYs regardless of risk.
+    ev = _ev()
+    ev.set_body_profile(
+        BodyProfile(name="no-hands", capabilities={"can_manipulate": False})
+    )
+    d = ev.evaluate_action_proposal(_over_cap_action())
+    assert d.type == DecisionType.DENY
