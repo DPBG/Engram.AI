@@ -37,7 +37,7 @@ class CognitiveBridgeService(BaseService):
     def __init__(self) -> None:
         """Load Ollama/NATS settings from env and initialize BaseService."""
         super().__init__("cognitive-bridge", use_database=False, use_event_bus=True)
-        self.ollama_url = os.environ.get("OLLAMA_URL", self.config.ollama_url)
+        self.ollama_url = self.config.ollama_url
         self.model = os.environ.get("OLLAMA_CODE_MODEL", "deepseek-coder:6.7b")
         self.max_tokens = int(os.environ.get("COGNITIVE_MAX_TOKENS", "256"))
         self.timeout = int(os.environ.get("COGNITIVE_TIMEOUT", "30"))
@@ -105,12 +105,9 @@ class CognitiveBridgeService(BaseService):
         response = await self._query_ollama(context)
 
         if response:
-            event_bus = self.event_bus
-            if event_bus is None:
-                raise RuntimeError("Event bus is not initialized")
-
+            assert self.event_bus is not None
             # Route through Kernel validation gate before brain injection.
-            await event_bus.publish(
+            await self.event_bus.publish(
                 Subjects.COGNITIVE_RESPONSE_VALIDATE,
                 {
                     "response_text": response,
