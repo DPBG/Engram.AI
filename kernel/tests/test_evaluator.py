@@ -1,9 +1,9 @@
 """Tests for the Kernel code-proposal evaluator (Phase 1.5 + governance gate)."""
 
+from dataclasses import dataclass
+
 from kernel.evaluator import KernelEvaluator
-from activelearning import KernelDecisionType as DecisionType
-from activelearning.core import RiskAnalysis
-from beliefs.profiles import BodyProfile, MotorLimits
+from activelearning import KernelDecisionType as DecisionType, RiskAnalysis
 
 
 def _ev():
@@ -82,14 +82,35 @@ def test_resume_restores_normal_evaluation():
 
 
 # ── Body-profile motor clamp must not mask the risk gate (issue #85) ──────────
+#
+# These tests use a tiny stand-in for beliefs.profiles.BodyProfile rather than
+# importing it: that module pulls in PyYAML, which is not in the Governance CI
+# job's dependency set. The evaluator only touches .name, .is_channel_allowed()
+# and .get_motor_limit(), so this stub fully covers the interface under test.
+
+@dataclass
+class _Limit:
+    max_intensity: float = 1.0
+
+
+class _StubProfile:
+    """Minimal BodyProfile stand-in matching the interface the evaluator uses."""
+
+    def __init__(self, name, motor_limits=None, disallowed=()):
+        self.name = name
+        self._limits = motor_limits or {}
+        self._disallowed = set(disallowed)
+
+    def is_channel_allowed(self, channel):
+        return channel not in self._disallowed
+
+    def get_motor_limit(self, channel):
+        return self._limits.get(channel, _Limit())
+
 
 def _profile():
     """A profile that allows manipulation but caps its intensity at 0.5."""
-    return BodyProfile(
-        name="test-bot",
-        motor_limits={"manipulation": MotorLimits(max_intensity=0.5)},
-        capabilities={"can_manipulate": True},
-    )
+    return _StubProfile("test-bot", motor_limits={"manipulation": _Limit(0.5)})
 
 
 def _over_cap_action():
@@ -142,8 +163,6 @@ def test_clamp_still_applies_for_subthreshold_risk():
 def test_disabled_channel_still_hard_denied():
     # Capability denials remain eager DENYs regardless of risk.
     ev = _ev()
-    ev.set_body_profile(
-        BodyProfile(name="no-hands", capabilities={"can_manipulate": False})
-    )
+    ev.set_body_profile(_StubProfile("no-hands", disallowed=["manipulation"]))
     d = ev.evaluate_action_proposal(_over_cap_action())
     assert d.type == DecisionType.DENY
