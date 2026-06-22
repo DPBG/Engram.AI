@@ -214,8 +214,23 @@ def main() -> int:
             nats_proc.terminate()
         return 1
 
+    # --- per-service NATS credentials ---
+    secrets_dir = ROOT / "secrets"
+    creds_available = list(secrets_dir.glob("*.creds")) if secrets_dir.is_dir() else []
+    if creds_available:
+        log.info(
+            "Found %d credential file(s) in secrets/ — services will authenticate "
+            "with per-service NATS identities.",
+            len(creds_available),
+        )
+    else:
+        log.info(
+            "No credentials in secrets/ — running without per-service NATS auth "
+            "(run deploy/scripts/gen-creds.sh to enable)."
+        )
+
     # --- launch ---
-    sup = Supervisor(base_env(), DATA_DIR)
+    sup = Supervisor(base_env(), DATA_DIR, creds_dir=secrets_dir if creds_available else None)
     log.info("Starting %d service(s): %s", len(runnable), ", ".join(s.name for s in runnable))
     for svc in runnable:
         sup.start(svc)
