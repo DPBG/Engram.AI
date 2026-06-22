@@ -103,7 +103,7 @@ jobs:
           sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
 
       - name: Run JetStream consumer safety tests (E2.3.3)
-        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest sdk/tests/test_jetstream_consumers.py -v
+        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest sdk/tests/test_jetstream_consumers.py -o addopts="" -v
 
       - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
         env:
