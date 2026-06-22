@@ -18,6 +18,17 @@ The sandbox provides a secure, resource-limited container where generated code c
 - **Non-root User**: Runs as `sandbox` user (UID 1000)
 - **Auto-destroy**: Containers are automatically removed after execution
 
+## Fail-closed behavior
+
+Containment is load-bearing: untested code is **never** deployed. If the sandbox
+cannot run — no Docker daemon, unreachable daemon, missing
+`activelearning-sandbox:latest` image, or a container spawn failure —
+`SandboxManager.run_tests` returns a result with `sandbox_unavailable: True`
+(distinct from a genuine test failure). The Meta-Programmer treats that as a
+hard block: it rejects the staged code, increments the `sandbox_unavailable`
+metric, and publishes a `fail_closed` gap result. The remediation is always to
+restore containment (build the image / start Docker), never to skip the sandbox.
+
 ## Usage
 
 The sandbox is not run directly. Instead, it's spawned on-demand by the Meta-Programmer:
