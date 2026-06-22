@@ -63,9 +63,9 @@ jobs:
           set -euo pipefail
           VERSION=v2.10.22
           ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
+          EXPECTED_SHA256="db0b3ccbe4cbdd3872ae7486ec4f6b0f85824632a0789f4da2e0a8518390483e"
           curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
-          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+          echo "${EXPECTED_SHA256}  ${ASSET}" | sha256sum -c -
           tar -xzf "${ASSET}"
           sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
 
@@ -96,9 +96,9 @@ jobs:
           set -euo pipefail
           VERSION=v2.10.22
           ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
+          EXPECTED_SHA256="db0b3ccbe4cbdd3872ae7486ec4f6b0f85824632a0789f4da2e0a8518390483e"
           curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
-          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+          echo "${EXPECTED_SHA256}  ${ASSET}" | sha256sum -c -
           tar -xzf "${ASSET}"
           sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
 

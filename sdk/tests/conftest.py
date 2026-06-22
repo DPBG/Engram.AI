@@ -107,8 +107,8 @@ async def event_bus(nats_url: str) -> AsyncGenerator[EventBus, None]:
         for stream in (SAFETY_STREAM_NAME, POISON_STREAM_NAME):
             try:
                 await bus._js.purge_stream(stream)
-            except Exception:
-                pass
+            except Exception as exc:
+                pytest.fail(f"Failed to purge JetStream stream '{stream}': {exc}")
     yield bus
     await bus.close()
 

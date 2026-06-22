@@ -110,7 +110,7 @@ async def test_js_subscribe_routes_to_poison_after_max_deliver(event_bus, wait_f
     await event_bus.publish(Subjects.PROPOSAL_NEW, _VALID_PROPOSAL)
     await wait_for_message(lambda: len(poison_received) >= 1, timeout=15.0)
 
-    assert len(handler_attempts) >= 3
+    assert len(handler_attempts) == 3
     assert poison_received[0]["original_subject"] == Subjects.PROPOSAL_NEW
-    assert poison_received[0]["delivery_count"] >= 3
+    assert poison_received[0]["delivery_count"] == 3
     assert poison_received[0]["payload"]["trace_id"] == _VALID_PROPOSAL["trace_id"]
