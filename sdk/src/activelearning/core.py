@@ -150,6 +150,10 @@ class KernelDecision(Generic[T]):
     expires_at: Optional[int] = None
     issued_at: int = field(default_factory=current_timestamp)
 
+    def __post_init__(self) -> None:
+        if self.risk_score < 0.0 or self.risk_score > 1.0:
+            raise ValueError(f"risk_score must be between 0.0 and 1.0, got {self.risk_score}")
+
     def is_expired(self) -> bool:
         """Check if this decision has expired."""
         if self.expires_at is None:

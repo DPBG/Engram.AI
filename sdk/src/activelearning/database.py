@@ -7,12 +7,30 @@ for all ActiveLearningAI tables.
 
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+
+def default_sqlite_path(db_name: str = "unified.db") -> str:
+    """Return the default SQLite path, honoring SQLITE_PATH when set.
+
+    Windows standalone uses a user-writable AppData path; Linux/macOS keep
+    the Docker-oriented /data/sqlite default when SQLITE_PATH is unset.
+    """
+    if env_path := os.environ.get("SQLITE_PATH"):
+        return env_path
+    if sys.platform == "win32":
+        local = os.environ.get(
+            "LOCALAPPDATA",
+            str(Path.home() / "AppData" / "Local"),
+        )
+        return str(Path(local) / "Engram" / "sqlite" / db_name)
+    return f"/data/sqlite/{db_name}"
 
 
 def _load_schema() -> str:
@@ -54,9 +72,7 @@ class Database:
         Args:
             db_path: Path to SQLite database file
         """
-        self.db_path = db_path or os.environ.get(
-            "SQLITE_PATH", "/data/sqlite/unified.db"
-        )
+        self.db_path = db_path or default_sqlite_path()
         self._connection: Optional[aiosqlite.Connection] = None
 
     async def initialize(self) -> None:

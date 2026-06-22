@@ -12,12 +12,12 @@ import uuid
 from typing import Optional
 
 from activelearning import BaseService, get_embedding_service
+from activelearning.subjects import Subjects
 
 from coordinator.sensor_manager import SensorManager
 from coordinator.learning_controller import LearningController
 from coordinator.task_coordinator import TaskCoordinator
 from coordinator.gate import (
-    KERNEL_PROPOSAL_SUBJECT,
     build_execution_proposal,
     decision_allows,
 )
@@ -66,11 +66,11 @@ class CoordinatorService(BaseService):
         self._pending_device_gaps: set[str] = set()
 
         # Subscribe to NATS subjects
-        await self.event_bus.subscribe("task.request", self._handle_task_request)
+        await self.event_bus.subscribe(Subjects.TASK_REQUEST, self._handle_task_request)
         await self.event_bus.subscribe("demo.start", self._handle_demo_start)
         await self.event_bus.subscribe("demo.observation", self._handle_observation)
         await self.event_bus.subscribe("demo.finish", self._handle_demo_finish)
-        await self.event_bus.subscribe("coordinator.status", self._handle_status)
+        await self.event_bus.subscribe(Subjects.COORDINATOR_STATUS, self._handle_status)
         await self.event_bus.subscribe("device.unknown", self._handle_unknown_device)
 
         self.logger.info("Coordinator setup completed")
@@ -112,7 +112,7 @@ class CoordinatorService(BaseService):
                         f"Task execution blocked by Kernel: {match['task_id']} "
                         f"({(decision or {}).get('type', 'NONE')}: {reason})"
                     )
-                    await self.event_bus.publish("task.result", {
+                    await self.event_bus.publish(Subjects.TASK_RESULT, {
                         "success": False,
                         "blocked": True,
                         "task_id": match["task_id"],
@@ -129,7 +129,7 @@ class CoordinatorService(BaseService):
                 )
 
                 # Publish result
-                await self.event_bus.publish("task.result", result)
+                await self.event_bus.publish(Subjects.TASK_RESULT, result)
 
             elif match["action"] == "adapt":
                 # Adapt existing task (delegate to Meta-Programmer)
@@ -139,7 +139,7 @@ class CoordinatorService(BaseService):
                     context={"base_task": match["task_id"], "parameters": parameters},
                 )
 
-                await self.event_bus.publish("task.result", {
+                await self.event_bus.publish(Subjects.TASK_RESULT, {
                     "success": False,
                     "message": "Task adaptation in progress",
                     "trace_id": trace_id,
@@ -153,7 +153,7 @@ class CoordinatorService(BaseService):
                     context=parameters,
                 )
 
-                await self.event_bus.publish("task.result", {
+                await self.event_bus.publish(Subjects.TASK_RESULT, {
                     "success": False,
                     "message": "Task learning in progress. Please demonstrate or describe the task.",
                     "trace_id": trace_id,
@@ -176,7 +176,7 @@ class CoordinatorService(BaseService):
         trace_id = str(uuid.uuid4())
         proposal = build_execution_proposal(trace_id, task_id, parameters)
         try:
-            await self.event_bus.publish(KERNEL_PROPOSAL_SUBJECT, proposal)
+            await self.event_bus.publish(Subjects.PROPOSAL_NEW, proposal)
             return await self.event_bus.wait_for_decision(trace_id, timeout=30.0)
         except asyncio.TimeoutError:
             self.logger.error(f"Kernel decision timeout for task {task_id} (trace={trace_id})")

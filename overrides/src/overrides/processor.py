@@ -7,8 +7,10 @@ after Kernel validation.
 
 import logging
 import re
-from typing import Optional, Any
+from typing import Any
 import json
+
+from activelearning.nats_client import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +40,8 @@ class OverrideProcessor:
         "autopilot.enabled": [True, False],
     }
 
-    def __init__(self, nats_client: Any, db: Any):
-        self.nats_client = nats_client
+    def __init__(self, event_bus: EventBus, db: Any):
+        self.event_bus = event_bus
         self.db = db
 
     async def parse_override(self, prompt: str) -> dict:
@@ -230,13 +232,13 @@ class OverrideProcessor:
             await self.db.commit()
 
             # Publish override applied event
-            await self.nats_client.publish(
+            await self.event_bus.publish(
                 f"override.applied.{trace_id}",
-                json.dumps({
+                {
                     "trace_id": trace_id,
                     "parameter": parameter,
                     "value": value,
-                }).encode(),
+                },
             )
 
             logger.info(f"Override applied successfully: {parameter} = {value}")
@@ -255,28 +257,19 @@ class OverrideProcessor:
 
     async def _apply_planner_mode(self, mode: str) -> None:
         """Apply planner mode change."""
-        await self.nats_client.publish(
-            "planner.mode",
-            json.dumps({"mode": mode}).encode(),
-        )
+        await self.event_bus.publish("planner.mode", {"mode": mode})
 
     async def _apply_cache_setting(self, enabled: bool) -> None:
         """Apply cache enable/disable."""
-        await self.nats_client.publish(
-            "cache.setting",
-            json.dumps({"enabled": enabled}).encode(),
-        )
+        await self.event_bus.publish("cache.setting", {"enabled": enabled})
 
     async def _apply_autopilot_setting(self, enabled: bool) -> None:
         """Apply autopilot enable/disable."""
-        await self.nats_client.publish(
-            "autopilot.setting",
-            json.dumps({"enabled": enabled}).encode(),
-        )
+        await self.event_bus.publish("autopilot.setting", {"enabled": enabled})
 
     async def _apply_priority_threshold(self, threshold: float) -> None:
         """Apply priority threshold change."""
-        await self.nats_client.publish(
+        await self.event_bus.publish(
             "planner.priority_threshold",
-            json.dumps({"threshold": threshold}).encode(),
+            {"threshold": threshold},
         )
