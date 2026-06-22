@@ -106,6 +106,7 @@ class EventBus:
         self._js: JetStreamContext | None = None
         self._subscriptions: dict[str, nats.aio.subscription.Subscription] = {}
         self._handlers: dict[str, MessageHandler] = {}
+        self._request_handlers: set[str] = set()
         self._js_durables: dict[str, str] = {}  # subject -> durable consumer name
         self._connected = asyncio.Event()
 
@@ -143,6 +144,9 @@ class EventBus:
             self._js = None
             self._connected.clear()
             self._subscriptions.clear()
+            self._handlers.clear()
+            self._request_handlers.clear()
+            self._js_durables.clear()
 
     async def _ensure_safety_stream(self) -> None:
         """Create or update the durable JetStream stream for safety-critical subjects.
@@ -277,6 +281,10 @@ class EventBus:
         )
         self._subscriptions[subject] = sub
         self._handlers[subject] = handler
+        if is_request_handler:
+            self._request_handlers.add(subject)
+        else:
+            self._request_handlers.discard(subject)
         logger.info(f"Subscribed to {subject}")
 
     async def js_subscribe(
@@ -339,6 +347,7 @@ class EventBus:
             del self._subscriptions[subject]
             if subject in self._handlers:
                 del self._handlers[subject]
+            self._request_handlers.discard(subject)
             self._js_durables.pop(subject, None)
             logger.info(f"Unsubscribed from {subject}")
 
@@ -450,10 +459,8 @@ class EventBus:
         """
         saved_handlers: dict[str, tuple[MessageHandler, bool]] = {}
         saved_js: dict[str, str] = dict(self._js_durables)  # subject -> durable name
-        for subject in self._subscriptions:
-            handler = self._handlers.get(subject)
-            if handler is not None:
-                saved_handlers[subject] = (handler, False)
+        for subject, handler in self._handlers.items():
+            saved_handlers[subject] = (handler, subject in self._request_handlers)
 
         logger.warning(
             "force_reconnect: tearing down NATS connection (%d subs to restore)",
@@ -470,6 +477,8 @@ class EventBus:
             self._js = None
             self._connected.clear()
             self._subscriptions.clear()
+            self._handlers.clear()
+            self._request_handlers.clear()
             self._js_durables.clear()
 
         # Create fresh connection (also re-ensures the safety stream)
