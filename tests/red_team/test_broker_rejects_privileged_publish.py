@@ -1,7 +1,7 @@
-"""Red-team regression: broker rejects non-kernel privileged publishes (E1.1.9).
+"""Red-team regression: broker rejects non-Kernel privileged publishes (E1.1.9).
 
-Transport-layer defense in depth for ADR 0001 privileged subjects. Complements
-application-layer decision signing in sdk/tests/test_signing.py.
+Transport-layer defense in depth for ADR 0001 (docs/adr/0001-nats-authz.md) §3.
+Complements application-layer decision signing in sdk/tests/test_signing.py.
 """
 
 from __future__ import annotations
@@ -12,20 +12,29 @@ import nats
 import pytest
 
 from .privileged_subjects import (
+    ADR_NATS_AUTHZ,
     COORDINATOR_ALLOWED_SUBJECT,
     COORDINATOR_IDENTITY,
     KERNEL_IDENTITY,
+    KERNEL_ONLY_PUBLISH_SUBJECTS,
+    KERNEL_PRIVILEGED_PUBLISH_SUBJECTS,
+    NEURO_IDENTITY,
     NON_KERNEL_IDENTITIES,
-    PRIVILEGED_PUBLISH_SUBJECTS,
+    POLICY_RESTRICT_DENIED_IDENTITIES,
+    POLICY_RESTRICT_SUBJECT,
 )
 
 _PROBE = b'{"type":"ALLOW","trace_id":"red-team-forged"}'
-_ERROR_WAIT_S = 2.0
-_ERROR_POLL_S = 0.05
+_ERROR_WAIT_S = 0.5
+_ERROR_POLL_S = 0.02
+
+
+def test_adr_nats_authz_spec_exists() -> None:
+    """Security regression must be traceable to the in-repo ADR spec."""
+    assert ADR_NATS_AUTHZ.is_file(), f"missing ADR spec: {ADR_NATS_AUTHZ}"
 
 
 def _nats_host_port(nats_url: str) -> str:
-    # nats://127.0.0.1:PORT -> 127.0.0.1:PORT
     return nats_url.removeprefix("nats://")
 
 
@@ -49,6 +58,7 @@ async def _publish_and_collect_errors(
     )
     try:
         await nc.publish(subject, _PROBE)
+        await nc.flush()
         deadline = asyncio.get_running_loop().time() + _ERROR_WAIT_S
         while asyncio.get_running_loop().time() < deadline:
             if errors:
@@ -61,13 +71,13 @@ async def _publish_and_collect_errors(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("identity", NON_KERNEL_IDENTITIES, ids=lambda i: i[0])
-@pytest.mark.parametrize("subject", PRIVILEGED_PUBLISH_SUBJECTS)
-async def test_non_kernel_privileged_publish_rejected(
+@pytest.mark.parametrize("subject", KERNEL_ONLY_PUBLISH_SUBJECTS)
+async def test_non_kernel_kernel_only_publish_rejected(
     authz_nats_url: str,
     identity: tuple[str, str],
     subject: str,
 ) -> None:
-    """Non-kernel identities cannot publish kernel-only subjects."""
+    """Non-kernel identities cannot publish ADR §3 kernel-only subjects."""
     user, password = identity
     errors = await _publish_and_collect_errors(
         host_port=_nats_host_port(authz_nats_url),
@@ -81,7 +91,25 @@ async def test_non_kernel_privileged_publish_rejected(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("subject", PRIVILEGED_PUBLISH_SUBJECTS)
+@pytest.mark.parametrize("identity", POLICY_RESTRICT_DENIED_IDENTITIES, ids=lambda i: i[0])
+async def test_non_neuro_policy_restrict_publish_rejected(
+    authz_nats_url: str,
+    identity: tuple[str, str],
+) -> None:
+    """Only kernel and neuro may publish policy.restrict in this fixture."""
+    user, password = identity
+    errors = await _publish_and_collect_errors(
+        host_port=_nats_host_port(authz_nats_url),
+        user=user,
+        password=password,
+        subject=POLICY_RESTRICT_SUBJECT,
+    )
+    assert errors, f"{user} publish to {POLICY_RESTRICT_SUBJECT!r} should be broker-rejected"
+    assert any("permissions violation" in err.lower() for err in errors), errors
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("subject", KERNEL_PRIVILEGED_PUBLISH_SUBJECTS)
 async def test_kernel_can_publish_privileged_subjects(
     authz_nats_url: str,
     subject: str,
@@ -95,6 +123,19 @@ async def test_kernel_can_publish_privileged_subjects(
         subject=subject,
     )
     assert errors == [], f"kernel publish to {subject!r} should succeed: {errors}"
+
+
+@pytest.mark.asyncio
+async def test_neuro_can_publish_policy_restrict(authz_nats_url: str) -> None:
+    """Positive control: neuromorphic emergency halt path (ADR §3 conflict note)."""
+    user, password = NEURO_IDENTITY
+    errors = await _publish_and_collect_errors(
+        host_port=_nats_host_port(authz_nats_url),
+        user=user,
+        password=password,
+        subject=POLICY_RESTRICT_SUBJECT,
+    )
+    assert errors == [], f"neuro publish to {POLICY_RESTRICT_SUBJECT!r} should succeed: {errors}"
 
 
 @pytest.mark.asyncio
