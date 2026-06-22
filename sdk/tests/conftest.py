@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-from activelearning.nats_client import EventBus
+from activelearning.nats_client import EventBus, POISON_STREAM_NAME, SAFETY_STREAM_NAME
 
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -103,6 +103,12 @@ async def event_bus(nats_url: str) -> AsyncGenerator[EventBus, None]:
 
     bus = EventBus(nats_url=nats_url, name=f"sdk-test-{uuid.uuid4().hex[:8]}")
     await bus.connect()
+    if bus._js is not None:
+        for stream in (SAFETY_STREAM_NAME, POISON_STREAM_NAME):
+            try:
+                await bus._js.purge_stream(stream)
+            except Exception:
+                pass
     yield bus
     await bus.close()
 
