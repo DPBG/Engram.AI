@@ -699,13 +699,24 @@ class SynapseGroup:
         if len(data) == 0:
             return
 
-        # Compensated decay: decay^interval is mathematically equivalent to
-        # applying decay once per step for `interval` steps.
-        decay = np.float32(self._eligibility_cfg.trace_decay ** interval)
+        # Compensated decay + integration so the batched update is
+        # mathematically equivalent to applying it once per step for `interval`
+        # steps.  Over N steps the trace decays each step (e_k = e0 * d^k), so:
+        #   - the END trace is e0 * d^N            -> decay = d**interval
+        #   - the accumulated weight change is
+        #       sum_{k=0}^{N-1} M * e0 * d^k = M * e0 * (1 - d^N)/(1 - d)
+        # The single batched `dw = M * e` therefore must be scaled by the
+        # geometric-sum factor below, otherwise it is ~1/N too small (with the
+        # default d=0.999, interval=3 this is a 2.997x under-application).
+        d = self._eligibility_cfg.trace_decay
+        decay = np.float32(d ** interval)
+        interval_gain = np.float32(
+            interval if d >= 1.0 else (1.0 - d ** interval) / (1.0 - d)
+        )
 
         # Full-array path: _elig_active abandoned (>80% active) or never initialized
         if self._elig_active is None:
-            dw = np.float32(modulator_signal) * self.eligibility
+            dw = np.float32(modulator_signal) * self.eligibility * interval_gain
             if plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility):
                 dw *= plasticity_mask
             data[:] = np.clip(data + dw, p.w_min, p.w_max)
@@ -751,8 +762,10 @@ class SynapseGroup:
 
         elig_slice = self.eligibility[idx]
 
-        # Apply neuromodulation: dw = modulator * eligibility * mask
-        dw = np.float32(modulator_signal) * elig_slice
+        # Apply neuromodulation: dw = modulator * eligibility * geometric-gain * mask
+        # interval_gain restores every-step equivalence over the batched interval
+        # (see the comment where it is computed above).
+        dw = np.float32(modulator_signal) * elig_slice * interval_gain
         if plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility):
             dw *= plasticity_mask[idx]
         data[idx] = np.clip(data[idx] + dw, p.w_min, p.w_max)
