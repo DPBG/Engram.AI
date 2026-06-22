@@ -204,6 +204,14 @@ class StagingManager:
             if "trace_id" in m and is_review_expired(m, now_ms, ttl_ms)
         ]
 
+    def is_in_human_review(self, trace_id: str) -> bool:
+        """True if trace_id is still awaiting human review."""
+        return os.path.isdir(os.path.join(self.human_review_dir, trace_id))
+
+    def stage_human_review_to_testing(self, trace_id: str) -> None:
+        """Move code from human_review to testing after human approval."""
+        self._move_stage(trace_id, self.human_review_dir, self.testing_dir, "testing")
+
     def get_metadata(self, trace_id: str) -> Optional[dict]:
         """Get metadata for a trace_id (searches all stages)."""
         for stage_dir in [
