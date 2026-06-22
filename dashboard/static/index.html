@@ -75,6 +75,24 @@
         <!-- ═══ Left: Brain State ═══ -->
         <aside class="sidebar">
 
+            <!-- Safety Control -->
+            <section class="panel halt-panel" id="halt-panel">
+                <h2><span class="panel-icon">🛑</span> Safety Control</h2>
+                <div class="halt-status-row">
+                    <span class="halt-dot" id="halt-dot"></span>
+                    <span class="halt-status-text" id="halt-status-text">Operational</span>
+                </div>
+                <div class="halt-reason" id="halt-reason" style="display:none;"></div>
+                <div class="halt-actions">
+                    <button class="btn-halt" id="btn-halt" onclick="window._ai && window._ai.sendSafeHalt()">
+                        EMERGENCY STOP
+                    </button>
+                    <button class="btn-resume" id="btn-resume" onclick="window._ai && window._ai.sendSafeResume()" disabled>
+                        RESUME
+                    </button>
+                </div>
+            </section>
+
             <!-- System Awareness -->
             <section class="panel">
                 <h2><span class="panel-icon">🔍</span> System Awareness</h2>
