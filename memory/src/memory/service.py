@@ -14,6 +14,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from activelearning import BaseService, get_embedding_service
+from activelearning.embeddings import is_zero_vector
 from activelearning.subjects import Subjects
 
 from memory.models import Episode, MemoryQuery, MemoryResult
@@ -82,6 +83,13 @@ class MemoryService(BaseService):
         """
         # Generate embedding
         embedding = await self._embed_text(episode.summary)
+        embed_ok = not is_zero_vector(embedding)
+        if not embed_ok:
+            self.logger.warning(
+                "Skipping Qdrant vector storage for episode %s: embedding unavailable "
+                "(episode stored in SQLite only)",
+                episode.id,
+            )
 
         # Store in SQLite using Database helper
         await self.database.insert(
@@ -90,29 +98,30 @@ class MemoryService(BaseService):
                 "id": episode.id,
                 "trace_id": episode.trace_id,
                 "timestamp": episode.timestamp,
-                "embedding_ref": episode.id,  # Points to Qdrant point ID
+                "embedding_ref": episode.id if embed_ok else None,
                 "semantic_tags": json.dumps(episode.tags),
                 "utility_score": episode.utility_score,
                 "data": json.dumps(episode.data),
             },
         )
 
-        # Store embedding in Qdrant
-        await self._qdrant.upsert(
-            collection_name=COLLECTION_NAME,
-            points=[
-                PointStruct(
-                    id=episode.id,
-                    vector=embedding,
-                    payload={
-                        "trace_id": episode.trace_id,
-                        "timestamp": episode.timestamp,
-                        "tags": episode.tags,
-                        "summary": episode.summary,
-                    },
-                )
-            ],
-        )
+        # Store embedding in Qdrant (skip sentinel zero vectors)
+        if embed_ok:
+            await self._qdrant.upsert(
+                collection_name=COLLECTION_NAME,
+                points=[
+                    PointStruct(
+                        id=episode.id,
+                        vector=embedding,
+                        payload={
+                            "trace_id": episode.trace_id,
+                            "timestamp": episode.timestamp,
+                            "tags": episode.tags,
+                            "summary": episode.summary,
+                        },
+                    )
+                ],
+            )
 
         self.logger.debug(f"Stored episode: {episode.id}")
         return episode.id
@@ -136,6 +145,11 @@ class MemoryService(BaseService):
         """
         # Generate query embedding
         embedding = await self._embed_text(query)
+        if is_zero_vector(embedding):
+            self.logger.warning(
+                "Similarity recall skipped: embedding unavailable for query",
+            )
+            return []
 
         # Search Qdrant
         results = await self._qdrant.search(
