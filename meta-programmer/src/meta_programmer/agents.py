@@ -9,9 +9,7 @@ Team Structure:
 """
 
 import logging
-from typing import Any, Optional
-
-from activelearning.llm import LLMClient, LLMConfig
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +45,10 @@ class MetaProgrammerTeam:
 
         # Code generation runs through the shared SDK LLM client (one reused
         # session, central timeout/retry). Low temperature keeps code stable.
+        # Imported here, not at module top, so this module stays importable in
+        # the neuromorphic test env that loads it without the SDK installed.
+        from activelearning.llm import LLMClient, LLMConfig
+
         self.model_name = "deepseek-coder:6.7b"
         self._llm = LLMClient(
             LLMConfig(

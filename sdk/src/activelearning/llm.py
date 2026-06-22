@@ -14,7 +14,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 import aiohttp
 
@@ -59,7 +59,7 @@ class _OllamaSession:
             await self._session.close()
         self._session = None
 
-    async def __aenter__(self) -> _OllamaSession:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -176,7 +176,13 @@ class LLMClient(_OllamaSession):
                     if resp.status != 200:
                         body = await resp.text()
                         raise LLMError(f"Ollama {path} returned {resp.status}: {body[:200]}")
-                    result: dict[str, Any] = await resp.json()
+                    try:
+                        result: dict[str, Any] = await resp.json()
+                    except (ValueError, aiohttp.ContentTypeError) as exc:
+                        # Status 200 but the body is not valid JSON: deterministic,
+                        # so honor the LLMError contract instead of leaking a raw
+                        # ValueError (json.JSONDecodeError) to callers.
+                        raise LLMError(f"Ollama {path} returned invalid JSON: {exc}") from exc
                     return result
             except aiohttp.ClientConnectionError as exc:
                 if attempt < self.max_retries:

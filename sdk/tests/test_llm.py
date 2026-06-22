@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 from typing import Any
 
@@ -21,10 +22,17 @@ from activelearning.llm import (
 # behaviours (a response to yield, or an exception to raise) per POST.
 # --------------------------------------------------------------------------- #
 class FakeResponse:
-    def __init__(self, status: int = 200, payload: dict | None = None, text: str = ""):
+    def __init__(
+        self,
+        status: int = 200,
+        payload: dict | None = None,
+        text: str = "",
+        json_exc: Exception | None = None,
+    ):
         self.status = status
         self._payload = payload if payload is not None else {}
         self._text = text
+        self._json_exc = json_exc
 
     async def __aenter__(self) -> FakeResponse:
         return self
@@ -33,6 +41,8 @@ class FakeResponse:
         return None
 
     async def json(self) -> dict:
+        if self._json_exc is not None:
+            raise self._json_exc
         return self._payload
 
     async def text(self) -> str:
@@ -132,6 +142,19 @@ class TestErrorHandling:
         assert len(client._session.calls) == 1  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
+    async def test_invalid_json_raises_without_retry(self):
+        # A 200 whose body does not parse as JSON (json.JSONDecodeError is a
+        # ValueError) must surface as LLMError, not leak a raw ValueError.
+        client = _client(
+            [FakeResponse(200, json_exc=json.JSONDecodeError("Expecting value", "", 0))],
+            max_retries=2,
+        )
+        with pytest.raises(LLMError) as excinfo:
+            await client.generate("x")
+        assert "invalid JSON" in str(excinfo.value)
+        assert len(client._session.calls) == 1  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
     async def test_connection_error_retries_then_succeeds(self):
         client = _client(
             [
@@ -159,11 +182,12 @@ class TestErrorHandling:
 class TestSessionLifecycle:
     @pytest.mark.asyncio
     async def test_reuses_single_session(self):
-        client = LLMClient()
-        session_one = await client._get_session()
-        session_two = await client._get_session()
-        assert session_one is session_two
-        await client.close()
+        # `async with` guarantees the session is closed even if an assertion
+        # fails, so a real aiohttp session can never leak out of the test.
+        async with LLMClient() as client:
+            session_one = await client._get_session()
+            session_two = await client._get_session()
+            assert session_one is session_two
         assert client._session is None
 
 
