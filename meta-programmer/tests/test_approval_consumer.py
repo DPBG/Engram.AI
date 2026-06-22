@@ -32,8 +32,13 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "src", "meta_programmer")
 # Create a stub meta_programmer package entry so that
 # "from meta_programmer.staging import ..." inside approval_consumer.py
 # resolves without triggering __init__.py.
+# __path__ must be set so Python treats the stub as a package — without it
+# any later `from meta_programmer.<submodule> import ...` in another test
+# collected in the same process fails with "not a package".
 if "meta_programmer" not in sys.modules:
     _fake_pkg = types.ModuleType("meta_programmer")
+    _fake_pkg.__path__ = [_SRC]
+    _fake_pkg.__package__ = "meta_programmer"
     sys.modules["meta_programmer"] = _fake_pkg
 
 
