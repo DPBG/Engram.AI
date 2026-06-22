@@ -7,16 +7,23 @@ Provides:
 - Knowledge gap detection when no suitable task found
 """
 
-import asyncio
 import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
-import aiohttp
 
-from activelearning import EmbeddingService, generate_trace_id
+from activelearning import (
+    EmbeddingService,
+    QdrantPoint,
+    QdrantStore,
+    generate_trace_id,
+    get_embedding_service,
+)
 
 logger = logging.getLogger(__name__)
+
+# Vector collection holding embeddings of learned-task descriptions.
+LEARNED_TASKS_COLLECTION = "learned_tasks"
 
 
 class TaskCoordinator:
@@ -35,22 +42,34 @@ class TaskCoordinator:
         self,
         nats_client: Any,
         qdrant_url: str,
-        ollama_url: str,
         tasks_root: str = "/data/tasks",
+        *,
+        store: Optional[QdrantStore] = None,
         embedding_service: Optional[EmbeddingService] = None,
     ):
         self.nats_client = nats_client
-        self.qdrant_url = qdrant_url
-        self.ollama_url = ollama_url
         self.tasks_root = tasks_root
 
-        # Embeddings go through the shared SDK service (reused session + LRU
-        # cache) rather than a hand-rolled per-call Ollama request.
-        self._embeddings = embedding_service or EmbeddingService(ollama_host=ollama_url)
+        # Shared SDK infrastructure (injectable for testing): embeddings via the
+        # EmbeddingService (which raises instead of returning a zero vector that
+        # would silently search against the origin), Qdrant via the shared
+        # QdrantStore. The embedding service is owned and closed by the service.
+        self._qdrant = store if store is not None else QdrantStore(qdrant_url)
+        self._embeddings = (
+            embedding_service if embedding_service is not None else get_embedding_service()
+        )
 
         # Confidence thresholds
         self.high_confidence = float(os.environ.get("TASK_HIGH_CONFIDENCE", "0.85"))
         self.medium_confidence = float(os.environ.get("TASK_MEDIUM_CONFIDENCE", "0.6"))
+
+    async def setup(self) -> None:
+        """Ensure the learned-tasks collection exists before serving requests."""
+        await self._qdrant.ensure_collection(LEARNED_TASKS_COLLECTION)
+
+    async def close(self) -> None:
+        """Release the Qdrant connection."""
+        await self._qdrant.close()
 
     async def find_task(self, query: str) -> Dict:
         """
@@ -66,13 +85,15 @@ class TaskCoordinator:
                 - confidence: float
                 - action: "execute", "adapt", or "learn"
         """
-        # Get query embedding
-        embedding = await self._get_embedding(query)
+        # Get query embedding (raises if the embedding service is unavailable —
+        # surfacing the failure instead of silently searching against a zero
+        # vector, which would return unrelated tasks).
+        embedding = await self._embeddings.embed_text(query)
 
         # Search Qdrant for similar tasks
-        results = await self._search_qdrant(
-            collection="learned_tasks",
-            embedding=embedding,
+        results = await self._qdrant.search(
+            LEARNED_TASKS_COLLECTION,
+            embedding,
             limit=3,
         )
 
@@ -87,8 +108,8 @@ class TaskCoordinator:
 
         # Get best match
         best_match = results[0]
-        confidence = best_match["score"]
-        task_id = best_match["payload"]["task_id"]
+        confidence = best_match.score
+        task_id = best_match.payload["task_id"]
 
         logger.info(f"Task match: {task_id} (confidence: {confidence:.2f})")
 
@@ -210,46 +231,6 @@ class TaskCoordinator:
         logger.info(f"Knowledge gap triggered: {trace_id}")
         return trace_id
 
-    async def _get_embedding(self, text: str) -> List[float]:
-        """Get text embedding via the shared SDK embedding service."""
-        try:
-            return await self._embeddings.embed_text(text)
-        except Exception as e:
-            logger.error(f"Error getting embedding: {e}")
-            # Return zero vector as fallback
-            return [0.0] * 768  # nomic-embed-text dimension
-
-    async def _search_qdrant(
-        self,
-        collection: str,
-        embedding: List[float],
-        limit: int = 3,
-    ) -> List[Dict]:
-        """Search Qdrant vector DB."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "vector": embedding,
-                    "limit": limit,
-                    "with_payload": True,
-                }
-
-                async with session.post(
-                    f"{self.qdrant_url}/collections/{collection}/points/search",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as response:
-                    if response.status != 200:
-                        logger.warning(f"Qdrant search error: {response.status}")
-                        return []
-
-                    data = await response.json()
-                    return data.get("result", [])
-
-        except Exception as e:
-            logger.error(f"Error searching Qdrant: {e}")
-            return []
-
     async def _get_available_sensors(self) -> List[str]:
         """Get list of available sensor IDs."""
         # TODO: Query SensorManager
@@ -277,36 +258,26 @@ class TaskCoordinator:
 
             # Get embedding for description
             description = metadata.get("description", "")
-            embedding = await self._get_embedding(description)
+            embedding = await self._embeddings.embed_text(description)
 
             # Store in Qdrant
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "points": [
-                        {
-                            "id": task_id,
-                            "vector": embedding,
-                            "payload": {
-                                "task_id": task_id,
-                                "description": description,
-                                "task_name": metadata.get("task_name", ""),
-                                "learned_at": metadata.get("learned_at", 0),
-                            },
-                        }
-                    ]
-                }
-
-                async with session.put(
-                    f"{self.qdrant_url}/collections/learned_tasks/points",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as response:
-                    if response.status in [200, 201]:
-                        logger.info(f"Task indexed: {task_id}")
-                        return True
-                    else:
-                        logger.error(f"Failed to index task: {response.status}")
-                        return False
+            await self._qdrant.upsert(
+                LEARNED_TASKS_COLLECTION,
+                [
+                    QdrantPoint(
+                        id=task_id,
+                        vector=embedding,
+                        payload={
+                            "task_id": task_id,
+                            "description": description,
+                            "task_name": metadata.get("task_name", ""),
+                            "learned_at": metadata.get("learned_at", 0),
+                        },
+                    )
+                ],
+            )
+            logger.info(f"Task indexed: {task_id}")
+            return True
 
         except Exception as e:
             logger.error(f"Error indexing task: {e}", exc_info=True)

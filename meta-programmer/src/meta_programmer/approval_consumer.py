@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from typing import Any, Awaitable, Callable, Optional
+
+from activelearning import current_timestamp
 
 from meta_programmer.staging import StagingManager, is_review_expired
 
@@ -86,7 +87,7 @@ class ApprovalConsumer:
 
         # Fail-closed on TTL: if the dashboard answered too late, reject.
         metadata = self._staging.get_metadata(trace_id) or {}
-        now_ms = int(time.time() * 1000)
+        now_ms = current_timestamp()
         if is_review_expired(metadata, now_ms, self._defer_ttl_ms):
             self._log.warning(
                 "Approval for %s arrived after TTL expiry — fail-closed", trace_id
