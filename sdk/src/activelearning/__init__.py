@@ -28,6 +28,7 @@ from activelearning.embeddings import (
     embed_text,
     get_embedding_service,
 )
+from activelearning.llm import LLMClient, LLMConfig, LLMError
 from activelearning.messages import (
     SUBJECT_SCHEMAS,
     MessageValidationError,
@@ -82,6 +83,10 @@ __all__ = [
     "QdrantStore",
     "QdrantHit",
     "QdrantPoint",
+    # LLM (text generation / chat)
+    "LLMClient",
+    "LLMConfig",
+    "LLMError",
     # Configuration
     "ServiceConfig",
     # Base service

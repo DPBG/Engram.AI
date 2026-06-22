@@ -48,7 +48,7 @@ def _make(*, search_result=None, embed=(0.1, 0.2, 0.3), embed_error=None, tasks_
         qdrant_url="http://qdrant",
         tasks_root=tasks_root,
         store=store,
-        embeddings=embeddings,
+        embedding_service=embeddings,
     )
     return coord, store, embeddings
 

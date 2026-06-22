@@ -775,6 +775,55 @@ html, body {
     font-size: 12px; color: var(--text-2);
 }
 
+/* ─── Safety Control (SAFE_HALT) ───────────────────────────────── */
+.halt-panel { border: 1px solid rgba(220, 53, 69, 0.35); }
+.halt-panel.halted { border-color: #dc3545; box-shadow: 0 0 0 2px rgba(220,53,69,0.2); }
+
+.halt-status-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px; font-size: 13px;
+}
+.halt-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #28a745; flex-shrink: 0;
+    transition: background 0.2s;
+}
+.halt-dot.halted { background: #dc3545; box-shadow: 0 0 6px rgba(220,53,69,0.7); }
+.halt-status-text { color: var(--text-1); font-weight: 500; }
+.halt-status-text.halted { color: #dc3545; font-weight: 700; }
+
+.halt-reason {
+    font-size: 11px; color: var(--text-2); margin-bottom: 10px;
+    padding: 4px 6px; background: rgba(220,53,69,0.08);
+    border-left: 2px solid #dc3545; border-radius: 2px;
+    word-break: break-word;
+}
+
+.halt-actions { display: flex; gap: 8px; }
+
+.btn-halt {
+    flex: 1; padding: 9px 6px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    background: #dc3545; color: #fff; border: none;
+    border-radius: var(--radius-sm); cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    touch-action: manipulation;
+}
+.btn-halt:hover:not(:disabled) { background: #b02a37; }
+.btn-halt:disabled { background: #6c757d; cursor: not-allowed; opacity: 0.6; }
+
+.btn-resume {
+    flex: 1; padding: 9px 6px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    background: transparent; color: #28a745;
+    border: 1.5px solid #28a745;
+    border-radius: var(--radius-sm); cursor: pointer;
+    transition: background 0.15s, color 0.15s, opacity 0.15s;
+    touch-action: manipulation;
+}
+.btn-resume:hover:not(:disabled) { background: #28a745; color: #fff; }
+.btn-resume:disabled { border-color: #6c757d; color: #6c757d; cursor: not-allowed; opacity: 0.5; }
+
 /* ─── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 1200px) { .sidebar-right { display: none; } }
 @media (max-width: 900px) {

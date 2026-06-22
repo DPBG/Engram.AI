@@ -34,7 +34,7 @@ class LLMCache:
         hit_threshold: float = 0.95,
         *,
         store: Optional[QdrantStore] = None,
-        embeddings: Optional[EmbeddingService] = None,
+        embedding_service: Optional[EmbeddingService] = None,
     ):
         self.db = db
         self.hit_threshold = hit_threshold
@@ -43,9 +43,12 @@ class LLMCache:
 
         # Shared SDK infrastructure (injectable for testing): embeddings via the
         # EmbeddingService (which raises instead of returning a zero vector that
-        # would corrupt the cache), Qdrant access via the shared QdrantStore.
+        # would corrupt the cache), Qdrant via the shared QdrantStore. The
+        # embedding service is owned and closed by the service.
         self._qdrant = store if store is not None else QdrantStore(qdrant_url)
-        self._embeddings = embeddings if embeddings is not None else get_embedding_service()
+        self._embeddings = (
+            embedding_service if embedding_service is not None else get_embedding_service()
+        )
 
         # Metrics
         self._cache_hits = 0

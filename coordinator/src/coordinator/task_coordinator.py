@@ -44,17 +44,19 @@ class TaskCoordinator:
         tasks_root: str = "/data/tasks",
         *,
         store: Optional[QdrantStore] = None,
-        embeddings: Optional[EmbeddingService] = None,
+        embedding_service: Optional[EmbeddingService] = None,
     ):
         self.nats_client = nats_client
         self.tasks_root = tasks_root
 
-        # Shared SDK infrastructure: embeddings go through the EmbeddingService
-        # (which fails loudly instead of returning a zero vector), and Qdrant
-        # access goes through the shared QdrantStore. Both are injectable for
-        # testing.
+        # Shared SDK infrastructure (injectable for testing): embeddings via the
+        # EmbeddingService (which raises instead of returning a zero vector that
+        # would silently search against the origin), Qdrant via the shared
+        # QdrantStore. The embedding service is owned and closed by the service.
         self._qdrant = store if store is not None else QdrantStore(qdrant_url)
-        self._embeddings = embeddings if embeddings is not None else get_embedding_service()
+        self._embeddings = (
+            embedding_service if embedding_service is not None else get_embedding_service()
+        )
 
         # Confidence thresholds
         self.high_confidence = float(os.environ.get("TASK_HIGH_CONFIDENCE", "0.85"))

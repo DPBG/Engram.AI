@@ -45,7 +45,7 @@ def _make(*, search_result=None, embed=(0.1, 0.2), embed_error=None, hit_thresho
         db=db,
         hit_threshold=hit_threshold,
         store=store,
-        embeddings=embeddings,
+        embedding_service=embeddings,
     )
     return cache, store, embeddings, db
 

@@ -18,6 +18,7 @@ class ActiveLearningAI {
         this.videoQueueState = null; // { queue, active, completed, queue_length }
         this.approvalTimers = {}; // trace_id -> timeoutId
         this.approvalsSent = new Set(); // trace_ids already responded to
+        this.isHalted = false;
 
         this.init();
     }
@@ -137,6 +138,10 @@ class ActiveLearningAI {
                     this.renderVideoQueue();
                 }
                 this.updateTopStats(msg.data);
+                if (msg.data.halt_state) this.updateHaltUI(msg.data.halt_state);
+                break;
+            case 'safe_halt_status':
+                this.updateHaltUI(msg.data);
                 break;
             case 'gateway_update':
                 this.renderGateway(msg.data);
@@ -925,6 +930,58 @@ class ActiveLearningAI {
         }
     }
 
+    // ─── SAFE_HALT Controls ──────────────────────────────────────────
+
+    updateHaltUI(state) {
+        const halted = !!state.halted;
+        this.isHalted = halted;
+
+        const dot = document.getElementById('halt-dot');
+        const text = document.getElementById('halt-status-text');
+        const reason = document.getElementById('halt-reason');
+        const panel = document.getElementById('halt-panel');
+        const btnHalt = document.getElementById('btn-halt');
+        const btnResume = document.getElementById('btn-resume');
+
+        if (!dot) return;
+
+        dot.className = 'halt-dot' + (halted ? ' halted' : '');
+        text.className = 'halt-status-text' + (halted ? ' halted' : '');
+        text.textContent = halted ? 'HALTED' : 'Operational';
+        panel.className = 'panel halt-panel' + (halted ? ' halted' : '');
+
+        const msg = state.reason || '';
+        if (halted && msg) {
+            reason.textContent = msg;
+            reason.style.display = 'block';
+        } else {
+            reason.style.display = 'none';
+        }
+
+        btnHalt.disabled = halted;
+        btnResume.disabled = !halted;
+    }
+
+    sendSafeHalt() {
+        if (this.isHalted) return;
+        const ok = confirm('Send EMERGENCY STOP (SAFE_HALT) to the Kernel?\n\nThis will deny ALL proposals until manually resumed.');
+        if (!ok) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({
+            type: 'safe_halt',
+            data: { reason: 'operator SAFE_HALT via dashboard', operator_id: 'dashboard' },
+        }));
+    }
+
+    sendSafeResume() {
+        if (!this.isHalted) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({
+            type: 'safe_resume',
+            data: { operator_id: 'dashboard' },
+        }));
+    }
+
     showNeuralReaction(data) {
         const action = data.action || {};
         const channel = action.channel || action.type || 'unknown';
@@ -1288,7 +1345,7 @@ class ActiveLearningAI {
 
 // ─── Boot ─────────────────────────────────────────────────────────
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => new ActiveLearningAI());
+    document.addEventListener('DOMContentLoaded', () => { window._ai = new ActiveLearningAI(); });
 } else {
-    new ActiveLearningAI();
+    window._ai = new ActiveLearningAI();
 }

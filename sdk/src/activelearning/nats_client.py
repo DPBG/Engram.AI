@@ -41,8 +41,8 @@ _SAFETY_STREAM_SUBJECTS: list[str] = [
     f"{Subjects.DECISION_PREFIX}>",
     f"{Subjects.CODE_DECISION_PREFIX}>",
 ]
-# Auto-delete idle waiter consumers after this many nanoseconds of inactivity.
-_CONSUMER_INACTIVE_NS: int = 60 * 1_000_000_000  # 60 s
+# Auto-delete idle waiter consumers after this many seconds of inactivity.
+_CONSUMER_INACTIVE_THRESHOLD_S: float = 60.0
 
 T = TypeVar("T")
 
@@ -329,7 +329,7 @@ class EventBus:
                 await msg.ack()
             except MessageValidationError as e:
                 logger.error(str(e))
-                await msg.nak()
+                await msg.term()
             except Exception as e:
                 logger.error("Error handling JS message on %s: %s", subject, e)
                 await msg.nak()
@@ -436,7 +436,7 @@ class EventBus:
             durable=durable,
             config=ConsumerConfig(
                 deliver_policy=DeliverPolicy.ALL,
-                inactive_threshold=_CONSUMER_INACTIVE_NS,
+                inactive_threshold=_CONSUMER_INACTIVE_THRESHOLD_S,
             ),
         )
         try:

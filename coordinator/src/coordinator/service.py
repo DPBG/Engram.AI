@@ -11,7 +11,7 @@ import asyncio
 import uuid
 from typing import Optional
 
-from activelearning import BaseService
+from activelearning import BaseService, get_embedding_service
 from activelearning.subjects import Subjects
 
 from coordinator.sensor_manager import SensorManager
@@ -38,6 +38,9 @@ class CoordinatorService(BaseService):
         self._sensor_manager: Optional[SensorManager] = None
         self._learning_controller: Optional[LearningController] = None
         self._task_coordinator: Optional[TaskCoordinator] = None
+        # One shared embedding client per service, injected into the task
+        # coordinator and closed on shutdown.
+        self._embedding_service = get_embedding_service()
 
     async def _setup(self) -> None:
         """Setup service-specific resources and NATS subscriptions."""
@@ -52,11 +55,12 @@ class CoordinatorService(BaseService):
             tasks_root=self.tasks_root,
         )
 
-        # Initialize task coordinator
+        # Initialize task coordinator (shares the service's embedding client)
         self._task_coordinator = TaskCoordinator(
             nats_client=self.event_bus._nc,
             qdrant_url=self.qdrant_url,
             tasks_root=self.tasks_root,
+            embedding_service=self._embedding_service,
         )
         await self._task_coordinator.setup()
 
@@ -77,6 +81,7 @@ class CoordinatorService(BaseService):
         """Cleanup service-specific resources."""
         if self._task_coordinator:
             await self._task_coordinator.close()
+        await self._embedding_service.close()
 
     async def _handle_task_request(self, data: dict) -> None:
         """
