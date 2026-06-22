@@ -89,6 +89,21 @@ jobs:
         # directly (pure stdlib), so they need no extra service deps.
         run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests -o addopts="" -v
 
+  sandbox:
+    name: Sandbox image build + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Builds activelearning-sandbox:latest via the build-only compose profile,
+      # then runs a passing + failing generated test set inside the hardened
+      # container and asserts network/read-only isolation. Mirrors the runtime
+      # flags in meta-programmer/.../sandbox_manager.py.
+      - name: Build sandbox image + run smoke tests
+        run: bash sandbox/smoke/run_smoke.sh
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
