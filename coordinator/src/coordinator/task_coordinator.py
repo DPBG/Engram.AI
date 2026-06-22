@@ -14,6 +14,8 @@ import os
 from typing import Any, Dict, List, Optional
 import aiohttp
 
+from activelearning import EmbeddingService
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,11 +37,16 @@ class TaskCoordinator:
         qdrant_url: str,
         ollama_url: str,
         tasks_root: str = "/data/tasks",
+        embedding_service: Optional[EmbeddingService] = None,
     ):
         self.nats_client = nats_client
         self.qdrant_url = qdrant_url
         self.ollama_url = ollama_url
         self.tasks_root = tasks_root
+
+        # Embeddings go through the shared SDK service (reused session + LRU
+        # cache) rather than a hand-rolled per-call Ollama request.
+        self._embeddings = embedding_service or EmbeddingService(ollama_host=ollama_url)
 
         # Confidence thresholds
         self.high_confidence = float(os.environ.get("TASK_HIGH_CONFIDENCE", "0.85"))
@@ -205,25 +212,9 @@ class TaskCoordinator:
         return trace_id
 
     async def _get_embedding(self, text: str) -> List[float]:
-        """Get text embedding from Ollama."""
+        """Get text embedding via the shared SDK embedding service."""
         try:
-            async with aiohttp.ClientSession() as session:
-                payload = {
-                    "model": "nomic-embed-text",
-                    "prompt": text,
-                }
-
-                async with session.post(
-                    f"{self.ollama_url}/api/embeddings",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as response:
-                    if response.status != 200:
-                        raise Exception(f"Ollama embeddings error: {response.status}")
-
-                    data = await response.json()
-                    return data.get("embedding", [])
-
+            return await self._embeddings.embed_text(text)
         except Exception as e:
             logger.error(f"Error getting embedding: {e}")
             # Return zero vector as fallback

@@ -103,6 +103,8 @@ class MetaProgrammerService(BaseService):
         """Service-specific cleanup."""
         if self._sweep_task:
             self._sweep_task.cancel()
+        if self._team:
+            await self._team.close()
 
     async def _expire_reviews_loop(self) -> None:
         """Background loop: sweep expired human-review items (Phase 1.9)."""

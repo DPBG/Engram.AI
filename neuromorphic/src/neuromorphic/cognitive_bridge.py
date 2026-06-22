@@ -21,11 +21,13 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import aiohttp
 import nats
 from nats.aio.client import Client as NATSClient
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from activelearning.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,10 @@ class CognitiveBridgeService:
 
         self._nc: NATSClient | None = None
         self._running = False
+        # Built lazily on first query: the SDK is not installed in the
+        # neuromorphic-only test environment, so the import is deferred to
+        # runtime (where the launcher puts the SDK on PYTHONPATH).
+        self._llm: LLMClient | None = None
 
         # Rate limiting — max 1 query per N seconds
         self._min_interval = float(os.environ.get("COGNITIVE_MIN_INTERVAL", "5.0"))
@@ -69,11 +75,14 @@ class CognitiveBridgeService:
         )
 
     async def stop(self) -> None:
-        """Disconnect from NATS."""
+        """Disconnect from NATS and release the LLM session."""
         self._running = False
         if self._nc:
             await self._nc.drain()
             self._nc = None
+        if self._llm is not None:
+            await self._llm.close()
+            self._llm = None
 
     async def _handle_query(self, msg: Any) -> None:
         """Handle a cognitive query from the brain."""
@@ -154,42 +163,29 @@ class CognitiveBridgeService:
         return " ".join(parts)
 
     async def _query_ollama(self, prompt: str) -> str | None:
-        """Query local Ollama instance."""
+        """Query local Ollama via the shared SDK client; ``None`` on failure."""
+        # Deferred import: the SDK is absent in the neuromorphic-only test env.
+        from activelearning.llm import LLMClient, LLMConfig, LLMError
+
+        if self._llm is None:
+            self._llm = LLMClient(
+                LLMConfig(
+                    host=self.ollama_url,
+                    model=self.model,
+                    timeout=self.timeout,
+                    options={"num_predict": self.max_tokens},
+                )
+            )
+
         messages = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
         ]
 
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout)
-            ) as session:
-                async with session.post(
-                    f"{self.ollama_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "stream": False,
-                        "options": {"num_predict": self.max_tokens},
-                    },
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data.get("message", {}).get("content", "")
-                    else:
-                        txt = await resp.text()
-                        logger.warning(
-                            f"Ollama returned {resp.status}: {txt[:200]}"
-                        )
-                        return None
-        except aiohttp.ClientConnectorError:
-            logger.warning("Cannot reach Ollama — cognitive query failed")
-            return None
-        except asyncio.TimeoutError:
-            logger.warning("Ollama query timed out")
-            return None
-        except Exception as e:
-            logger.error(f"Ollama query error: {e}")
+            return await self._llm.chat(messages)
+        except LLMError as e:
+            logger.warning(f"Cognitive query failed: {e}")
             return None
 
 
