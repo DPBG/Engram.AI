@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Constitutional VALUE nodes have a confidence floor that CANNOT be lowered by
+# any path — learning, decay, contradiction pressure, a re-add, or tampered
+# persistence. This is the load-bearing safety claim (CLAUDE.md §3, beliefs).
+# Enforced in add_node, update_belief, and import_from_dict.
+VALUE_CONFIDENCE_FLOOR = 0.9
+
 
 class NodeType(Enum):
     """Types of belief nodes."""
@@ -108,11 +114,23 @@ class BeliefGraph:
         if not node.id:
             node.id = str(uuid.uuid4())
 
+        # Enforce the VALUE floor at the single chokepoint every write goes
+        # through (NATS add_node, DB load, seeding). NetworkX add_node overwrites
+        # an existing node's attributes, so without this a VALUE could be lowered
+        # below its floor simply by re-adding it with a low confidence.
+        confidence = node.confidence
+        if node.type == NodeType.VALUE and confidence < VALUE_CONFIDENCE_FLOOR:
+            logger.warning(
+                "Clamping VALUE %s confidence %.3f up to floor %.2f",
+                node.id, confidence, VALUE_CONFIDENCE_FLOOR,
+            )
+            confidence = VALUE_CONFIDENCE_FLOOR
+
         self._graph.add_node(
             node.id,
             type=node.type.value,
             content=node.content,
-            confidence=node.confidence,
+            confidence=confidence,
             source=node.source,
             metadata=node.metadata,
             created_at=node.created_at,
@@ -212,7 +230,7 @@ class BeliefGraph:
         # This is the constitutional constraint: the brain can learn facts
         # and norms, but cannot learn to override core values.
         if node_data.get("type") == NodeType.VALUE.value:
-            new_confidence = max(new_confidence, 0.9)
+            new_confidence = max(new_confidence, VALUE_CONFIDENCE_FLOOR)
 
         # Update node
         self._graph.nodes[node_id]["confidence"] = new_confidence
@@ -353,7 +371,7 @@ class BeliefGraph:
             # Enforce VALUE confidence floor on import — protects against
             # corrupted or tampered persistence data.
             if node.get("type") == NodeType.VALUE.value:
-                node["confidence"] = max(node.get("confidence", 1.0), 0.9)
+                node["confidence"] = max(node.get("confidence", 1.0), VALUE_CONFIDENCE_FLOOR)
             self._graph.add_node(node_id, **node)
 
         for edge in data.get("edges", []):
