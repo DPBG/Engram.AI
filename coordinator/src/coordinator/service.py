@@ -169,6 +169,9 @@ class CoordinatorService(BaseService):
             await self.event_bus.publish(Subjects.TASK_RESULT, {
                 "success": False,
                 "error": str(e),
+                # Echo the query so consumers can correlate the failure (no
+                # task_id/trace_id exists yet when find_task itself fails).
+                "query": query,
             })
 
     async def _request_execution_approval(
