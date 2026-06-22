@@ -61,10 +61,14 @@ class CognitiveBridgeService(BaseService):
 
     async def _setup(self) -> None:
         """Subscribe to Kernel-gated and legacy cognitive query subjects."""
+        event_bus = self.event_bus
+        if event_bus is None:
+            raise RuntimeError("Event bus is not initialized")
+
         # Kernel-gated channel (forwarded on ALLOW).
-        await self.event_bus.subscribe(Subjects.COGNITIVE_EXECUTE, self._handle_query)
+        await event_bus.subscribe(Subjects.COGNITIVE_EXECUTE, self._handle_query)
         # Legacy subject for backward compat during rollout.
-        await self.event_bus.subscribe(Subjects.COGNITIVE_QUERY, self._handle_query)
+        await event_bus.subscribe(Subjects.COGNITIVE_QUERY, self._handle_query)
         self.logger.info(
             "CognitiveBridge ready — model=%s, ollama=%s",
             self.model,
@@ -101,8 +105,12 @@ class CognitiveBridgeService(BaseService):
         response = await self._query_ollama(context)
 
         if response:
+            event_bus = self.event_bus
+            if event_bus is None:
+                raise RuntimeError("Event bus is not initialized")
+
             # Route through Kernel validation gate before brain injection.
-            await self.event_bus.publish(
+            await event_bus.publish(
                 Subjects.COGNITIVE_RESPONSE_VALIDATE,
                 {
                     "response_text": response,
