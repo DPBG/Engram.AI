@@ -89,9 +89,11 @@ def test_safe_action_type_zero_risk() -> None:
     assert result.flags == []
 
 
-def test_unknown_empty_action_type_zero_risk() -> None:
+def test_empty_action_type_flagged_as_unknown() -> None:
+    # Fail-closed: an empty action type cannot be categorized → UNKNOWN_ACTION_TYPE.
     result = _analyzer().analyze_action(_action_proposal(""))
-    assert result.flags == []
+    assert "UNKNOWN_ACTION_TYPE" in result.flags
+    assert result.risk_score >= 0.1
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +354,66 @@ def test_syntax_error_code_flagged() -> None:
     result = _analyzer().analyze_code(_code_proposal(code_preview="def (broken syntax!!!"))
     assert "SYNTAX_ERROR" in result.flags
     assert result.risk_score >= 0.1
+
+
+# ---------------------------------------------------------------------------
+# Malformed proposal handling — fail closed
+# ---------------------------------------------------------------------------
+
+
+def test_action_proposal_missing_action_key_flagged() -> None:
+    result = _analyzer().analyze_action({"trace_id": "t"})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_action_proposal_none_action_value_flagged() -> None:
+    result = _analyzer().analyze_action({"trace_id": "t", "action": None})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_action_proposal_non_dict_action_flagged() -> None:
+    result = _analyzer().analyze_action({"trace_id": "t", "action": "shutdown"})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_action_proposal_empty_dict_flagged() -> None:
+    result = _analyzer().analyze_action({})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_code_proposal_missing_target_path_flagged() -> None:
+    result = _analyzer().analyze_code({"trace_id": "t", "code_preview": "x = 1"})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_code_proposal_missing_code_preview_flagged() -> None:
+    result = _analyzer().analyze_code({"trace_id": "t", "target_path": "/data/plugins/foo.py"})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_code_proposal_none_target_path_flagged() -> None:
+    result = _analyzer().analyze_code(
+        {"trace_id": "t", "target_path": None, "code_preview": "x = 1"}
+    )
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_code_proposal_none_code_preview_flagged() -> None:
+    result = _analyzer().analyze_code(
+        {"trace_id": "t", "target_path": "/data/plugins/foo.py", "code_preview": None}
+    )
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
+
+
+def test_code_proposal_empty_dict_flagged() -> None:
+    result = _analyzer().analyze_code({})
+    assert "MALFORMED_PROPOSAL" in result.flags
+    assert result.risk_score >= 0.5
