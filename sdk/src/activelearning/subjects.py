@@ -68,6 +68,9 @@ class Subjects:
     # Meta-programmer / learning
     KNOWLEDGE_GAP = "knowledge.gap"
 
+    # Kernel watchdog (E1.9.3)
+    KERNEL_HEARTBEAT = "kernel.heartbeat"
+
 
 def decision_subject(trace_id: str) -> str:
     """Per-trace kernel decision subject."""

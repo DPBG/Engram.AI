@@ -8,6 +8,7 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 import asyncio
 import json
 import os
+import time
 import uuid
 from typing import Any, Optional
 
@@ -51,6 +52,10 @@ class KernelService(BaseService):
         # Policy management
         self._rollback = PolicyRollbackManager()
         self._deny_tracker = DecisionSequenceTracker()
+
+        # Heartbeat (E1.9.3): publish kernel.heartbeat so the watchdog can detect loss.
+        self._heartbeat_interval_s = float(os.environ.get("KERNEL_HEARTBEAT_INTERVAL_S", "5.0"))
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Load body profile from env if set
         self._load_body_profile()
@@ -123,10 +128,27 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(Subjects.SAFETY_HALT, self._handle_safety_halt)
         await self.event_bus.subscribe(Subjects.SAFETY_RESUME, self._handle_safety_resume)
 
+        # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
-        # No kernel-specific resources to cleanup
-        pass
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+
+    async def _heartbeat_loop(self) -> None:
+        """Publish kernel.heartbeat every KERNEL_HEARTBEAT_INTERVAL_S seconds (E1.9.3)."""
+        while True:
+            try:
+                await asyncio.sleep(self._heartbeat_interval_s)
+                await self.event_bus.publish(
+                    Subjects.KERNEL_HEARTBEAT,
+                    {"status": "alive", "timestamp": int(time.time() * 1000)},
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.warning("Heartbeat publish error: %s", e)
 
     async def _handle_safety_halt(self, data: dict) -> None:
         """Engage the system-wide kill switch (Phase 1.9).
