@@ -197,3 +197,18 @@ def test_setup_ensures_collection():
     cache, store, _, _ = _make()
     asyncio.run(cache.setup())
     store.ensure_collection.assert_awaited_once_with("llm_cache")
+
+
+def test_setup_raises_when_json1_unavailable():
+    """Tag invalidation needs json_each; an unsupported SQLite build fails loudly
+    at startup instead of silently evicting nothing."""
+    cache, _, _, db = _make()
+    db.execute = AsyncMock(side_effect=Exception("no such function: json_each"))
+
+    raised = ""
+    try:
+        asyncio.run(cache.setup())
+    except RuntimeError as e:
+        raised = str(e)
+
+    assert "JSON" in raised

@@ -205,6 +205,25 @@ def test_evict_expired_drops_old_entries_and_keeps_fresh():
     _run(body)
 
 
+def test_evict_expired_drops_never_hit_entry_past_unused_age():
+    """A never-hit entry idle past unused_age_days is evicted even while it is
+    younger than max_age_days (its cached_at stands in for last_hit_at)."""
+
+    async def body(inv, cache, db, _store):
+        await cache.set("idle", "IDLE")  # never hit
+        four_days_ms = 4 * 24 * 60 * 60 * 1000  # > unused_age (3d), < max_age (7d)
+        await db.execute(
+            "UPDATE llm_cache SET cached_at = cached_at - ?, last_hit_at = NULL WHERE response = ?",
+            (four_days_ms, "IDLE"),
+        )
+        await db.commit()
+
+        assert await inv._evict_expired() == 1
+        assert await _responses(db) == []
+
+    _run(body)
+
+
 def test_invalidate_all_clears_every_entry():
     async def body(inv, cache, db, _store):
         await cache.set("p1", "A", tags=[CacheTag.CODE_GENERATION])

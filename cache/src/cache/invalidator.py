@@ -148,7 +148,7 @@ class CacheInvalidator:
             FROM llm_cache
             WHERE
                 (cached_at < ?) OR
-                (last_hit_at IS NOT NULL AND last_hit_at < ?)
+                (COALESCE(last_hit_at, cached_at) < ?)
             """,
             (now - max_age_ms, now - unused_age_ms),
         )

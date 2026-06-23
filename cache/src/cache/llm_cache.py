@@ -84,6 +84,21 @@ class LLMCache:
     async def setup(self) -> None:
         """Ensure the cache collection exists before serving requests."""
         await self._qdrant.ensure_collection(self.collection_name)
+        await self._verify_json_support()
+
+    async def _verify_json_support(self) -> None:
+        """Fail fast if SQLite lacks json_each (JSON1, SQLite 3.38+).
+
+        Tag invalidation matches entries with json_each; without it that query
+        would error and be swallowed, evicting nothing. Surface it at startup.
+        """
+        try:
+            await self.db.execute("SELECT 1 FROM json_each('[]')")
+        except Exception as e:
+            raise RuntimeError(
+                "SQLite build lacks JSON support (json_each); cache tag "
+                "invalidation requires SQLite 3.38+ with JSON1 enabled"
+            ) from e
 
     async def close(self) -> None:
         """Release the Qdrant connection."""
