@@ -111,8 +111,11 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(
             Subjects.POLICY_LOAD_PROFILE, self._handle_load_profile,
         )
+        # Brain/dashboard may not publish policy.restrict directly (ADR 0001 §3).
+        # They publish policy.restrict.request; the Kernel validates and re-publishes
+        # as authoritative policy.restrict that consumers (planner, brain) act on.
         await self.event_bus.subscribe(
-            Subjects.POLICY_RESTRICT, self._handle_restrict,
+            Subjects.POLICY_RESTRICT_REQUEST, self._handle_restrict_request,
         )
         await self.event_bus.subscribe(
             Subjects.POLICY_ROLLBACK, self._handle_rollback,
@@ -148,16 +151,21 @@ class KernelService(BaseService):
         self.logger.critical(f"SAFE_HALT engaged by {operator}: {reason}")
 
         # Propagate: stop the planner queue and zero all motor channels.
+        # Kernel applies restrictions directly (no NATS round-trip) because it is
+        # the sole publisher of policy.restrict (ADR 0001 §3) and no longer
+        # subscribes to it.
         try:
             await self.event_bus.publish(Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason})
-            await self.event_bus.publish(Subjects.POLICY_RESTRICT, {
+            restrict_data = {
                 "motor_limits": {
                     ch: {"max_intensity": 0.0}
                     for ch in ("locomotion", "manipulation", "head", "speech")
                 },
                 "reason": f"SAFE_HALT: {reason}",
                 "operator_id": operator,
-            })
+            }
+            await self._apply_restriction(restrict_data)
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, restrict_data)
         except Exception as e:
             self.logger.error(f"SAFE_HALT propagation error: {e}")
 
@@ -321,19 +329,20 @@ class KernelService(BaseService):
                 "reason": reason,
             })
 
-    async def _handle_restrict(self, data: dict) -> None:
-        """Handle runtime capability restrictions via NATS (cloud → edge).
+    async def _apply_restriction(self, data: dict) -> bool:
+        """Apply motor/capability restrictions to the kernel's body profile.
 
-        Expected payload: {"motor_limits": {...}, "capabilities": {...}}
-        Applies restrictions on top of the active body profile.
-        Rejects any override that attempts to expand beyond the profile.
+        Updates the evaluator's profile in-place so future proposals are checked
+        against the new limits. Publishes ``policy.restrict.status`` for the dashboard.
+
+        Returns True if restrictions were applied, False if rejected/error.
         """
         if self._evaluator._body_profile is None:
             await self.event_bus.publish("policy.restrict.status", {
                 "status": "error",
                 "reason": "No body profile loaded — cannot apply restrictions",
             })
-            return
+            return False
 
         try:
             from beliefs.profiles import apply_runtime_restrictions
@@ -351,16 +360,40 @@ class KernelService(BaseService):
                 },
                 "capabilities": restricted.capabilities,
             })
+            return True
         except ValueError as e:
             self.logger.warning(f"Runtime restriction rejected: {e}")
             await self.event_bus.publish("policy.restrict.status", {
                 "status": "rejected", "reason": str(e),
             })
+            return False
         except Exception as e:
             self.logger.error(f"Error applying restrictions: {e}")
             await self.event_bus.publish("policy.restrict.status", {
                 "status": "error", "reason": str(e),
             })
+            return False
+
+    async def _handle_restrict_request(self, data: dict) -> None:
+        """Relay a policy.restrict.request from brain/dashboard as authoritative policy.restrict.
+
+        The brain and dashboard may not publish ``policy.restrict`` directly (ADR 0001 §3);
+        they publish ``policy.restrict.request`` and the Kernel — as the sole
+        decision authority — validates, applies internally, and re-publishes the
+        authoritative ``policy.restrict`` that consumers (planner, brain) act on.
+        """
+        if await self._apply_restriction(data):
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, data)
+
+    async def _handle_restrict(self, data: dict) -> None:
+        """Apply a restriction coming from an internal Kernel operation.
+
+        Called by _handle_policy_update when the operator update contains
+        motor_limits or capabilities. Applies the restriction to the evaluator
+        and broadcasts the authoritative policy.restrict.
+        """
+        if await self._apply_restriction(data):
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, data)
 
     async def _handle_action_proposal(self, data: dict) -> None:
         """Handle action proposals from Planner or Neuromorphic brain."""
@@ -762,11 +795,15 @@ class KernelService(BaseService):
             f"{DecisionSequenceTracker.DISABLE_THRESHOLD} consecutive DENYs"
         )
         try:
-            await self.event_bus.publish(Subjects.POLICY_RESTRICT, {
+            restrict_data = {
                 "motor_limits": {channel: {"max_intensity": 0.0}},
                 "reason": f"Auto-disable: {channel} consecutive DENY threshold",
                 "operator_id": "system:deny_tracker",
-            })
+            }
+            # Apply to kernel evaluator directly (Kernel is the sole policy.restrict
+            # publisher so it cannot rely on a subscription round-trip).
+            await self._apply_restriction(restrict_data)
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, restrict_data)
             await self.event_bus.publish("safety.deny_escalation", {
                 "channel": channel,
                 "action": "auto_disabled",
