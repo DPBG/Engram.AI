@@ -324,18 +324,17 @@ async def test_coordinator_task_request(nats_client: NATSClient):
 
 @pytest.mark.asyncio
 async def test_coordinator_status(nats_client: NATSClient):
-    """Test coordinator status query."""
-    status_received: Optional[dict] = None
+    """Test coordinator status query via request-reply."""
+    response = await nats_client.request(
+        "coordinator.status",
+        json.dumps({}).encode(),
+        timeout=2.0,
+    )
 
-    async def status_handler(msg):
-        nonlocal status_received
-        status_received = json.loads(msg.data.decode())
-
-    await nats_client.subscribe("coordinator.status.result", cb=status_handler)
-    await asyncio.sleep(0.1)
-
-    await nats_client.publish("coordinator.status", json.dumps({}).encode())
-    await asyncio.sleep(1.0)
+    status = json.loads(response.data.decode())
+    assert status.get("status") == "running"
+    assert "sensors" in status
+    assert "learning" in status
 
 
 # =============================================================================
