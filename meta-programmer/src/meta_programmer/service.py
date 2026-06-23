@@ -51,6 +51,9 @@ class MetaProgrammerService(BaseService):
         self.defer_ttl_ms = int(os.environ.get("DEFER_TTL_MS", "300000"))  # 5 min
         self._sweep_task: Optional[asyncio.Task] = None
 
+        # Post-deploy health probe timeout (E1.9.2); 0 disables the probe.
+        self._health_probe_timeout = float(os.environ.get("HEALTH_PROBE_TIMEOUT_SECONDS", "5.0"))
+
         # Metrics
         self._gaps_processed = 0
         self._code_generated = 0
@@ -59,6 +62,8 @@ class MetaProgrammerService(BaseService):
         self._sandbox_unavailable = 0  # fail-closed blocks (containment could not run)
         self._deployments = 0
         self._reviews_expired = 0
+        self._health_probe_failures = 0  # E1.9.2: deploys that failed the post-deploy probe
+        self._auto_rollbacks = 0         # E1.9.2: automatic rollbacks triggered by probe failure
 
     async def _setup(self) -> None:
         """Initialize service-specific setup."""
@@ -341,11 +346,32 @@ class MetaProgrammerService(BaseService):
             target_path = resolved
 
             # Write atomically: snapshot any existing file, validate the new
-            # code compiles, and roll back to the prior content (or remove a
-            # newly-created file) on any failure — never leave a broken artifact.
-            ok, detail = deploy_atomically(target_path, code)
+            # code compiles, run a post-deploy health probe (E1.9.2), and roll
+            # back to the prior content (or remove a newly-created file) on any
+            # failure — never leave a broken artifact.
+            ok, detail = deploy_atomically(target_path, code, probe_timeout=self._health_probe_timeout)
             if not ok:
-                self.logger.error("Deploy rolled back for %s: %s", target_path, detail)
+                if "health probe" in detail:
+                    self._health_probe_failures += 1
+                    self._auto_rollbacks += 1
+                    self.logger.error(
+                        "POST-DEPLOY HEALTH PROBE FAILED for %s at %s — auto-rolled back. %s",
+                        trace_id, target_path, detail,
+                    )
+                    try:
+                        await self.event_bus.publish(
+                            "deploy.rolled_back",
+                            {
+                                "trace_id": trace_id,
+                                "target_path": target_path,
+                                "reason": detail,
+                                "auto_rollback": True,
+                            },
+                        )
+                    except Exception as pub_err:
+                        self.logger.warning("Could not publish deploy.rolled_back event: %s", pub_err)
+                else:
+                    self.logger.error("Deploy rolled back for %s: %s", target_path, detail)
                 raise RuntimeError(f"Deploy rolled back: {detail}")
 
             self.logger.info(f"Deployed code to: {target_path}")
@@ -405,10 +431,9 @@ class MetaProgrammerService(BaseService):
                     "tests_failed": self._tests_failed + (ac.tests_failed if ac else 0),
                     "deployments": self._deployments + (ac.deployments if ac else 0),
                     "reviews_expired": self._reviews_expired,
-                    "tests_passed": self._tests_passed,
-                    "tests_failed": self._tests_failed,
                     "sandbox_unavailable": self._sandbox_unavailable,
-                    "deployments": self._deployments,
+                    "health_probe_failures": self._health_probe_failures,
+                    "auto_rollbacks": self._auto_rollbacks,
                 },
             }
 
