@@ -13,6 +13,8 @@ import time
 from typing import Any, Optional
 
 from activelearning import BaseService
+from activelearning.nats_client import serialize_message
+from nats.aio.msg import Msg
 
 from meta_programmer.approval_consumer import ApprovalConsumer
 from meta_programmer.sandbox_manager import SandboxManager
@@ -102,8 +104,10 @@ class MetaProgrammerService(BaseService):
         # Subscribe to knowledge gaps
         await self.event_bus.subscribe("knowledge.gap", self._handle_knowledge_gap)
 
-        # Subscribe to status requests
-        await self.event_bus.subscribe("metaprogrammer.status", self._handle_status)
+        # Subscribe to status requests (request-reply)
+        await self.event_bus.subscribe(
+            "metaprogrammer.status", self._handle_status, is_request_handler=True,
+        )
 
         # Subscribe to human approval/denial responses from the Dashboard.
         await self.event_bus.subscribe(
@@ -319,7 +323,7 @@ class MetaProgrammerService(BaseService):
             await self.event_bus.publish("code.proposal", proposal)
 
             # Wait for decision
-            decision = await self._wait_for_decision(trace_id, subject_prefix="code.decision")
+            decision = await self._wait_for_decision(trace_id, code=True)
             return decision
 
         except Exception as e:
@@ -329,12 +333,15 @@ class MetaProgrammerService(BaseService):
     async def _wait_for_decision(
         self,
         trace_id: str,
-        subject_prefix: str = "decision",
+        *,
+        code: bool = False,
         timeout: float = 30.0,
     ) -> dict:
         """Wait for a Kernel decision."""
         try:
-            decision = await self.event_bus.wait_for_decision(trace_id, timeout=timeout)
+            decision = await self.event_bus.wait_for_decision(
+                trace_id, timeout=timeout, code=code,
+            )
             return decision
         except asyncio.TimeoutError:
             self.logger.error(f"Timeout waiting for decision: {trace_id}")
@@ -452,6 +459,23 @@ class MetaProgrammerService(BaseService):
             await self.event_bus.publish("metaprogrammer.status.response", status)
         except Exception as e:
             self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict[str, Any], msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        ac = self._approval_consumer
+        status = {
+            "status": "running",
+            "metrics": {
+                "gaps_processed": self._gaps_processed,
+                "code_generated": self._code_generated,
+                "tests_passed": self._tests_passed + (ac.tests_passed if ac else 0),
+                "tests_failed": self._tests_failed + (ac.tests_failed if ac else 0),
+                "deployments": self._deployments + (ac.deployments if ac else 0),
+                "reviews_expired": self._reviews_expired,
+                "sandbox_unavailable": self._sandbox_unavailable,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
 
 async def main() -> None:
