@@ -56,6 +56,19 @@ def _load_schema() -> str:
 
 SCHEMA_SQL = _load_schema()
 
+# Ordered migrations applied before the (declarative) schema is reapplied. Entry
+# i upgrades a database from user_version i to i+1. Because the schema is all
+# CREATE ... IF NOT EXISTS, a migration only needs to drop or alter objects whose
+# shape changed; executescript then recreates them. This keeps the table DDL in
+# schema.sql as the single source of truth.
+_MIGRATIONS: list[tuple[str, ...]] = [
+    # v1: llm_cache changed shape (added model/tags/cached_at, dropped legacy
+    # columns). It is a disposable index over the Qdrant cache, so drop the old
+    # table and let the schema recreate it with the current columns.
+    ("DROP TABLE IF EXISTS llm_cache",),
+]
+SCHEMA_VERSION = len(_MIGRATIONS)
+
 
 class Database:
     """
@@ -89,11 +102,27 @@ class Database:
         await self._connection.execute("PRAGMA journal_mode=WAL")
         await self._connection.execute("PRAGMA synchronous=NORMAL")
 
-        # Create schema
+        # Bring an older database up to date, then (re)create the schema
+        await self._migrate()
         await self._connection.executescript(SCHEMA_SQL)
+        await self._connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         await self._connection.commit()
 
         logger.info(f"Database initialized at {self.db_path}")
+
+    async def _migrate(self) -> None:
+        """Run pending migrations so existing databases adopt schema changes.
+
+        Tracks progress with PRAGMA user_version; a fresh database starts at 0
+        and the pending statements are no-ops on it.
+        """
+        cursor = await self._connection.execute("PRAGMA user_version")
+        row = await cursor.fetchone()
+        version = row[0] if row else 0
+
+        for statements in _MIGRATIONS[version:]:
+            for statement in statements:
+                await self._connection.execute(statement)
 
     async def close(self) -> None:
         """Close the database connection."""
