@@ -7,13 +7,17 @@ pytest-asyncio) so it runs under the bare-pytest governance CI lane.
 
 import asyncio
 import importlib.util
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock
 
 from activelearning import QdrantHit, QdrantPoint
 
-_LC_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "cache", "llm_cache.py")
+# abspath so coverage attributes this to the same file as the packaged import.
+_LC_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "src", "cache", "llm_cache.py")
+)
 _spec = importlib.util.spec_from_file_location("cache_llm_cache", _LC_PATH)
 lc = importlib.util.module_from_spec(_spec)
 sys.modules["cache_llm_cache"] = lc
@@ -126,6 +130,50 @@ def test_set_embedding_failure_returns_false_without_upsert():
     assert ok is False
     store.upsert.assert_not_called()  # no zero-vector entry written
     db.execute.assert_not_called()
+
+
+def test_set_records_tags_in_both_stores():
+    """Tags ride along into the Qdrant payload (a list) and the SQLite row (JSON)
+    so entries can later be evicted by tag."""
+    cache, store, _, db = _make()
+
+    ok = asyncio.run(cache.set("p", "r", "m", tags=["code_generation"]))
+
+    assert ok is True
+    _, points = store.upsert.call_args.args
+    assert points[0].payload["tags"] == ["code_generation"]
+    # INSERT column order: prompt_hash, prompt, response, model, tags, ...
+    insert_params = db.execute.call_args.args[1]
+    assert insert_params[4] == json.dumps(["code_generation"])
+
+
+def test_set_without_tags_stores_null():
+    """Untagged entries persist NULL so they never match a tag query."""
+    cache, store, _, db = _make()
+
+    asyncio.run(cache.set("p", "r"))
+
+    assert store.upsert.call_args.args[1][0].payload["tags"] is None
+    assert db.execute.call_args.args[1][4] is None
+
+
+def test_set_coerces_bare_string_tag_to_list():
+    """A single string tag from the JSON boundary is wrapped, not split into
+    characters."""
+    cache, store, _, db = _make()
+
+    asyncio.run(cache.set("p", "r", tags="code_generation"))
+
+    assert store.upsert.call_args.args[1][0].payload["tags"] == ["code_generation"]
+    assert db.execute.call_args.args[1][4] == json.dumps(["code_generation"])
+
+
+def test_normalize_tags():
+    assert lc._normalize_tags(None) is None
+    assert lc._normalize_tags([]) is None
+    assert lc._normalize_tags("x") == ["x"]
+    assert lc._normalize_tags(["a", "", None, "b"]) == ["a", "b"]  # falsy dropped
+    assert lc._normalize_tags(["", None]) is None  # nothing left → None
 
 
 # ── invalidate ──────────────────────────────────────────────────────────────
