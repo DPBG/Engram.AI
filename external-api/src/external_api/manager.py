@@ -13,8 +13,7 @@ import logging
 import os
 from typing import Any
 
-from activelearning import current_timestamp, generate_trace_id
-from activelearning.nats_client import EventBus
+from activelearning import EventBus, current_timestamp, generate_trace_id
 
 logger = logging.getLogger(__name__)
 

@@ -97,6 +97,7 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
+      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + External-API tests
       - name: Install nats-server
         run: |
           set -euo pipefail
@@ -113,12 +114,13 @@ jobs:
 
       - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src
+          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src:external-api/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
         # Coordinator gate + dashboard auth tests load their module under test
         # directly (pure stdlib), so they need no extra service deps.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests -o addopts="" -v
+        # external-api tests inject fake clients; anthropic/openai are not imported.
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests external-api/tests -o addopts="" -v
       - name: Run Kernel + Meta-Programmer + Coordinator + Cache + Dashboard + Beliefs safety tests
         env:
           PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:cache/src:dashboard/src:beliefs/src
@@ -133,12 +135,20 @@ jobs:
         run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
 
   sandbox:
-    name: Sandbox image build + smoke
+    name: Sandbox image build + smoke + containment
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
 
       # Builds activelearning-sandbox:latest via the build-only compose profile,
       # then runs a passing + failing generated test set inside the hardened
@@ -146,6 +156,18 @@ jobs:
       # flags in meta-programmer/.../sandbox_manager.py.
       - name: Build sandbox image + run smoke tests
         run: bash sandbox/smoke/run_smoke.sh
+
+      # Adversarial integration tests (E1.3.3): each test proves one containment
+      # property by running the payload both without its guard (baseline) and
+      # with full hardening (guarded). Removing a guard from the guarded run
+      # would break the assertion — confirming the test is sensitive to the guard.
+      - name: Run containment integration tests
+        env:
+          PYTHONPATH: meta-programmer/src
+        run: >-
+          uv run --no-project --with pytest
+          python -m pytest meta-programmer/tests/test_sandbox_containment_integration.py
+          -v -o addopts=""
 
   lint:
     name: Lint

@@ -10,7 +10,7 @@ import json
 import os
 from typing import Any, Optional
 
-from activelearning import BaseService, generate_trace_id, sign_decision
+from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import (
     Subjects,
@@ -52,6 +52,19 @@ class KernelService(BaseService):
         # Policy management
         self._rollback = PolicyRollbackManager()
         self._deny_tracker = DecisionSequenceTracker()
+
+        # Heartbeat (E1.9.3): publish kernel.heartbeat so the watchdog can detect loss.
+        # A non-positive or non-finite interval would collapse the publish cadence,
+        # so we validate and refuse to start with an invalid configuration.
+        import math as _math
+        _raw_hb = float(os.environ.get("KERNEL_HEARTBEAT_INTERVAL_S", "5.0"))
+        if not (_math.isfinite(_raw_hb) and _raw_hb > 0.0):
+            raise ValueError(
+                "KERNEL_HEARTBEAT_INTERVAL_S must be a positive finite number; "
+                f"got {os.environ.get('KERNEL_HEARTBEAT_INTERVAL_S')!r}"
+            )
+        self._heartbeat_interval_s = _raw_hb
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Load body profile from env if set
         self._load_body_profile()
@@ -129,10 +142,27 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(Subjects.SAFETY_HALT, self._handle_safety_halt)
         await self.event_bus.subscribe(Subjects.SAFETY_RESUME, self._handle_safety_resume)
 
+        # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
-        # No kernel-specific resources to cleanup
-        pass
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+
+    async def _heartbeat_loop(self) -> None:
+        """Publish kernel.heartbeat every KERNEL_HEARTBEAT_INTERVAL_S seconds (E1.9.3)."""
+        while True:
+            try:
+                await asyncio.sleep(self._heartbeat_interval_s)
+                await self.event_bus.publish(
+                    Subjects.KERNEL_HEARTBEAT,
+                    {"status": "alive", "timestamp": current_timestamp()},
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.warning("Heartbeat publish error: %s", e)
 
     async def _handle_safety_halt(self, data: dict) -> None:
         """Engage the system-wide kill switch (Phase 1.9).
