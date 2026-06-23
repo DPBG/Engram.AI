@@ -476,13 +476,23 @@ class KernelService(BaseService):
             except Exception:
                 pass  # best-effort — caller will timeout
 
+    def _signed_code_decision(self, decision: KernelDecision) -> dict:
+        """Build the signed wire payload for a code decision."""
+        return sign_decision({
+            "trace_id": decision.trace_id,
+            "type": decision.type.value,
+            "reason": decision.reason,
+            "risk_score": decision.risk_score,
+            "issued_at": decision.issued_at,
+            "expires_at": decision.expires_at,
+        })
+
     async def _handle_code_proposal(self, data: dict) -> None:
         """Handle code proposals from Meta-Programmer."""
+        proposal = data
+        trace_id = proposal.get("trace_id", "")
+        source = proposal.get("source", "meta-programmer")
         try:
-            proposal = data
-            trace_id = proposal.get("trace_id", "")
-            source = proposal.get("source", "meta-programmer")
-
             self.logger.debug(f"Evaluating code proposal: {trace_id}")
 
             # Get risk analysis from Safety Supervisor
@@ -503,14 +513,7 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
-                sign_decision({
-                    "trace_id": decision.trace_id,
-                    "type": decision.type.value,
-                    "reason": decision.reason,
-                    "risk_score": decision.risk_score,
-                    "issued_at": decision.issued_at,
-                    "expires_at": decision.expires_at,
-                }),
+                self._signed_code_decision(decision),
             )
 
             self.logger.info(
@@ -520,6 +523,24 @@ class KernelService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
+            # Always publish a decision so the Meta-Programmer's wait doesn't
+            # hang. Fail-safe: DENY on internal errors — the Kernel is the sole
+            # authority that may emit a decision and must fail closed
+            # (mirrors _handle_action_proposal).
+            try:
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=f"Kernel internal error: {e}",
+                    risk_score=1.0,
+                )
+                await self.event_bus.publish(
+                    code_decision_subject(trace_id),
+                    self._signed_code_decision(deny),
+                )
+                self._deny_count += 1
+            except Exception:
+                pass  # best-effort — consumer will time out
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
