@@ -36,17 +36,21 @@ META_PASS = "meta-test-pass"
 # Implements the ADR 0001 §3 "privileged Kernel publisher set":
 #   decision.>  code.decision.>  policy.*  cognitive.response.validated
 # are publish-allowed for kernel only; all other identities' allowlists omit them.
+#
+# IMPORTANT: use block syntax (`permissions {{ ... }}`) throughout, NOT the
+# JSON-value form (`permissions: {{ ... }}`).  Mixed syntax causes nats-server
+# to silently ignore the permissions block, leaving users unrestricted.
 _NATS_AUTHZ_CONF = textwrap.dedent("""\
     # Red-team regression test: per-user authorization (ADR 0001 static-users model).
-    # kernel  → full publish rights (Kernel is the sole decision authority, CLAUDE.md §3)
-    # planner → non-privileged publish only
-    # meta_programmer → non-privileged publish only
+    # kernel      -> full publish rights (Kernel is the sole decision authority, CLAUDE.md s3)
+    # planner     -> non-privileged publish only
+    # meta_programmer -> non-privileged publish only
     authorization {{
       users = [
         {{
           user: "{kernel_user}"
           password: "{kernel_pass}"
-          permissions: {{
+          permissions {{
             publish   {{ allow: [">"] }}
             subscribe {{ allow: [">"] }}
           }}
@@ -54,14 +58,14 @@ _NATS_AUTHZ_CONF = textwrap.dedent("""\
         {{
           user: "{planner_user}"
           password: "{planner_pass}"
-          permissions: {{
+          permissions {{
             publish {{
               allow: [
-                "proposal.new"
-                "proposal.status"
-                "planner.>"
-                "system.health"
-                "heartbeat.planner"
+                "proposal.new",
+                "proposal.status",
+                "planner.>",
+                "system.health",
+                "heartbeat.planner",
                 "_INBOX.>"
               ]
             }}
@@ -71,14 +75,14 @@ _NATS_AUTHZ_CONF = textwrap.dedent("""\
         {{
           user: "{meta_user}"
           password: "{meta_pass}"
-          permissions: {{
+          permissions {{
             publish {{
               allow: [
-                "code.proposal"
-                "knowledge.gap"
-                "metaprogrammer.>"
-                "system.health"
-                "heartbeat.meta"
+                "code.proposal",
+                "knowledge.gap",
+                "metaprogrammer.>",
+                "system.health",
+                "heartbeat.meta",
                 "_INBOX.>"
               ]
             }}
@@ -133,14 +137,18 @@ def authz_nats_url() -> Generator[str, None, None]:
     proc = subprocess.Popen(
         [binary, "-c", str(conf_path), "-p", str(port)],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
     try:
         for _ in range(50):
             if _port_open(host, port):
                 break
             if proc.poll() is not None:
-                pytest.skip("nats-server failed to start with the authz config")
+                stderr_out = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+                pytest.skip(
+                    f"nats-server failed to start with the authz config.\n"
+                    f"stderr: {stderr_out[:2000]}"
+                )
             time.sleep(0.1)
         else:
             pytest.skip("Timed out waiting for authz nats-server to become ready")
