@@ -9,24 +9,36 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from activelearning.subjects import Subjects
 
+
 # ---------------------------------------------------------------------------
-# Inject stub for ``beliefs.profiles`` so tests run without the beliefs package
-# installed (kernel tests run in a minimal environment).
+# Fixture: stub beliefs.profiles per-test so sys.modules is clean after each run.
+# Module-level injection would leak into beliefs/tests in the same CI session and
+# break real beliefs imports (MagicMock is not a package). monkeypatch restores
+# sys.modules entries after every test automatically.
 # ---------------------------------------------------------------------------
-_mock_beliefs_profiles = MagicMock()
-sys.modules.setdefault("beliefs", MagicMock())
-sys.modules.setdefault("beliefs.profiles", _mock_beliefs_profiles)
+
+
+@pytest.fixture(autouse=True)
+def beliefs_stub(monkeypatch):
+    """Inject a stub beliefs.profiles for the kernel's lazy import, scoped to one test."""
+    mock_profiles = MagicMock()
+    monkeypatch.delitem(sys.modules, "beliefs", raising=False)
+    monkeypatch.delitem(sys.modules, "beliefs.profiles", raising=False)
+    monkeypatch.setitem(sys.modules, "beliefs", MagicMock(profiles=mock_profiles))
+    monkeypatch.setitem(sys.modules, "beliefs.profiles", mock_profiles)
+    return mock_profiles
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _run(coro):
     """Run a coroutine synchronously (no pytest-asyncio dependency)."""
@@ -75,13 +87,14 @@ def _restrict_payload(**overrides):
 # Tests: _apply_restriction
 # ---------------------------------------------------------------------------
 
-def test_apply_restriction_updates_evaluator():
+
+def test_apply_restriction_updates_evaluator(beliefs_stub):
     svc = _make_kernel_service()
     restricted_profile = MagicMock()
     restricted_profile.name = "restricted"
     restricted_profile.motor_limits = {"locomotion": MagicMock(max_intensity=0.5)}
     restricted_profile.capabilities = {}
-    _mock_beliefs_profiles.apply_runtime_restrictions.return_value = restricted_profile
+    beliefs_stub.apply_runtime_restrictions.return_value = restricted_profile
 
     result = _run(svc._apply_restriction(_restrict_payload()))
 
@@ -89,9 +102,9 @@ def test_apply_restriction_updates_evaluator():
     svc._evaluator.set_body_profile.assert_called_once_with(restricted_profile)
 
 
-def test_apply_restriction_publishes_status_applied():
+def test_apply_restriction_publishes_status_applied(beliefs_stub):
     svc = _make_kernel_service()
-    _mock_beliefs_profiles.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
+    beliefs_stub.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
 
     _run(svc._apply_restriction(_restrict_payload()))
 
@@ -121,11 +134,12 @@ def test_apply_restriction_returns_false_when_no_profile():
 # Tests: _handle_restrict_request
 # ---------------------------------------------------------------------------
 
-def test_restrict_request_broadcasts_policy_restrict():
+
+def test_restrict_request_broadcasts_policy_restrict(beliefs_stub):
     """Kernel must re-publish policy.restrict when it approves a request."""
     svc = _make_kernel_service()
     payload = _restrict_payload()
-    _mock_beliefs_profiles.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
+    beliefs_stub.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
 
     _run(svc._handle_restrict_request(payload))
 
@@ -139,14 +153,13 @@ def test_restrict_request_broadcasts_policy_restrict():
     assert policy_restrict_publishes[0][1] is payload
 
 
-def test_restrict_request_does_not_broadcast_when_rejected():
+def test_restrict_request_does_not_broadcast_when_rejected(beliefs_stub):
     """If the restriction is rejected (ValueError), policy.restrict must NOT be published."""
     svc = _make_kernel_service()
-    _mock_beliefs_profiles.apply_runtime_restrictions.side_effect = ValueError("out of bounds")
+    beliefs_stub.apply_runtime_restrictions.side_effect = ValueError("out of bounds")
 
     _run(svc._handle_restrict_request(_restrict_payload()))
 
-    _mock_beliefs_profiles.apply_runtime_restrictions.side_effect = None  # reset
     policy_restrict_publishes = [
         subj for subj, _ in svc._published if subj == Subjects.POLICY_RESTRICT
     ]
@@ -172,11 +185,12 @@ def test_restrict_request_does_not_broadcast_when_no_profile():
 # Tests: SAFE_HALT broadcasts policy.restrict directly (no subscription round-trip)
 # ---------------------------------------------------------------------------
 
-def test_safe_halt_broadcasts_policy_restrict():
+
+def test_safe_halt_broadcasts_policy_restrict(beliefs_stub):
     """SAFE_HALT must publish policy.restrict to zero all motor channels."""
     svc = _make_kernel_service()
     svc._evaluator.halt = MagicMock()
-    _mock_beliefs_profiles.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
+    beliefs_stub.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
 
     _run(svc._handle_safety_halt({"reason": "operator halt", "operator_id": "op1"}))
 
@@ -190,11 +204,11 @@ def test_safe_halt_broadcasts_policy_restrict():
         assert motor_limits[ch]["max_intensity"] == 0.0
 
 
-def test_safe_halt_calls_evaluator_halt():
+def test_safe_halt_calls_evaluator_halt(beliefs_stub):
     """SAFE_HALT must call evaluator.halt() to deny all future proposals."""
     svc = _make_kernel_service()
     svc._evaluator.halt = MagicMock()
-    _mock_beliefs_profiles.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
+    beliefs_stub.apply_runtime_restrictions.return_value = svc._evaluator._body_profile
 
     _run(svc._handle_safety_halt({"reason": "test", "operator_id": "op1"}))
 
@@ -204,6 +218,7 @@ def test_safe_halt_calls_evaluator_halt():
 # ---------------------------------------------------------------------------
 # Tests: NATS config — privileged subject permission matrix
 # ---------------------------------------------------------------------------
+
 
 def _read_nats_conf() -> str:
     from pathlib import Path
@@ -224,7 +239,6 @@ def test_nats_conf_kernel_publish_includes_decision_subjects():
 
 def test_nats_conf_non_kernel_services_deny_privileged_subjects():
     conf = _read_nats_conf()
-    # Each of the three non-kernel safety services must have policy.* in their deny list.
     deny_count = conf.count('"policy.*"')
     assert deny_count >= 3, (
         f"Expected deny entries for policy.* in safety-supervisor, beliefs, overrides "
@@ -234,9 +248,7 @@ def test_nats_conf_non_kernel_services_deny_privileged_subjects():
 
 def test_nats_conf_decision_subject_denied_for_non_kernel_services():
     conf = _read_nats_conf()
-    # Count deny entries for decision.> (safety-supervisor, beliefs, overrides)
     deny_count = conf.count('"decision.>"')
-    # Should appear in kernel's allow list + 3 service deny lists = at least 4 occurrences
     assert deny_count >= 4, (
         f"Expected decision.> in kernel allow + 3 service deny lists (got {deny_count})"
     )
