@@ -7,6 +7,7 @@ tests in isolated sandboxes, and deploys after Kernel approval.
 
 import asyncio
 import json
+import math
 import os
 import time
 from typing import Any, Optional
@@ -52,7 +53,15 @@ class MetaProgrammerService(BaseService):
         self._sweep_task: Optional[asyncio.Task] = None
 
         # Post-deploy health probe timeout (E1.9.2); 0 disables the probe.
-        self._health_probe_timeout = float(os.environ.get("HEALTH_PROBE_TIMEOUT_SECONDS", "5.0"))
+        # Reject nan/inf/negative — any of these would silently disable or
+        # mis-configure the fail-closed probe, which is a safety violation.
+        _raw_timeout = float(os.environ.get("HEALTH_PROBE_TIMEOUT_SECONDS", "5.0"))
+        if not (math.isfinite(_raw_timeout) and _raw_timeout >= 0.0):
+            raise ValueError(
+                "HEALTH_PROBE_TIMEOUT_SECONDS must be 0 (probe disabled) or a "
+                f"positive finite number; got {os.environ.get('HEALTH_PROBE_TIMEOUT_SECONDS')!r}"
+            )
+        self._health_probe_timeout = _raw_timeout
 
         # Metrics
         self._gaps_processed = 0
@@ -349,7 +358,9 @@ class MetaProgrammerService(BaseService):
             # code compiles, run a post-deploy health probe (E1.9.2), and roll
             # back to the prior content (or remove a newly-created file) on any
             # failure — never leave a broken artifact.
-            ok, detail = deploy_atomically(target_path, code, probe_timeout=self._health_probe_timeout)
+            ok, detail = await asyncio.to_thread(
+                lambda: deploy_atomically(target_path, code, probe_timeout=self._health_probe_timeout)
+            )
             if not ok:
                 if "health probe" in detail:
                     self._health_probe_failures += 1
