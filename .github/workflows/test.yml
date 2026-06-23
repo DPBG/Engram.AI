@@ -97,14 +97,15 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
+      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + External-API tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src
+          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src:external-api/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
         # Coordinator gate + dashboard auth tests load their module under test
         # directly (pure stdlib), so they need no extra service deps.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests -o addopts="" -v
+        # external-api tests inject fake clients; anthropic/openai are not imported.
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests external-api/tests -o addopts="" -v
       - name: Run Kernel + Meta-Programmer + Coordinator + Cache + Dashboard + Beliefs safety tests
         env:
           PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:cache/src:dashboard/src:beliefs/src

@@ -15,7 +15,7 @@ import time
 import uuid
 from typing import Any
 
-from activelearning.nats_client import EventBus
+from activelearning import EventBus
 
 logger = logging.getLogger(__name__)
 
