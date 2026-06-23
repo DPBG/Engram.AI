@@ -28,7 +28,7 @@ from activelearning.messages import (
     validate_payload,
 )
 from activelearning.signing import verify_decision
-from activelearning.subjects import Subjects, decision_subject
+from activelearning.subjects import Subjects, code_decision_subject, decision_subject
 
 logger = logging.getLogger(__name__)
 
@@ -520,6 +520,8 @@ class EventBus:
         self,
         trace_id: str,
         timeout: float = 30.0,
+        *,
+        code: bool = False,
     ) -> dict[str, Any]:
         """
         Wait for a Kernel decision on a specific trace_id.
@@ -532,12 +534,14 @@ class EventBus:
         Args:
             trace_id: The trace ID to wait for
             timeout: Timeout in seconds
+            code: When True, wait on ``code.decision.{trace_id}`` instead of
+                ``decision.{trace_id}`` (Kernel code-proposal gate).
 
         Returns:
             Decision data as dict
         """
-        subject = decision_subject(trace_id)
-        durable = f"waiter-{trace_id}"
+        subject = code_decision_subject(trace_id) if code else decision_subject(trace_id)
+        durable = f"waiter-{'code' if code else 'action'}-{trace_id}"
         decision_received = asyncio.Event()
         result: dict[str, Any] = {}
 
