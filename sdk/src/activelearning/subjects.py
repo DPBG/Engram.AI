@@ -21,6 +21,7 @@ class Subjects:
     # Policy
     POLICY_LOAD_PROFILE = "policy.load_profile"
     POLICY_RESTRICT = "policy.restrict"
+    POLICY_RESTRICT_REQUEST = "policy.restrict.request"
     POLICY_ROLLBACK = "policy.rollback"
     POLICY_UPDATE = "policy.update"
     COGNITIVE_RESPONSE_VALIDATE = "cognitive.response.validate"
