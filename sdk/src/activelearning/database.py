@@ -120,6 +120,12 @@ class Database:
         row = await cursor.fetchone()
         version = row[0] if row else 0
 
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema version {version} is newer than this build "
+                f"supports ({SCHEMA_VERSION}); upgrade the application"
+            )
+
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
                 await self._connection.execute(statement)

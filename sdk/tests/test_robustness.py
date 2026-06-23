@@ -78,6 +78,22 @@ class TestDatabaseInitialize:
             await db.close()
 
     @pytest.mark.asyncio
+    async def test_initialize_rejects_newer_schema_version(self, tmp_path, monkeypatch):
+        """A database written by a newer build is refused rather than downgraded."""
+        db_file = tmp_path / "future.db"
+        monkeypatch.setenv("SQLITE_PATH", str(db_file))
+        async with aiosqlite.connect(str(db_file)) as conn:
+            await conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+            await conn.commit()
+
+        db = Database()
+        try:
+            with pytest.raises(RuntimeError, match="newer"):
+                await db.initialize()
+        finally:
+            await db.close()
+
+    @pytest.mark.asyncio
     async def test_reinitialize_preserves_cache_rows(self, tmp_path, monkeypatch):
         """Once migrated, re-initialization does not re-drop the cache table."""
         db_file = tmp_path / "stable.db"
