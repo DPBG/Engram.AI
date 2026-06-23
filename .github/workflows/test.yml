@@ -117,12 +117,18 @@ jobs:
         run: uv run --no-project --with-editable ./sdk --with pytest --with networkx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
 
   sandbox:
-    name: Sandbox image build + smoke
+    name: Sandbox image build + smoke + containment
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
 
       # Builds activelearning-sandbox:latest via the build-only compose profile,
       # then runs a passing + failing generated test set inside the hardened
@@ -130,6 +136,18 @@ jobs:
       # flags in meta-programmer/.../sandbox_manager.py.
       - name: Build sandbox image + run smoke tests
         run: bash sandbox/smoke/run_smoke.sh
+
+      # Adversarial integration tests (E1.3.3): each test proves one containment
+      # property by running the payload both without its guard (baseline) and
+      # with full hardening (guarded). Removing a guard from the guarded run
+      # would break the assertion — confirming the test is sensitive to the guard.
+      - name: Run containment integration tests
+        env:
+          PYTHONPATH: meta-programmer/src
+        run: >-
+          uv run --no-project --with pytest
+          python -m pytest meta-programmer/tests/test_sandbox_containment_integration.py
+          -v -o addopts=""
 
   lint:
     name: Lint
