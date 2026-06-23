@@ -20,6 +20,18 @@ from activelearning.llm import _OllamaSession
 logger = logging.getLogger(__name__)
 
 
+def zero_vector(dimensions: int) -> list[float]:
+    """Return a zero embedding of the requested dimensionality."""
+    if dimensions <= 0:
+        raise ValueError("Embedding dimensions must be a positive integer")
+    return [0.0] * dimensions
+
+
+def is_zero_vector(vector: list[float]) -> bool:
+    """True when every component is zero (embedding failure sentinel)."""
+    return bool(vector) and all(v == 0.0 for v in vector)
+
+
 class EmbeddingService(_OllamaSession):
     """
     Generates text embeddings using Ollama's embedding model.
@@ -79,14 +91,45 @@ class EmbeddingService(_OllamaSession):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise RuntimeError(f"Ollama embedding error: {error_text}")
+                    logger.error(
+                        "Embedding backend returned HTTP %s: %s",
+                        response.status,
+                        error_text,
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
 
                 result = await response.json()
-                embedding = result["embedding"]
+                embedding = result.get("embedding")
+                if not isinstance(embedding, list):
+                    logger.error(
+                        "Embedding backend returned invalid payload",
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
+                if len(embedding) != self.dimensions:
+                    logger.error(
+                        "Embedding dimension mismatch: expected %d, got %d",
+                        self.dimensions,
+                        len(embedding),
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
+                if not all(isinstance(v, (int, float)) for v in embedding):
+                    logger.error(
+                        "Embedding payload contains non-numeric components",
+                        extra={"cache_key": cache_key[:8], "model": self.model},
+                    )
+                    return self._zero_vector()
+                embedding = [float(v) for v in embedding]
 
-        except aiohttp.ClientError as e:
-            logger.error(f"Failed to get embedding: {e}")
-            raise RuntimeError(f"Embedding service unavailable: {e}") from e
+        except Exception as e:
+            logger.error(
+                "Failed to get embedding: %s",
+                e,
+                extra={"cache_key": cache_key[:8], "model": self.model},
+            )
+            return self._zero_vector()
 
         # Cache the result
         self._add_to_cache(cache_key, embedding)
@@ -105,6 +148,10 @@ class EmbeddingService(_OllamaSession):
         # TODO: Ollama may support batch embeddings in the future
         # For now, we process sequentially with caching
         return [await self.embed_text(t) for t in texts]
+
+    def _zero_vector(self) -> list[float]:
+        """Sentinel vector returned when embedding generation fails."""
+        return zero_vector(self.dimensions)
 
     def _cache_key(self, text: str) -> str:
         """Generate cache key for text."""

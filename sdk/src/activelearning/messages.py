@@ -208,6 +208,25 @@ class ObservationMessage(WireModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class CognitiveQueryMessage(WireModel):
+    """Brain cognitive query (``cognitive.execute`` / ``cognitive.query``)."""
+
+    step: int = 0
+    prediction_error: float = 0.0
+    drives: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str = ""
+
+
+class CognitiveResponseValidateMessage(WireModel):
+    """LLM response submitted to Kernel validation gate."""
+
+    response_text: str
+    trace_id: str = ""
+    query_step: int = 0
+    prediction_error: float = 0.0
+    model: str = ""
+
+
 # Registry: subscription pattern -> wire model
 SUBJECT_SCHEMAS: dict[str, type[WireModel]] = {
     Subjects.PROPOSAL_NEW: ActionProposalMessage,
@@ -231,6 +250,9 @@ SUBJECT_SCHEMAS: dict[str, type[WireModel]] = {
     Subjects.PLANNER_MODE: PlannerModeMessage,
     Subjects.SYSTEM_SHUTDOWN: SystemShutdownMessage,
     Subjects.OBSERVATION: ObservationMessage,
+    Subjects.COGNITIVE_EXECUTE: CognitiveQueryMessage,
+    Subjects.COGNITIVE_QUERY: CognitiveQueryMessage,
+    Subjects.COGNITIVE_RESPONSE_VALIDATE: CognitiveResponseValidateMessage,
 }
 
 
