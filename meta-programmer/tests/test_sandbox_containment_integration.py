@@ -72,6 +72,7 @@ _ALL = [
     "--security-opt", "no-new-privileges",
     "--pids-limit", "100",
     "--memory", "512m",
+    "--memory-swap", "512m",   # same as --memory → zero swap, hard 512 MB limit
     "--cpus", "0.5",
     "--tmpfs", "/tmp:size=50M",
 ]
@@ -112,7 +113,7 @@ _RELAXED_PIDS = [
     "--tmpfs", "/tmp:size=50M",
 ]
 
-# Memory test baseline: limit raised to 2g → 600 MB allocation succeeds.
+# Memory test baseline: limit raised to 2g, swap unlimited → 600 MB allocation succeeds.
 _RELAXED_MEMORY = [
     "--network", "none",
     "--read-only",
@@ -120,6 +121,7 @@ _RELAXED_MEMORY = [
     "--security-opt", "no-new-privileges",
     "--pids-limit", "100",
     "--memory", "2g",
+    "--memory-swap", "-1",     # unlimited swap for baseline
     "--cpus", "0.5",
     "--tmpfs", "/tmp:size=50M",
 ]
@@ -159,6 +161,15 @@ if blocked:
     sys.exit(0)
 print(f"spawned {len(spawned)}/200 without hitting pids_limit", file=sys.stderr)
 sys.exit(1)
+"""
+
+# Memory: allocate 600 MB AND touch every page to force physical allocation.
+# bytearray() alone uses lazy (virtual) allocation — the OOM killer only fires
+# when pages are actually dirtied.  Writes one byte per 4 KB page (~150K ops).
+_PAYLOAD_MEMORY = """\
+b = bytearray(600 * 1024 * 1024)
+for i in range(0, len(b), 4096):
+    b[i] = 1
 """
 
 # Privileges: read CapBnd and NoNewPrivs from /proc/self/status.
@@ -218,9 +229,11 @@ def _listener_on_bridge():
          IMAGE, "python", "-c", _srv],
         check=True, capture_output=True,
     )
+    # Hyphens in the network name are invalid in Go template dot notation;
+    # use the index function to look up the key by string.
     r = subprocess.run(
         ["docker", "inspect", "-f",
-         "{{.NetworkSettings.Networks." + net + ".IPAddress}}", cname],
+         '{{(index .NetworkSettings.Networks "' + net + '").IPAddress}}', cname],
         check=True, capture_output=True, text=True,
     )
     ip = r.stdout.strip()
@@ -263,11 +276,15 @@ def test_network_isolation_blocks_outbound():
 def test_readonly_filesystem_blocks_root_writes():
     """
     Guard: --read-only.
-    Payload: write a file to the root filesystem (outside /tmp).
-    Without guard: write succeeds (exit 0).
-    With guard:    PermissionError raised (exit non-zero).
+    Payload: write to /var/tmp/blocked.txt (world-writable dir, mode 1777).
+    Without guard: sandbox user can write (overlay FS is writable) → exit 0.
+    With guard:    overlay FS is read-only → write fails → exit non-zero.
+
+    /blocked.txt is NOT used: the sandbox user (UID 10001, non-root) cannot
+    write to / regardless of --read-only because / is owned by root (mode 755).
+    /var/tmp has mode 1777 so any user can write there when the FS is writable.
     """
-    payload = "open('/blocked.txt', 'w').write('x')"
+    payload = "open('/var/tmp/blocked.txt', 'w').write('x')"
 
     baseline = _run(_WITHOUT_READONLY, payload)
     assert baseline.returncode == 0, (
@@ -302,21 +319,25 @@ def test_pids_limit_caps_fork_bomb():
 
 def test_memory_limit_oom_kills_over_budget():
     """
-    Guard: --memory 512m.
-    Payload: allocate a 600 MB bytearray (above the 512 MB limit).
-    Without guard (limit=2g): allocation succeeds (exit 0).
-    With guard   (limit=512m): container OOM-killed (exit 137 / non-zero).
-    """
-    payload = "bytearray(600 * 1024 * 1024)"
+    Guard: --memory 512m (+ --memory-swap 512m → zero swap, hard 512 MB limit).
+    Payload: allocate 600 MB AND touch every 4 KB page to force physical use.
+    Without guard (2g RAM, unlimited swap): allocation succeeds → exit 0.
+    With guard   (512m hard limit):         OOM-killed → exit 137 (non-zero).
 
-    baseline = _run(_RELAXED_MEMORY, payload)
+    Plain bytearray() uses lazy virtual allocation; the OOM killer only fires
+    when physical pages are dirtied.  --memory-swap 512m disables the default
+    swap headroom Docker adds (otherwise the container gets 512m RAM + 512m
+    swap = 1024m total, enough to absorb the 600 MB allocation).
+    """
+    baseline = _run(_RELAXED_MEMORY, _PAYLOAD_MEMORY)
     assert baseline.returncode == 0, (
         "baseline: 600 MB allocation must succeed under --memory 2g"
     )
 
-    guarded = _run(_ALL, payload)
+    guarded = _run(_ALL, _PAYLOAD_MEMORY)
     assert guarded.returncode != 0, (
-        "guarded: --memory 512m must OOM-kill a 600 MB allocation (typically exit 137)"
+        "guarded: --memory 512m / --memory-swap 512m must OOM-kill a 600 MB "
+        "allocation (typically exit 137)"
     )
 
 
