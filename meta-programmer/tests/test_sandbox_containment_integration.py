@@ -20,8 +20,10 @@ Skip marker at module level skips every test when either requirement is absent.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -184,27 +186,78 @@ sys.exit(0)
 """
 
 
+# ── Local bridge listener (avoids internet egress in CI) ─────────────────────
+
+
+@contextlib.contextmanager
+def _listener_on_bridge():
+    """
+    Spin up a minimal TCP listener on a user-defined Docker bridge and yield
+    (network_name, listener_ip, port).  The baseline container joins the same
+    bridge so the connection is purely local — no internet access required.
+    Cleans up the container and network on exit even if the test fails.
+    """
+    net = "engram-sandbox-net-test"
+    cname = "engram-sandbox-listener-test"
+    port = "19999"
+    _srv = (
+        "import socket; "
+        "s = socket.socket(); "
+        "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); "
+        f"s.bind(('', {port})); "
+        "s.listen(10); "
+        "s.settimeout(60); "
+        "[s.accept() for _ in range(5)]"
+    )
+    subprocess.run(
+        ["docker", "network", "create", "--driver", "bridge", net],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["docker", "run", "-d", "--rm", "--network", net, "--name", cname,
+         IMAGE, "python", "-c", _srv],
+        check=True, capture_output=True,
+    )
+    r = subprocess.run(
+        ["docker", "inspect", "-f",
+         "{{.NetworkSettings.Networks." + net + ".IPAddress}}", cname],
+        check=True, capture_output=True, text=True,
+    )
+    ip = r.stdout.strip()
+    time.sleep(1)  # let Python bind before the test container connects
+    try:
+        yield net, ip, port
+    finally:
+        subprocess.run(["docker", "rm", "-f", cname], capture_output=True)
+        subprocess.run(["docker", "network", "rm", net], capture_output=True)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
 def test_network_isolation_blocks_outbound():
     """
     Guard: --network none.
-    Payload: open an outbound TCP connection to 1.1.1.1:53.
-    Without guard: connection succeeds (exit 0).
-    With guard:    connection refused/unreachable (exit non-zero).
+    Payload: TCP connection to a listener on a local Docker bridge (no internet).
+    Without guard (joined to bridge): connection reaches listener (exit 0).
+    With guard (--network none):      no route to bridge IP (exit non-zero).
     """
-    payload = "import socket; socket.create_connection(('1.1.1.1', 53), timeout=3)"
+    with _listener_on_bridge() as (net, ip, port):
+        payload = (
+            f"import socket; socket.create_connection(('{ip}', {port}), timeout=5)"
+        )
 
-    baseline = _run(_WITHOUT_NETWORK, payload)
-    assert baseline.returncode == 0, (
-        "baseline: outbound TCP must succeed when --network none is absent"
-    )
+        # Baseline: container joined to the same bridge → connection succeeds.
+        baseline = _run(list(_WITHOUT_NETWORK) + ["--network", net], payload)
+        assert baseline.returncode == 0, (
+            "baseline: TCP must reach local listener when --network none is absent"
+        )
 
-    guarded = _run(_ALL, payload)
-    assert guarded.returncode != 0, (
-        "guarded: --network none must block all outbound connections"
-    )
+        # Guarded: --network none → no bridge interface → connection fails.
+        guarded = _run(_ALL, payload)
+        assert guarded.returncode != 0, (
+            "guarded: --network none must block connection to local bridge listener"
+        )
 
 
 def test_readonly_filesystem_blocks_root_writes():
