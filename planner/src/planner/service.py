@@ -11,6 +11,8 @@ from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 
 from activelearning import BaseService, generate_trace_id
+from activelearning.nats_client import serialize_message
+from nats.aio.msg import Msg
 
 from planner.scheduler import Scheduler, SchedulerMode, PendingAction
 
@@ -65,8 +67,10 @@ class PlannerService(BaseService):
         # Subscribe to mode change requests
         await self.event_bus.subscribe("planner.mode", self._handle_mode_change)
 
-        # Subscribe to status requests
-        await self.event_bus.subscribe("planner.status", self._handle_status)
+        # Subscribe to status requests (request-reply)
+        await self.event_bus.subscribe(
+            "planner.status", self._handle_status, is_request_handler=True,
+        )
 
         # Start action processor
         self._process_task = asyncio.create_task(self._process_actions())
@@ -189,13 +193,11 @@ class PlannerService(BaseService):
         except Exception as e:
             self.logger.error(f"Error changing mode: {e}")
 
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status requests."""
-        try:
-            status = self._scheduler.get_queue_status()
-            self.logger.debug(f"Status requested: {status}")
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = self._scheduler.get_queue_status()
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
     async def _process_actions(self) -> None:
         """Background task to process queued actions."""

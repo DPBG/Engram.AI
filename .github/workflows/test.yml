@@ -97,6 +97,20 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
+      - name: Install nats-server
+        run: |
+          set -euo pipefail
+          VERSION=v2.10.22
+          ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
+          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
+          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+          tar -xzf "${ASSET}"
+          sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
+
+      - name: Run NATS authz red-team tests (E1.1.9)
+        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest tests/red_team/ -v
+
       - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
         env:
           PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src
@@ -113,8 +127,10 @@ jobs:
         # Coordinator/cache tests load their module under test directly and inject
         # mocks (no Qdrant/Ollama), and drive coroutines with asyncio.run, so no
         # pytest-asyncio is needed. Beliefs tests need networkx (the belief graph
-        # backend).
-        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
+        # backend). The dashboard router tests exercise the FastAPI app, so add
+        # fastapi + httpx (its TestClient backend); they self-skip via importorskip
+        # if those are ever absent.
+        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
 
   sandbox:
     name: Sandbox image build + smoke

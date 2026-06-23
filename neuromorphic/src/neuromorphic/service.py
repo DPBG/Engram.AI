@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from activelearning import BaseService
 from activelearning.core import generate_trace_id
+from activelearning.subjects import Subjects
 
 from neuromorphic.auditory_stm import AuditorySTM, AuditorySTMConfig
 from neuromorphic.config import NeuromorphicConfig
@@ -1492,8 +1493,11 @@ class NeuromorphicService(BaseService):
                 a.check_name == "motor_spam" for a in status.alerts
             )
             if status.level >= AlertLevel.EMERGENCY:
-                # Request full motor halt — all channels to 0
-                await self.event_bus.publish("policy.restrict", {
+                # Request full motor halt — all channels to 0.
+                # Brain cannot publish policy.restrict directly (ADR 0001 §3);
+                # publish policy.restrict.request and the Kernel re-publishes as
+                # authoritative policy.restrict after validation.
+                await self.event_bus.publish(Subjects.POLICY_RESTRICT_REQUEST, {
                     "motor_limits": {
                         ch: {"max_intensity": 0.0}
                         for ch in ("locomotion", "manipulation", "head", "speech")
@@ -1506,7 +1510,7 @@ class NeuromorphicService(BaseService):
                 )
             elif has_motor_spam:
                 # Motor spam: halve motor intensity
-                await self.event_bus.publish("policy.restrict", {
+                await self.event_bus.publish(Subjects.POLICY_RESTRICT_REQUEST, {
                     "motor_limits": {
                         "locomotion": {"max_intensity": 0.5},
                         "manipulation": {"max_intensity": 0.5},
