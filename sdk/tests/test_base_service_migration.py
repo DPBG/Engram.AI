@@ -19,8 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any
-from unittest.mock import AsyncMock
+from collections.abc import AsyncGenerator
 
 import pytest
 
@@ -72,15 +71,18 @@ class MinimalService(BaseService):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-async def service(nats_url: str) -> MinimalService:
-    """Started MinimalService; caller is responsible for shutdown."""
+async def service(nats_url: str) -> AsyncGenerator[MinimalService, None]:
+    """Started MinimalService with guaranteed teardown after each test."""
     svc = MinimalService(nats_url=nats_url)
     await svc.start()
-    return svc
+    try:
+        yield svc
+    finally:
+        await svc.stop()
 
 
 @pytest.fixture
-async def probe_bus(nats_url: str):
+async def probe_bus(nats_url: str) -> AsyncGenerator[EventBus, None]:
     """Independent EventBus used to publish / request from outside the service."""
     bus = EventBus(nats_url=nats_url, name=f"probe-{uuid.uuid4().hex[:8]}")
     await bus.connect()
@@ -253,7 +255,6 @@ async def test_reconnect_restores_subscriptions(
     await probe_bus.publish("test.topic", payload)
 
     await wait_for_message(lambda: any(m.get("value") == 99 for m in service.received))
-    await service.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +283,6 @@ async def test_validation_drops_bad_messages(
     assert not any("bad_field" in m for m in service.received), (
         "Validation did not drop the malformed message"
     )
-    await service.stop()
 
 
 @pytest.mark.asyncio

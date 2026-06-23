@@ -304,8 +304,10 @@ errors (accidentally subscribing twice). The warning level makes it detectable i
 ### 4.6 Signal handling not available on Windows
 
 `loop.add_signal_handler()` raises `NotImplementedError` on Windows. `BaseService.run()`
-silently ignores this. On Windows, `Ctrl+C` raises `KeyboardInterrupt`, which `run()`
-catches and treats as a shutdown signal. `SIGTERM` is unavailable on Windows.
+silently ignores this. On Windows, `Ctrl+C` raises `KeyboardInterrupt`, which inherits
+from `BaseException` — **not** `Exception` — so it is not caught by `run()`'s
+`except Exception` handler. It propagates out of `run()`, but `stop()` is still
+guaranteed to execute via the `finally` block. `SIGTERM` is unavailable on Windows.
 
 ---
 
