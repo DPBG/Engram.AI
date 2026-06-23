@@ -54,7 +54,16 @@ class KernelService(BaseService):
         self._deny_tracker = DecisionSequenceTracker()
 
         # Heartbeat (E1.9.3): publish kernel.heartbeat so the watchdog can detect loss.
-        self._heartbeat_interval_s = float(os.environ.get("KERNEL_HEARTBEAT_INTERVAL_S", "5.0"))
+        # A non-positive or non-finite interval would collapse the publish cadence,
+        # so we validate and refuse to start with an invalid configuration.
+        import math as _math
+        _raw_hb = float(os.environ.get("KERNEL_HEARTBEAT_INTERVAL_S", "5.0"))
+        if not (_math.isfinite(_raw_hb) and _raw_hb > 0.0):
+            raise ValueError(
+                "KERNEL_HEARTBEAT_INTERVAL_S must be a positive finite number; "
+                f"got {os.environ.get('KERNEL_HEARTBEAT_INTERVAL_S')!r}"
+            )
+        self._heartbeat_interval_s = _raw_hb
         self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Load body profile from env if set

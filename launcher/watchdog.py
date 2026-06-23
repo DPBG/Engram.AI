@@ -103,7 +103,6 @@ class KernelWatchdog:
                     f"kernel-loss-watchdog: no heartbeat for "
                     f"{elapsed:.1f}s (timeout={self._timeout_s}s)"
                 )
-                self._halted = True
                 self._halt_count += 1
                 log.critical("SAFE_HALT triggered — %s", reason)
                 try:
@@ -111,8 +110,11 @@ class KernelWatchdog:
                         _SAFETY_HALT,
                         {"reason": reason, "operator_id": "system:watchdog"},
                     )
+                    # Only silence after a confirmed publish; on failure the next
+                    # check cycle retries rather than leaving the system unprotected.
+                    self._halted = True
                 except Exception as exc:
-                    log.error("Failed to publish safety.halt: %s", exc)
+                    log.error("Failed to publish safety.halt: %s — will retry", exc)
 
 
 # ---------------------------------------------------------------------------
