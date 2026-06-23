@@ -199,43 +199,56 @@ class LLMCache:
                 "last_hit_at": None,
             }
 
-            # Store in Qdrant, then mirror into SQLite
+            # Store in Qdrant, then mirror into SQLite. If the mirror fails, roll
+            # the vector back so the two stores cannot diverge (a Qdrant-only
+            # entry would be served but never found by invalidation).
             await self._qdrant.upsert(
                 self.collection_name,
                 [QdrantPoint(id=prompt_hash, vector=embedding, payload=cache_entry)],
             )
             logger.debug(f"Cached response: {prompt[:50]}...")
-            await self._store_in_db(cache_entry)
+            try:
+                await self._store_in_db(cache_entry)
+            except Exception:
+                await self._rollback_qdrant(prompt_hash)
+                raise
             return True
 
         except Exception as e:
             logger.error(f"Cache store error: {e}", exc_info=True)
             return False
 
-    async def _store_in_db(self, cache_entry: Dict) -> None:
-        """Mirror a cache entry into SQLite, the index used for invalidation."""
+    async def _rollback_qdrant(self, prompt_hash: str) -> None:
+        """Best-effort removal of a vector whose SQLite mirror write failed."""
         try:
-            tags = cache_entry["tags"]
-            await self.db.execute(
-                """
-                INSERT OR REPLACE INTO llm_cache
-                (prompt_hash, prompt, response, model, tags, cached_at, hit_count, last_hit_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    cache_entry["id"],
-                    cache_entry["prompt"],
-                    cache_entry["response"],
-                    cache_entry["model"],
-                    json.dumps(tags) if tags else None,
-                    cache_entry["cached_at"],
-                    cache_entry["hit_count"],
-                    cache_entry["last_hit_at"],
-                ),
-            )
-            await self.db.commit()
+            await self._qdrant.delete(self.collection_name, [prompt_hash])
         except Exception as e:
-            logger.error(f"Error storing in DB: {e}")
+            logger.error(f"Error rolling back cache entry {prompt_hash}: {e}")
+
+    async def _store_in_db(self, cache_entry: Dict) -> None:
+        """Mirror a cache entry into SQLite, the index used for invalidation.
+
+        Raises on failure so the caller can keep the stores consistent.
+        """
+        tags = cache_entry["tags"]
+        await self.db.execute(
+            """
+            INSERT OR REPLACE INTO llm_cache
+            (prompt_hash, prompt, response, model, tags, cached_at, hit_count, last_hit_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cache_entry["id"],
+                cache_entry["prompt"],
+                cache_entry["response"],
+                cache_entry["model"],
+                json.dumps(tags) if tags else None,
+                cache_entry["cached_at"],
+                cache_entry["hit_count"],
+                cache_entry["last_hit_at"],
+            ),
+        )
+        await self.db.commit()
 
     async def _update_hit_stats(self, cache_id: str) -> None:
         """Update cache hit statistics."""

@@ -132,6 +132,31 @@ def test_set_embedding_failure_returns_false_without_upsert():
     db.execute.assert_not_called()
 
 
+def test_set_rolls_back_qdrant_when_mirror_write_fails():
+    """A failed SQLite mirror write fails the call and removes the vector, so the
+    two stores stay consistent."""
+    cache, store, _, db = _make()
+    db.execute = AsyncMock(side_effect=RuntimeError("disk full"))
+
+    ok = asyncio.run(cache.set("p", "r", tags=["code_generation"]))
+
+    assert ok is False
+    store.upsert.assert_awaited_once()
+    store.delete.assert_awaited_once()
+    collection, ids = store.delete.call_args.args
+    assert collection == "llm_cache"
+    assert len(ids) == 1
+
+
+def test_set_rollback_failure_still_reports_failure():
+    """If the rollback delete also fails, set() still reports failure."""
+    cache, store, _, db = _make()
+    db.execute = AsyncMock(side_effect=RuntimeError("disk full"))
+    store.delete = AsyncMock(side_effect=RuntimeError("qdrant down"))
+
+    assert asyncio.run(cache.set("p", "r")) is False
+
+
 def test_set_records_tags_in_both_stores():
     """Tags ride along into the Qdrant payload (a list) and the SQLite row (JSON)
     so entries can later be evicted by tag."""
