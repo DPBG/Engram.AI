@@ -6,6 +6,7 @@ each micro-service as a native Python subprocess with the right environment.
 
 ```
 python run.py --install     # one-time: install Python dependencies
+python run.py --doctor      # (optional) check your machine is set up correctly
 python run.py               # start the default "core" profile
 ```
 
@@ -47,6 +48,26 @@ python run.py                       # core
 python run.py --profile full        # core + Qdrant/Ollama-backed services
 python run.py --only kernel,planner # just a subset, by name
 ```
+
+## Preflight check (`--doctor`)
+
+Not sure your machine is ready? `python run.py --doctor` runs read-only checks
+and prints a report **without starting anything**:
+
+```
+python run.py --doctor
+```
+
+It verifies your Python version, that a usable `nats-server` is present (or will
+be downloaded), that the NATS client/monitor ports are free, whether the
+optional Qdrant/Ollama services are reachable, that the `data/` directory is
+writable, free disk space, and that the service registry is consistent.
+
+Each line is graded `[ OK ]`, `[WARN]`, or `[FAIL]`. Optional infrastructure
+being down is only a **warning** (those services are simply skipped on the core
+profile), so the command exits `0` whenever the stack can actually start, and
+exits non-zero only when a **blocking** problem (`[FAIL]`) must be fixed first —
+which makes it handy as a CI/setup gate, too.
 
 Services that need Qdrant/Ollama are **skipped with a warning** if those servers
 aren't reachable (override with `--skip-infra-check`).

@@ -138,6 +138,10 @@ def main() -> int:
         "--install", action="store_true", help="pip install dependencies and exit",
     )
     parser.add_argument(
+        "--doctor", action="store_true",
+        help="run preflight environment checks and exit (non-zero if any fail)",
+    )
+    parser.add_argument(
         "--no-nats", action="store_true",
         help="don't download/manage NATS (assume it's already running)",
     )
@@ -159,6 +163,9 @@ def main() -> int:
         return cmd_list()
     if args.install:
         return cmd_install()
+    if args.doctor:
+        from launcher.doctor import doctor
+        return doctor()
 
     services = resolve_services(args)
     if not services:

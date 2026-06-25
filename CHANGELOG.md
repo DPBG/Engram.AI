@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`python run.py --doctor`** — a preflight environment diagnostics command for
+  the pure-Python launcher. It runs read-only checks (Python version, a usable
+  `nats-server`, free NATS ports, optional Qdrant/Ollama reachability, a writable
+  `data/` directory, free disk space, and service-registry consistency), prints a
+  graded `[ OK ]`/`[WARN]`/`[FAIL]` report, and exits non-zero only on a blocking
+  failure — usable as a setup/CI gate. See `RUN-LOCAL.md`.
 - Open-source community health files: issue templates, pull request template,
   and a continuous integration workflow for the neuromorphic test suite.
 - `CHANGELOG.md` (this file).
