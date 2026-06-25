@@ -232,20 +232,23 @@ class MemoryService(BaseService):
         Returns:
             List of matching memories
         """
-        # Build tag matching query
-        tag_conditions = " OR ".join(
-            f"semantic_tags LIKE '%\"{tag}\"%'" for tag in tags
-        )
+        if not tags:
+            return []
 
+        placeholders = ", ".join("?" for _ in tags)
         rows = await self.database.fetchall(
             f"""
             SELECT id, trace_id, timestamp, semantic_tags, utility_score
             FROM memory_episodes
-            WHERE {tag_conditions}
+            WHERE EXISTS (
+                SELECT 1
+                FROM json_each(memory_episodes.semantic_tags) AS tag
+                WHERE tag.value IN ({placeholders})
+            )
             ORDER BY utility_score DESC, timestamp DESC
             LIMIT ?
             """,
-            (limit,),
+            (*tags, limit),
         )
 
         memories = []
