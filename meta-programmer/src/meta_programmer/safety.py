@@ -14,6 +14,15 @@ preview):
   dunder reflection (``__globals__``, ``__subclasses__`` …), and any reference
   to the safety/meta machinery itself. It sees the WHOLE file, closing the
   "hide the payload past the 500-char preview" gap.
+
+  Sink calls are resolved through their import bindings, so every way of
+  reaching a sink is caught at **high** severity — not just the attribute form
+  ``os.system(...)`` but also ``from os import system; system(...)``, aliased
+  variants (``from os import popen as p; p(...)`` / ``import os as o;
+  o.system(...)``), and wholesale ``from os import *`` of a dangerous module.
+  Closing this avoids a fail-open where a ``from``-imported command-execution
+  sink would otherwise reach only a *medium* ``dangerous_import`` finding and
+  sail through the high-severity-only deploy gate (issue #118).
 """
 
 from __future__ import annotations
@@ -86,6 +95,52 @@ def safe_deploy_path(target_path: str, allowlist: Optional[list[str]] = None) ->
     return False, f"path {resolved!r} is outside the deploy allowlist {roots}"
 
 
+def _collect_import_bindings(
+    tree: ast.AST,
+) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """First pass — map local names to the dangerous sinks they bind.
+
+    A sink can be reached through several import forms, and the call site only
+    sees the *local* name. To resolve those names back to a dangerous module we
+    record, ahead of the call walk (so the result is independent of source
+    order):
+
+    - ``module_aliases`` — local name → dangerous module top, for ``import os``
+      and ``import os as o`` (so ``o.system(...)`` resolves to ``os.system``).
+    - ``sink_aliases`` — local name → ``(module, attr)``, for
+      ``from os import system`` / ``from os import popen as p`` (so a bare
+      ``system(...)`` / ``p(...)`` call resolves to the sink). Only attributes
+      that are actually dangerous for that module are bound, so benign members
+      like ``from os import getcwd`` are not recorded.
+
+    ``from <module> import *`` is intentionally *not* expanded here — it is
+    flagged at high severity in :func:`scan_source` itself, because its bindings
+    cannot be enumerated statically.
+    """
+    module_aliases: dict[str, str] = {}
+    sink_aliases: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top in _DANGEROUS_MODULES:
+                    local = alias.asname or top
+                    module_aliases[local] = top
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if top not in _DANGEROUS_MODULES:
+                continue
+            allowed = _DANGEROUS_MODULES[top]
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                attr = alias.name
+                if allowed is None or attr in allowed:
+                    local = alias.asname or alias.name
+                    sink_aliases[local] = (top, attr)
+    return module_aliases, sink_aliases
+
+
 def scan_source(code: str) -> list[Finding]:
     """Full-source AST taint scan. Returns a list of findings (possibly empty)."""
     findings: list[Finding] = []
@@ -95,6 +150,10 @@ def scan_source(code: str) -> list[Finding]:
         tree = ast.parse(code)
     except SyntaxError as e:
         return [Finding("high", "syntax_error", f"cannot parse generated code: {e}")]
+
+    # Resolve import bindings first so call sites can map local names → sinks
+    # regardless of where the import appears relative to the call.
+    module_aliases, sink_aliases = _collect_import_bindings(tree)
 
     for node in ast.walk(tree):
         # Calls: eval/exec/compile/__import__, os.system, subprocess.*, getattr(__x__)
@@ -109,8 +168,15 @@ def scan_source(code: str) -> list[Finding]:
                                 and arg.value.startswith("__")):
                             findings.append(Finding("high", "dynamic_attr",
                                                     f"{fn.id}(..., {arg.value!r})"))
+                elif fn.id in sink_aliases:
+                    # A ``from <mod> import <sink>`` name called directly.
+                    mod, attr = sink_aliases[fn.id]
+                    findings.append(Finding("high", "dangerous_call",
+                                            f"{mod}.{attr}() via from-import {fn.id!r}"))
             elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
-                mod, attr = fn.value.id, fn.attr
+                # Resolve aliased module imports (``import os as o`` → o.system).
+                mod = module_aliases.get(fn.value.id, fn.value.id)
+                attr = fn.attr
                 allowed = _DANGEROUS_MODULES.get(mod, "MISS")
                 if allowed != "MISS" and (allowed is None or attr in allowed):
                     findings.append(Finding("high", "dangerous_call", f"{mod}.{attr}()"))
@@ -128,6 +194,11 @@ def scan_source(code: str) -> list[Finding]:
             top = mod.split(".")[0]
             if top in _DANGEROUS_MODULES:
                 findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
+                # A wholesale star-import of a dangerous module pulls its sinks
+                # into the namespace untrackably — block it outright.
+                if any(alias.name == "*" for alias in node.names):
+                    findings.append(Finding("high", "star_dangerous_import",
+                                            f"from {mod} import *"))
             if any(s in mod.lower() for s in _SELF_REF):
                 findings.append(Finding("high", "self_referential", f"from {mod} import …"))
 

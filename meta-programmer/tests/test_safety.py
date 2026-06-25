@@ -69,6 +69,74 @@ def test_benign_os_path_is_not_high_severity():
     assert is_dangerous("import os\np = os.path.join('a', 'b')") is False
 
 
+# ── from-import / alias / star evasions of dangerous sinks (issue #118) ───────
+
+def test_from_import_os_system_flagged():
+    # The original fail-open: `from os import system; system(...)` reached only a
+    # medium import finding and bypassed the high-severity-only deploy gate.
+    assert is_dangerous("from os import system\nsystem('rm -rf /')")
+
+
+def test_from_import_subprocess_run_flagged():
+    assert is_dangerous("from subprocess import run\nrun(['ls'])")
+
+
+def test_from_import_aliased_sink_flagged():
+    assert is_dangerous("from os import popen as p\np('id')")
+
+
+def test_from_import_star_of_dangerous_module_flagged():
+    assert is_dangerous("from os import *\nsystem('id')")
+
+
+def test_aliased_module_import_attr_call_flagged():
+    # `import os as o; o.system(...)` — the attribute form with an aliased module.
+    assert is_dangerous("import os as o\no.system('id')")
+
+
+def test_aliased_subprocess_module_call_flagged():
+    assert is_dangerous("import subprocess as sp\nsp.Popen(['sh'])")
+
+
+def test_from_import_shutil_rmtree_flagged():
+    assert is_dangerous("from shutil import rmtree\nrmtree('/')")
+
+
+def test_from_import_os_remove_aliased_flagged():
+    assert is_dangerous("from os import remove as rm\nrm('/etc/passwd')")
+
+
+def test_from_import_dangerous_call_is_high_with_rule():
+    findings = scan_source("from os import system\nsystem('id')")
+    high = [f for f in findings if f.severity == "high"]
+    assert any(f.rule == "dangerous_call" for f in high)
+
+
+def test_star_import_emits_high_star_rule():
+    findings = scan_source("from subprocess import *\nrun(['ls'])")
+    assert any(
+        f.severity == "high" and f.rule == "star_dangerous_import" for f in findings
+    )
+
+
+# ── from-import of a BENIGN member must NOT be a false positive ───────────────
+
+def test_from_import_benign_os_member_not_flagged():
+    # `getcwd` is not in os's dangerous-attribute set, so binding it is safe.
+    assert is_dangerous("from os import getcwd\nprint(getcwd())") is False
+
+
+def test_from_import_benign_then_dangerous_mix():
+    # The benign name is fine; only the genuine sink should trip the gate.
+    code = "from os import getcwd, system\nx = getcwd()\nsystem('id')"
+    assert is_dangerous(code)
+
+
+def test_local_function_shadowing_sink_name_not_flagged():
+    # A locally-defined `system()` with no dangerous import is not a sink.
+    assert is_dangerous("def system(x):\n    return x\nsystem('hello')") is False
+
+
 # ── deploy-path allowlist + traversal/symlink protection (1.4) ────────────────
 
 def test_path_inside_allowlist_accepted():

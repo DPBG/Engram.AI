@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refreshed `README.md` with a project-status notice, known limitations, and
   status badges. Updated `CONTRIBUTING.md` for an open-source workflow.
 
+### Security
+- **Meta-Programmer source scanner no longer fails open on `from`-imported
+  sinks (issue #118).** `meta_programmer.safety.scan_source` now resolves
+  dangerous-sink calls through their import bindings, so command-execution
+  sinks reached via `from os import system`, aliased imports
+  (`from os import popen as p`, `import os as o`), and wholesale
+  `from os import *` are flagged at **high** severity and blocked by the deploy
+  gate — previously they produced only a *medium* `dangerous_import` finding and
+  bypassed the high-severity-only gate.
+
 ## [0.1.0] - 2026-06-06
 
 Initial public release of Engram — a self-aware, continuously-learning
