@@ -89,7 +89,17 @@ class SafetySupervisorService(BaseService):
             self.logger.debug(f"Action {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}")
 
         except Exception as e:
-            self.logger.error(f"Error analyzing action: {e}")
+            self.logger.error(f"Error analyzing action: {e}", exc_info=True)
+            if msg and msg.reply:
+                await msg.respond(
+                    serialize_message(
+                        {
+                            "type": "error",
+                            "error": str(e),
+                            "trace_id": data.get("trace_id", ""),
+                        }
+                    )
+                )
 
     async def _handle_code_analysis(self, data: dict, msg=None) -> None:
         """Handle code analysis requests from Kernel via request-reply."""
@@ -121,7 +131,17 @@ class SafetySupervisorService(BaseService):
             self.logger.debug(f"Code {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}")
 
         except Exception as e:
-            self.logger.error(f"Error analyzing code: {e}")
+            self.logger.error(f"Error analyzing code: {e}", exc_info=True)
+            if msg and msg.reply:
+                await msg.respond(
+                    serialize_message(
+                        {
+                            "type": "error",
+                            "error": str(e),
+                            "trace_id": data.get("trace_id", ""),
+                        }
+                    )
+                )
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""

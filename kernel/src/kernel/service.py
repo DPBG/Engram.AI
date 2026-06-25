@@ -21,7 +21,13 @@ from activelearning.subjects import (
 )
 from nats.aio.msg import Msg
 
-from kernel.evaluator import KernelEvaluator, KernelDecision, RiskAnalysis, DecisionType
+from kernel.evaluator import (
+    KernelEvaluator,
+    KernelDecision,
+    RiskAnalysis,
+    DecisionType,
+    unavailable_risk_analysis,
+)
 from kernel.policy import (
     PolicyRollbackManager,
     DecisionSequenceTracker,
@@ -594,8 +600,18 @@ class KernelService(BaseService):
         self,
         proposal: dict,
         is_code: bool = False,
-    ) -> Optional[RiskAnalysis]:
+    ) -> RiskAnalysis:
         """Request risk analysis from Safety Supervisor."""
+        trace_id = proposal.get("trace_id", "")
+
+        def _unavailable(reason: str) -> RiskAnalysis:
+            self.logger.warning(
+                "Safety analysis unavailable for %s: %s — failing closed",
+                trace_id,
+                reason,
+            )
+            return unavailable_risk_analysis(trace_id)
+
         try:
             # Request analysis from Safety Supervisor
             subject = Subjects.SAFETY_ANALYZE_CODE if is_code else Subjects.SAFETY_ANALYZE_ACTION
@@ -608,17 +624,15 @@ class KernelService(BaseService):
 
             data = response
             if data.get("type") == "error":
-                self.logger.warning(f"Safety Supervisor error: {data.get('error', 'unknown')}")
-                return None
+                return _unavailable(data.get("error", "unknown"))
             return RiskAnalysis(
-                trace_id=data.get("trace_id", ""),
+                trace_id=data.get("trace_id", trace_id),
                 risk_score=data.get("risk_score", 0.0),
                 flags=data.get("flags", []),
                 recommendations=data.get("recommendations", []),
             )
         except Exception as e:
-            self.logger.warning(f"Could not get risk analysis: {e}")
-            return None
+            return _unavailable(str(e))
 
     async def _check_belief_norms(
         self,

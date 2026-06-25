@@ -10,6 +10,10 @@ def _ev():
     return KernelEvaluator()
 
 
+def _low_risk() -> RiskAnalysis:
+    return RiskAnalysis(trace_id="t", risk_score=0.0, flags=[])
+
+
 def _proposal(target="/data/plugins/p.py", preview="x = 1"):
     return {"trace_id": "t", "target_path": target, "code_preview": preview}
 
@@ -32,24 +36,51 @@ def test_self_referential_code_denied_not_deferred():
 
 
 def test_dangerous_pattern_defers():
-    d = _ev().evaluate_code_proposal(_proposal(preview="subprocess.run(['ls'])"))
+    d = _ev().evaluate_code_proposal(
+        _proposal(preview="subprocess.run(['ls'])"),
+        risk_analysis=_low_risk(),
+    )
     assert d.type == DecisionType.DEFER
 
 
 def test_defer_carries_expiry_deadline():
     # Phase 1.9: a DEFER is not open-ended — it has a deadline so an unanswered
     # human review can be failed closed (DENY) instead of lingering forever.
-    d = _ev().evaluate_code_proposal(_proposal(preview="subprocess.run(['ls'])"))
+    d = _ev().evaluate_code_proposal(
+        _proposal(preview="subprocess.run(['ls'])"),
+        risk_analysis=_low_risk(),
+    )
     assert d.type == DecisionType.DEFER
     assert d.expires_at is not None
     assert d.expires_at > d.issued_at
 
 
 def test_clean_code_allowed():
-    d = _ev().evaluate_code_proposal(_proposal(preview="def add(a, b):\n    return a + b\n"))
+    d = _ev().evaluate_code_proposal(
+        _proposal(preview="def add(a, b):\n    return a + b\n"),
+        risk_analysis=_low_risk(),
+    )
     assert d.type == DecisionType.ALLOW
     # ALLOW decisions carry a TTL so stale approvals can't be replayed forever.
     assert d.expires_at is not None
+
+
+def test_missing_risk_analysis_denies_action():
+    d = _ev().evaluate_action_proposal(
+        {"trace_id": "t", "action": {"channel": "head", "intensity": 0.1}},
+        risk_analysis=None,
+    )
+    assert d.type == DecisionType.DENY
+    assert d.risk_score >= 0.8
+
+
+def test_missing_risk_analysis_denies_clean_code():
+    d = _ev().evaluate_code_proposal(
+        _proposal(preview="def add(a, b):\n    return a + b\n"),
+        risk_analysis=None,
+    )
+    assert d.type == DecisionType.DENY
+    assert d.risk_score >= 0.8
 
 
 # ── SAFE_HALT kill switch (Phase 1.9) ────────────────────────────────────────
@@ -77,7 +108,10 @@ def test_resume_restores_normal_evaluation():
     ev.halt()
     ev.resume()
     assert ev.is_halted is False
-    d = ev.evaluate_code_proposal(_proposal(preview="def add(a, b):\n    return a + b\n"))
+    d = ev.evaluate_code_proposal(
+        _proposal(preview="def add(a, b):\n    return a + b\n"),
+        risk_analysis=_low_risk(),
+    )
     assert d.type == DecisionType.ALLOW
 
 
