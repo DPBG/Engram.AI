@@ -77,8 +77,14 @@ def base_env() -> dict:
 
 def cmd_install() -> int:
     req = ROOT / "requirements-local.txt"
-    log.info("Installing Python dependencies from %s", req.name)
-    rc = subprocess.call([sys.executable, "-m", "pip", "install", "-r", str(req)])
+    constraints = ROOT / "constraints.txt"
+    # Pin shared dependency floors to the same single source of truth Docker
+    # builds use (CLAUDE.md §7), so the pure-Python path can't silently diverge.
+    log.info("Installing Python dependencies from %s (constraints: %s)", req.name, constraints.name)
+    cmd = [sys.executable, "-m", "pip", "install", "-r", str(req)]
+    if constraints.is_file():
+        cmd += ["-c", str(constraints)]
+    rc = subprocess.call(cmd)
     if rc == 0:
         log.info("Dependencies installed.")
     else:

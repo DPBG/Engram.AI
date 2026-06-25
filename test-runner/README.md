@@ -26,17 +26,36 @@ The Test Runner provides a complete testing environment with:
 
 ## Usage
 
-Run integration tests:
+The suite has two tiers:
+
+- **Bus integration tests** (`test_nats_flow.py`, `test_jetstream_durability.py`,
+  `test_sdk_integration.py`) run against a live NATS broker only — no other
+  services required. These run in CI (the `integration` job) with hard
+  assertions.
+- **Full-stack flow tests** (`test_core_services.py`) exercise
+  observation → planner → kernel → actuator paths and require the actual
+  services to be running. They self-skip their assertions when services are
+  absent, so they are **not** part of the CI gate.
+
+### Bus integration tests (broker only)
 
 ```bash
-# Via docker-compose
-docker compose --profile testing up test-runner
+# Start a JetStream-enabled broker, then run the broker-only subset:
+nats-server -js &
+NATS_URL=nats://localhost:4222 python -m pytest \
+    src/test_runner/tests/test_nats_flow.py \
+    src/test_runner/tests/test_jetstream_durability.py \
+    src/test_runner/tests/test_sdk_integration.py -v
+```
 
-# Or manually
-docker build -t activelearning-test-runner:latest test-runner/
-docker run --rm --network activelearning-public \
-    -e NATS_URL=nats://nats:4222 \
-    activelearning-test-runner:latest
+### Full-stack flow tests (requires running services)
+
+Bring up the stack (see the repository `RUN-LOCAL.md` or `docker compose up`),
+then point the tests at the same broker:
+
+```bash
+NATS_URL=nats://localhost:4222 python -m pytest \
+    src/test_runner/tests/test_core_services.py -v
 ```
 
 ## Test Structure

@@ -122,7 +122,6 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + External-API tests
       - name: Install nats-server
         run: |
           set -euo pipefail
@@ -159,6 +158,14 @@ jobs:
         # if those are ever absent.
         run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
 
+      - name: Run Memory + Planner tests
+        env:
+          PYTHONPATH: memory/src:planner/src
+        # Memory tests use SQLite via the SDK Database helper plus mocked Qdrant
+        # (qdrant-client ships with the SDK); the planner scheduler tests are pure
+        # stdlib. Both suites are async, so add pytest-asyncio and enable auto mode.
+        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest memory/tests planner/tests -o addopts="" -o asyncio_mode=auto -v
+
   sandbox:
     name: Sandbox image build + smoke + containment
     runs-on: ubuntu-latest
@@ -193,6 +200,62 @@ jobs:
           uv run --no-project --with pytest
           python -m pytest meta-programmer/tests/test_sandbox_containment_integration.py
           -v -o addopts=""
+
+  integration:
+    name: Integration (NATS bus) tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install nats-server
+        run: |
+          set -euo pipefail
+          VERSION=v2.10.22
+          ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
+          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
+          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+          tar -xzf "${ASSET}"
+          sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
+
+      - name: Start NATS (JetStream)
+        run: |
+          set -euo pipefail
+          nats-server -js -sd "$(mktemp -d)" -p 4222 -m 8222 >/tmp/nats.log 2>&1 &
+          for _ in $(seq 1 50); do
+            if curl -fs http://127.0.0.1:8222/healthz >/dev/null 2>&1; then
+              echo "NATS is up"; exit 0
+            fi
+            sleep 0.2
+          done
+          echo "NATS failed to start"; cat /tmp/nats.log; exit 1
+
+      # End-to-end bus contract tests that run against a live broker only (no
+      # other services): NATS pub/sub patterns, JetStream durability, and the
+      # SDK EventBus. The full-stack flows in test_core_services.py need running
+      # services and are intentionally excluded here.
+      - name: Run test-runner bus integration suite
+        env:
+          NATS_URL: nats://127.0.0.1:4222
+        run: >-
+          uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio
+          python -m pytest
+          test-runner/src/test_runner/tests/test_nats_flow.py
+          test-runner/src/test_runner/tests/test_jetstream_durability.py
+          test-runner/src/test_runner/tests/test_sdk_integration.py
+          -o addopts="" -o asyncio_mode=auto -v
 
   lint:
     name: Lint
