@@ -94,6 +94,50 @@ def _resolve_tainted_imports(tree: ast.AST, findings: list[Finding]) -> dict[str
     return tainted
 
 
+def _propagate_aliases(tree: ast.AST, tainted: dict[str, str]) -> None:
+    """Extend ``tainted`` through simple ``Name = Name`` rebindings (in place).
+
+    A bare call to a tainted sink (``system(...)``) is caught, but a trivial
+    local alias is not::
+
+        from os import system as s
+        runner = s          # runner is not tainted …
+        runner("id")        # … so this call would slip through (fail-open)
+
+    Conservatively propagate taint across straightforward name-to-name
+    assignments to a fixpoint (so chains ``a = s; b = a`` are covered). Dangerous
+    builtins (``eval``/``exec``/…) are seeded as sources too, so ``e = exec`` is
+    treated like ``exec`` itself. Over-tainting is acceptable here: a scanner in
+    the safety layer must fail closed.
+    """
+    sources = dict(tainted)
+    for builtin in _DANGEROUS_BUILTINS:
+        sources.setdefault(builtin, f"{builtin}")
+
+    assigns: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    assigns.append((tgt.id, node.value.id))
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and isinstance(node.value, ast.Name):
+            if isinstance(node.target, ast.Name):
+                assigns.append((node.target.id, node.value.id))
+
+    changed = True
+    while changed:
+        changed = False
+        for target, value in assigns:
+            if value in sources and target not in sources:
+                sources[target] = sources[value]
+                changed = True
+
+    # Builtins are already flagged directly; only fold back their aliases.
+    for name, detail in sources.items():
+        if name not in _DANGEROUS_BUILTINS:
+            tainted.setdefault(name, detail)
+
+
 def _allowlist_roots(allowlist: Optional[list[str]] = None) -> list[str]:
     if allowlist:
         roots = list(allowlist)
@@ -132,7 +176,9 @@ def scan_source(code: str) -> list[Finding]:
 
     # Names bound to dangerous sinks via `from <module> import <sink>`, so a bare
     # call to one (e.g. `system(...)`) is flagged like `os.system(...)` would be.
+    # Then extend that set through simple local aliases (`runner = system`).
     tainted_names = _resolve_tainted_imports(tree, findings)
+    _propagate_aliases(tree, tainted_names)
 
     for node in ast.walk(tree):
         # Calls: eval/exec/compile/__import__, os.system, subprocess.*, getattr(__x__)

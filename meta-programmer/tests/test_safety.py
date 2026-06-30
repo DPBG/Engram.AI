@@ -106,6 +106,26 @@ def test_benign_from_import_not_high_severity():
     assert is_dangerous("from os.path import join\np = join('a', 'b')") is False
 
 
+def test_aliased_local_binding_of_sink_flagged():
+    # `from os import system as s; runner = s; runner(...)` — taint must propagate
+    # through a simple local rebinding or the call slips through (fail-open).
+    assert is_dangerous("from os import system as s\nrunner = s\nrunner('id')")
+
+
+def test_alias_chain_of_sink_flagged():
+    assert is_dangerous("from os import system\na = system\nb = a\nb('id')")
+
+
+def test_aliased_local_binding_of_builtin_flagged():
+    # Builtin sinks must also survive aliasing: `e = eval; e(...)`.
+    assert is_dangerous("e = eval\ne('1 + 1')")
+
+
+def test_benign_local_alias_not_flagged():
+    # A rebinding of a harmless name must not become a high finding.
+    assert is_dangerous("runner = print\nrunner('hello')") is False
+
+
 # ── deploy-path allowlist + traversal/symlink protection (1.4) ────────────────
 
 def test_path_inside_allowlist_accepted():
