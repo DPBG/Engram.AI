@@ -69,6 +69,43 @@ def test_benign_os_path_is_not_high_severity():
     assert is_dangerous("import os\np = os.path.join('a', 'b')") is False
 
 
+# ── `from <module> import <sink>` bypass (#118) ───────────────────────────────
+# The attribute form (`import os` + `os.system`) was caught, but a sink pulled in
+# via `from os import system` is called as a bare Name and used to sail through.
+
+def test_from_import_sink_call_flagged():
+    assert is_dangerous("from os import system\nsystem('rm -rf /')")
+
+
+def test_from_import_subprocess_call_flagged():
+    assert is_dangerous("from subprocess import run\nrun(['ls'])")
+
+
+def test_from_import_aliased_sink_call_flagged():
+    assert is_dangerous("from os import popen as p\np('id')")
+
+
+def test_star_import_from_dangerous_module_flagged():
+    # A star import pulls every sink in wholesale and defeats name tracking.
+    assert is_dangerous("from os import *\nsystem('id')")
+    assert is_dangerous("from subprocess import *")
+
+
+def test_from_import_dangerous_call_is_high_and_named():
+    # Symmetric with the attribute-form finding: high severity, "mod.attr()" detail.
+    findings = scan_source("from os import system\nsystem('id')")
+    high = [f for f in findings if f.severity == "high"]
+    assert high
+    assert any(f.rule == "dangerous_call" and f.detail == "os.system()" for f in high)
+
+
+def test_benign_from_import_not_high_severity():
+    # Names outside the curated os sink set must NOT be tainted, so the resolver
+    # stays precise and doesn't over-block legitimate generated code.
+    assert is_dangerous("from os import getcwd\nprint(getcwd())") is False
+    assert is_dangerous("from os.path import join\np = join('a', 'b')") is False
+
+
 # ── deploy-path allowlist + traversal/symlink protection (1.4) ────────────────
 
 def test_path_inside_allowlist_accepted():

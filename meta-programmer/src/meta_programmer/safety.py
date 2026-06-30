@@ -60,6 +60,40 @@ class Finding:
     detail: str
 
 
+def _resolve_tainted_imports(tree: ast.AST, findings: list[Finding]) -> dict[str, str]:
+    """Map local names bound to dangerous sinks via ``from <mod> import <sink>``.
+
+    The attribute-form check in :func:`scan_source` only catches ``os.system(...)``.
+    A sink pulled in with ``from os import system`` is called as a bare ``Name``
+    (``system(...)``), so it must be tracked separately or it sails through the
+    gate (fail-open). This returns ``{local_name: "mod.attr"}`` for every name a
+    ``from <dangerous_module> import <sink> [as alias]`` brings into scope, so a
+    later bare call to that name can be flagged **high** — symmetric with the
+    attribute-form check. The curated per-module attribute set is respected, so
+    benign names (``from os import getcwd``) are *not* tainted.
+
+    ``from <dangerous_module> import *`` pulls every sink in wholesale and
+    defeats name tracking, so it is flagged **high** directly.
+    """
+    tainted: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        top = (node.module or "").split(".")[0]
+        allowed = _DANGEROUS_MODULES.get(top, "MISS")
+        if allowed == "MISS":
+            continue
+        for alias in node.names:
+            if alias.name == "*":
+                findings.append(Finding("high", "dangerous_star_import",
+                                        f"from {node.module} import *"))
+                continue
+            if allowed is None or alias.name in allowed:
+                local = alias.asname or alias.name
+                tainted[local] = f"{top}.{alias.name}"
+    return tainted
+
+
 def _allowlist_roots(allowlist: Optional[list[str]] = None) -> list[str]:
     if allowlist:
         roots = list(allowlist)
@@ -96,6 +130,10 @@ def scan_source(code: str) -> list[Finding]:
     except SyntaxError as e:
         return [Finding("high", "syntax_error", f"cannot parse generated code: {e}")]
 
+    # Names bound to dangerous sinks via `from <module> import <sink>`, so a bare
+    # call to one (e.g. `system(...)`) is flagged like `os.system(...)` would be.
+    tainted_names = _resolve_tainted_imports(tree, findings)
+
     for node in ast.walk(tree):
         # Calls: eval/exec/compile/__import__, os.system, subprocess.*, getattr(__x__)
         if isinstance(node, ast.Call):
@@ -103,6 +141,9 @@ def scan_source(code: str) -> list[Finding]:
             if isinstance(fn, ast.Name):
                 if fn.id in _DANGEROUS_BUILTINS:
                     findings.append(Finding("high", "dangerous_builtin", f"{fn.id}()"))
+                elif fn.id in tainted_names:
+                    findings.append(Finding("high", "dangerous_call",
+                                            f"{tainted_names[fn.id]}()"))
                 elif fn.id in _REFLECTION_BUILTINS:
                     for arg in node.args:
                         if (isinstance(arg, ast.Constant) and isinstance(arg.value, str)
