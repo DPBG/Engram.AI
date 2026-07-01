@@ -97,7 +97,6 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + External-API tests
       - name: Install nats-server
         run: |
           set -euo pipefail
@@ -112,7 +111,7 @@ jobs:
       - name: Run NATS authz red-team tests (E1.1.9)
         run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest tests/red_team/ -v
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
+      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + External-API tests
         env:
           PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src:external-api/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
