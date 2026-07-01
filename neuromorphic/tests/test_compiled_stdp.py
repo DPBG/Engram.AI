@@ -404,3 +404,66 @@ class TestNumPyFallbackKernels:
         assert not np.array_equal(data, data_before), "weights must change"
         assert data.min() >= 0.01 - 1e-6
         assert data.max() <= 1.0 + 1e-6
+
+    def test_neuromod_decay_sparse_fallback_with_mask(self, monkeypatch):
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
+        elig = np.array([0.05, -0.03, 0.0], dtype=np.float32)
+        data = np.array([0.5, 0.6, 0.7], dtype=np.float32)
+        data_no_mask = data.copy()
+        idx = np.array([0, 1], dtype=np.int32)
+        mask = np.array([2.0, 0.5, 1.0], dtype=np.float32)  # per-synapse scale
+        neuromod_decay_sparse(
+            elig, data_no_mask, idx, 1.0, 1.0, np.float32(0.999),
+            np.float32(0.01), np.float32(1.0), np.float32(1e-6),
+        )
+        neuromod_decay_sparse(
+            elig.copy(), data, idx, 1.0, 1.0, np.float32(0.999),
+            np.float32(0.01), np.float32(1.0), np.float32(1e-6),
+            plasticity_mask=mask,
+        )
+        # mask=2.0 on idx[0] should amplify the weight update; 0.5 attenuates idx[1]
+        delta_no_mask_0 = data_no_mask[0] - 0.5
+        delta_masked_0 = data[0] - 0.5
+        assert abs(delta_masked_0) > abs(delta_no_mask_0) - 1e-7, (
+            "mask=2.0 must amplify the weight change on idx[0]"
+        )
+        delta_no_mask_1 = data_no_mask[1] - 0.6
+        delta_masked_1 = data[1] - 0.6
+        assert abs(delta_masked_1) < abs(delta_no_mask_1) + 1e-7, (
+            "mask=0.5 must attenuate the weight change on idx[1]"
+        )
+        # idx[2] is not in active set — must be untouched
+        assert data[2] == 0.7
+
+    def test_neuromod_decay_full_fallback_with_mask(self, monkeypatch):
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
+        elig = np.array([0.05, -0.03], dtype=np.float32)
+        data = np.array([0.5, 0.6], dtype=np.float32)
+        data_zero_mask = data.copy()
+        mask_zero = np.zeros(2, dtype=np.float32)
+        neuromod_decay_full(
+            elig.copy(), data_zero_mask, 1.0, 1.0, np.float32(0.999),
+            np.float32(0.01), np.float32(1.0), plasticity_mask=mask_zero,
+        )
+        # zero mask means dw is zeroed → weights stay at their initial values
+        np.testing.assert_array_equal(
+            data_zero_mask, np.array([0.5, 0.6], dtype=np.float32),
+            err_msg="zero plasticity_mask must produce no weight change",
+        )
+        data_full_mask = data.copy()
+        mask_double = np.full(2, 2.0, dtype=np.float32)
+        neuromod_decay_full(
+            elig.copy(), data_full_mask, 1.0, 1.0, np.float32(0.999),
+            np.float32(0.01), np.float32(1.0), plasticity_mask=mask_double,
+        )
+        data_no_mask = data.copy()
+        neuromod_decay_full(
+            elig.copy(), data_no_mask, 1.0, 1.0, np.float32(0.999),
+            np.float32(0.01), np.float32(1.0),
+        )
+        np.testing.assert_allclose(
+            np.abs(data_full_mask - np.array([0.5, 0.6], dtype=np.float32)),
+            np.abs(data_no_mask - np.array([0.5, 0.6], dtype=np.float32)) * 2.0,
+            rtol=1e-5,
+            err_msg="mask=2.0 must double the weight delta vs no mask",
+        )
