@@ -115,7 +115,7 @@ async def run_live(nats_url: str, duration_s: float) -> None:
         print(f"  bus ← observation: {temp} °C  /  {hum} % RH")
         received.append(data)
 
-    subject = f"observation.sensor.temperature.room"
+    subject = "observation.sensor.temperature.room"
     await bus.subscribe(subject, on_observation)
 
     # Start the sensor emit loop.
@@ -130,9 +130,10 @@ async def run_live(nats_url: str, duration_s: float) -> None:
 
     print(f"\nTotal observations delivered to bus: {len(received)}")
     print()
-    print("Actuator note: submit_and_execute() requires the Kernel service.")
-    print("With 'python run.py --profile full' running, replace the direct")
-    print("_do_execute() call with actuator.submit_and_execute(proposal).")
+    print("Actuator note: submit_and_execute() requires the Kernel service,")
+    print("which is already running under the default core profile ('python")
+    print("run.py') — replace the direct _do_execute() call with")
+    print("actuator.submit_and_execute(proposal) to exercise it.")
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,12 @@ To run against a local Engram stack (python run.py must be running):
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+# Allow running from the repo root without installing the SDK.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from activelearning.core import ActionProposal, KernelDecisionType, generate_trace_id
 from activelearning.plugins import ActuatorPlugin, PluginCapability, RiskClass, register_actuator

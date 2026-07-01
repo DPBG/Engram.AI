@@ -261,6 +261,11 @@ python run.py
 PYTHONPATH=sdk/src python sdk/examples/run_plugin_examples.py --live
 ```
 
+Plain `python run.py` (the default **core** profile) is enough here — it
+already includes the Kernel, so both the sensor's live NATS flow and the
+actuator's Kernel-gated `submit_and_execute()` path work without
+`--profile full` (that profile only adds Qdrant/Ollama-backed services).
+
 The base classes handle rate-limiting, NATS publishing, envelope validation,
 and Kernel approval gating automatically — you only implement `capture()` or
 `_do_execute()`. See [`sdk/src/activelearning/plugins.py`](sdk/src/activelearning/plugins.py)
