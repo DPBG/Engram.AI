@@ -8,11 +8,9 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 import asyncio
 import json
 import os
-import time
-import uuid
 from typing import Any, Optional
 
-from activelearning import BaseService, sign_decision
+from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import (
     Subjects,
@@ -159,7 +157,7 @@ class KernelService(BaseService):
                 await asyncio.sleep(self._heartbeat_interval_s)
                 await self.event_bus.publish(
                     Subjects.KERNEL_HEARTBEAT,
-                    {"status": "alive", "timestamp": int(time.time() * 1000)},
+                    {"status": "alive", "timestamp": current_timestamp()},
                 )
             except asyncio.CancelledError:
                 break
@@ -798,7 +796,7 @@ class KernelService(BaseService):
             await self.database.insert(
                 "kernel_decisions",
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": generate_trace_id(),
                     "trace_id": trace_id,
                     "proposal_type": proposal_type,
                     "decision_type": decision.type.value,
