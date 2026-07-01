@@ -5,6 +5,9 @@
 > labelled **`good first issue`** and referencing `Closes #146` in the first issue
 > or as a group note.
 >
+> **7 issues total: 4 documentation · 3 test-coverage**
+> (Issues 1, 2, 3, 7 add docstrings; Issues 4, 5, 6 add missing test files.)
+>
 > None of these touch the safety-critical areas listed in CLAUDE.md §3
 > (`kernel/`, `safety-supervisor/`, `meta-programmer/`, `overrides/`, `beliefs/`).
 
