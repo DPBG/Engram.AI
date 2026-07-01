@@ -205,6 +205,9 @@ jobs:
     name: Integration (NATS bus) tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write  # setup-uv cache (actions/cache save/restore)
     strategy:
       fail-fast: false
       matrix:
