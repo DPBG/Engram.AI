@@ -231,6 +231,41 @@ before implementing.
 - Component services (`coordinator/`, `memory/`, `beliefs/`, etc.)
 - Documentation and examples — always welcome, great for first-time contributors
 
+## Writing a Plugin (Sensor or Actuator)
+
+The SDK ships minimal, fully-commented reference implementations in
+[`sdk/examples/`](sdk/examples/):
+
+| File | What it shows |
+|---|---|
+| [`minimal_sensor.py`](sdk/examples/minimal_sensor.py) | `SensorPlugin` subclass — synthetic temperature/humidity; only `capture()` is required |
+| [`minimal_actuator.py`](sdk/examples/minimal_actuator.py) | `ActuatorPlugin` subclass — synthetic LED strip; only `_do_execute()` is required |
+| [`run_plugin_examples.py`](sdk/examples/run_plugin_examples.py) | Standalone runner; `--live` mode connects to a running NATS stack |
+
+**Quick start (no hardware, no running stack):**
+
+```bash
+# from the repo root
+PYTHONPATH=sdk/src python sdk/examples/minimal_sensor.py
+PYTHONPATH=sdk/src python sdk/examples/minimal_actuator.py
+PYTHONPATH=sdk/src python sdk/examples/run_plugin_examples.py
+```
+
+**End-to-end with a live stack:**
+
+```bash
+# Terminal 1
+python run.py
+
+# Terminal 2
+PYTHONPATH=sdk/src python sdk/examples/run_plugin_examples.py --live
+```
+
+The base classes handle rate-limiting, NATS publishing, envelope validation,
+and Kernel approval gating automatically — you only implement `capture()` or
+`_do_execute()`. See [`sdk/src/activelearning/plugins.py`](sdk/src/activelearning/plugins.py)
+for the full interface.
+
 ## Changes That Need Extra Review
 
 These areas affect safety or system integrity and require maintainer review
