@@ -24,8 +24,8 @@ Provenance is ``sensor.imu.{port_name}``, which encoding.py routes to the
 proprioceptive sensory cortex via the ``"sensor.imu"`` prefix match in
 ``_PROVENANCE_MAP``.
 
-Graceful no-op when pyserial is absent — the import guard in
-``sensors/__init__.py`` binds ``IMUSensor = None`` and the gateway skips it.
+pyserial is imported lazily inside ``start()``; if it is absent, ``start()``
+raises ``RuntimeError``. The module itself imports without pyserial.
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ def _normalize(raw: dict) -> dict:
     """
     out: dict[str, float] = {}
     for k, v in raw.items():
-        if not isinstance(v, (int, float)):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
             continue
         key = k.lower()
         canonical = _ALIASES.get(key) or (key if key in _CANONICAL_SET else None)
