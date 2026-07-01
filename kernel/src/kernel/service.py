@@ -8,6 +8,7 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 import asyncio
 import json
 import os
+import time
 import uuid
 from typing import Any, Optional
 
@@ -25,6 +26,29 @@ from kernel.policy import (
     validate_cognitive_response,
     validate_policy_update,
 )
+
+_DECISION_TYPES = ("ALLOW", "TRANSFORM", "DENY", "DEFER")
+
+
+def _empty_bucket() -> dict[str, Any]:
+    """A zeroed decision-rate bucket: raw counts + normalized rates."""
+    return {"total": 0, "counts": {t: 0 for t in _DECISION_TYPES}, "rates": {t: 0.0 for t in _DECISION_TYPES}}
+
+
+def _accumulate(bucket: dict[str, Any], decision_type: str, count: int) -> None:
+    """Add a grouped SQL row's count into a bucket, ignoring unknown types."""
+    if decision_type not in bucket["counts"]:
+        return
+    bucket["counts"][decision_type] += count
+    bucket["total"] += count
+
+
+def _finalize_rates(bucket: dict[str, Any]) -> None:
+    """Convert accumulated counts into fractions of the bucket's total."""
+    total = bucket["total"]
+    if total <= 0:
+        return
+    bucket["rates"] = {t: round(c / total, 4) for t, c in bucket["counts"].items()}
 
 
 class KernelService(BaseService):
@@ -51,6 +75,15 @@ class KernelService(BaseService):
         # Policy management
         self._rollback = PolicyRollbackManager()
         self._deny_tracker = DecisionSequenceTracker()
+
+        # Decision-rate governance signal (M6): periodic trend publish
+        self._decision_rates_task: Optional[asyncio.Task] = None
+        self._decision_rates_interval_sec = float(
+            os.environ.get("KERNEL_DECISION_RATES_INTERVAL_SEC", "300")
+        )
+        self._decision_rates_window_hours = float(
+            os.environ.get("KERNEL_DECISION_RATES_WINDOW_HOURS", "24")
+        )
 
         # Load body profile from env if set
         self._load_body_profile()
@@ -123,10 +156,17 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(Subjects.SAFETY_HALT, self._handle_safety_halt)
         await self.event_bus.subscribe(Subjects.SAFETY_RESUME, self._handle_safety_resume)
 
+        # Decision-rate governance signal (M6): periodic trend publish
+        self._decision_rates_task = asyncio.create_task(self._decision_rates_loop())
+
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
-        # No kernel-specific resources to cleanup
-        pass
+        if self._decision_rates_task and not self._decision_rates_task.done():
+            self._decision_rates_task.cancel()
+            try:
+                await self._decision_rates_task
+            except asyncio.CancelledError:
+                pass
 
     async def _handle_safety_halt(self, data: dict) -> None:
         """Engage the system-wide kill switch (Phase 1.9).
@@ -498,12 +538,100 @@ class KernelService(BaseService):
                     "deny_count": self._deny_count,
                     "defer_count": self._defer_count,
                 },
+                "decision_rates": await self._compute_decision_rates(),
             }
 
             # Publish status response
             await self.event_bus.publish("kernel.status.response", status)
         except Exception as e:
             self.logger.error(f"Error getting status: {e}")
+
+    # ── Decision-rate governance signal (M6) ──────────────────────────────
+    #
+    # Longitudinal ALLOW/TRANSFORM/DENY/DEFER rates from the kernel_decisions
+    # audit trail, broken out by source (meta-programmer, neuromorphic,
+    # planner, ...). This is a *visibility* signal only — it never feeds back
+    # into evaluate_*_proposal, so it cannot weaken the gate (CLAUDE.md §3).
+    # It exists to catch drift in generated-code/action quality before any
+    # future work expands meta-programmer autonomy.
+
+    async def _decision_rates_loop(self) -> None:
+        """Periodically publish decision-rate stats to KERNEL_DECISION_RATES."""
+        while True:
+            try:
+                await asyncio.sleep(self._decision_rates_interval_sec)
+                rates = await self._compute_decision_rates()
+                await self.event_bus.publish(Subjects.KERNEL_DECISION_RATES, rates)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.logger.warning(f"Decision-rate publish failed: {e}")
+
+    async def _compute_decision_rates(self) -> dict[str, Any]:
+        """Aggregate kernel_decisions into all-time + windowed rates by source.
+
+        Best-effort: returns an empty-but-well-formed structure on any DB
+        error rather than raising, since this must never affect the
+        request/response path that calls it (status, periodic publish).
+        """
+        empty = {
+            "generated_at": int(time.time() * 1000),
+            "window_hours": self._decision_rates_window_hours,
+            "all_time": _empty_bucket(),
+            "window": _empty_bucket(),
+            "by_source": {},
+        }
+        if self.database is None:
+            return empty
+
+        try:
+            all_time_rows = await self.database.fetchall(
+                "SELECT decision_type, source, COUNT(*) as cnt "
+                "FROM kernel_decisions GROUP BY decision_type, source",
+            )
+            window_start_ms = int(time.time() * 1000) - int(
+                self._decision_rates_window_hours * 3600 * 1000
+            )
+            window_rows = await self.database.fetchall(
+                "SELECT decision_type, source, COUNT(*) as cnt "
+                "FROM kernel_decisions WHERE issued_at >= ? "
+                "GROUP BY decision_type, source",
+                (window_start_ms,),
+            )
+        except Exception as e:
+            self.logger.warning(f"Could not compute decision rates: {e}")
+            return empty
+
+        by_source: dict[str, Any] = {}
+        all_time_bucket = _empty_bucket()
+        window_bucket = _empty_bucket()
+
+        for row in all_time_rows:
+            _accumulate(all_time_bucket, row["decision_type"], row["cnt"])
+            source_bucket = by_source.setdefault(
+                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+            )
+            _accumulate(source_bucket["all_time"], row["decision_type"], row["cnt"])
+
+        for row in window_rows:
+            _accumulate(window_bucket, row["decision_type"], row["cnt"])
+            source_bucket = by_source.setdefault(
+                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+            )
+            _accumulate(source_bucket["window"], row["decision_type"], row["cnt"])
+
+        for bucket in [all_time_bucket, window_bucket, *(
+            b for s in by_source.values() for b in s.values()
+        )]:
+            _finalize_rates(bucket)
+
+        return {
+            "generated_at": int(time.time() * 1000),
+            "window_hours": self._decision_rates_window_hours,
+            "all_time": all_time_bucket,
+            "window": window_bucket,
+            "by_source": by_source,
+        }
 
     async def _get_risk_analysis(
         self,

@@ -71,6 +71,10 @@ _video_sessions: dict[str, dict] = {}  # session_id -> status dict
 _watchdog_status: dict[str, Any] = {}
 _deny_escalations: deque = deque(maxlen=50)
 
+# Kernel decision-rate governance signal — ALLOW/TRANSFORM/DENY/DEFER trend
+# (updated via NATS, kernel.decision_rates; see kernel/src/kernel/service.py)
+_kernel_decision_rates: dict[str, Any] = {}
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # SKILL REGISTRY — abstracted capabilities
@@ -800,6 +804,20 @@ class DashboardService:
             except Exception as e:
                 return {"error": str(e), "results": []}
 
+        # ── API: Kernel Decision Rates (governance signal, issue #143) ─
+
+        @self.app.get("/api/kernel/decision-rates")
+        async def get_kernel_decision_rates():
+            """Return the latest ALLOW/TRANSFORM/DENY/DEFER rates from the Kernel.
+
+            Populated from the periodic kernel.decision_rates NATS publish;
+            empty until the Kernel has sent its first update. Advisory only —
+            this never influences Kernel decisions, it just makes drift in
+            meta-programmer / brain proposal quality visible before autonomy
+            is expanded (see docs/META-PROGRAMMER.md).
+            """
+            return _kernel_decision_rates
+
         # ── API: Sensory Gateway ──────────────────────────────────────
 
         @self.app.get("/api/gateway")
@@ -1190,6 +1208,7 @@ class DashboardService:
                         "gateway": _gateway_status,
                         "video_sessions": list(_video_sessions.values()),
                         "halt_state": get_halt_state(),
+                        "kernel_decision_rates": _kernel_decision_rates,
                     },
                 })
 
@@ -1610,6 +1629,16 @@ class DashboardService:
                 except Exception as e:
                     self.logger.error(f"Error handling watchdog status: {e}")
 
+            async def handle_kernel_decision_rates(msg):
+                """Cache and broadcast the Kernel's periodic decision-rate trend."""
+                try:
+                    data = json.loads(msg.data.decode())
+                    global _kernel_decision_rates
+                    _kernel_decision_rates = data
+                    await self._broadcast({"type": "kernel_decision_rates", "data": data})
+                except Exception as e:
+                    self.logger.error(f"Error handling kernel decision rates: {e}")
+
             async def handle_deny_escalation(msg):
                 try:
                     data = json.loads(msg.data.decode())
@@ -1651,6 +1680,7 @@ class DashboardService:
             _dedicated_subjects.add("neuromorphic.concept.result")
             _dedicated_subjects.add("safety.watchdog.status")
             _dedicated_subjects.add("safety.deny_escalation")
+            _dedicated_subjects.add("kernel.decision_rates")
             _dedicated_subjects.add("speech.execute")
             _dedicated_subjects.add("observation.visual.body")
             _dedicated_subjects.add("safety.halt.status")
@@ -1666,6 +1696,7 @@ class DashboardService:
             await nc.subscribe("neuromorphic.concept.result", cb=handle_concept_result)
             await nc.subscribe("safety.watchdog.status", cb=handle_watchdog_status)
             await nc.subscribe("safety.deny_escalation", cb=handle_deny_escalation)
+            await nc.subscribe("kernel.decision_rates", cb=handle_kernel_decision_rates)
             await nc.subscribe("speech.execute", cb=handle_speech_execute)
             await nc.subscribe("observation.visual.body", cb=handle_visual_body)
             await nc.subscribe("safety.halt.status", cb=handle_safe_halt_status)
