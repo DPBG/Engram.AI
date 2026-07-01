@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS llm_cache (
     prompt TEXT NOT NULL,
     response TEXT NOT NULL,
     embedding_ref TEXT,  -- Reference to Qdrant vector ID
+    tags TEXT NOT NULL DEFAULT '[]',  -- JSON array of invalidation tags
     confidence REAL DEFAULT 1.0,
     hit_count INTEGER DEFAULT 0,
     last_hit_at INTEGER,

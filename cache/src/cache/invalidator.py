@@ -86,14 +86,9 @@ class CacheInvalidator:
         await self._invalidate_by_tag("task_query")
 
     async def _invalidate_by_tag(self, tag: str) -> None:
-        """
-        Invalidate cache entries by tag.
-
-        TODO: Implement tag-based indexing in cache
-        """
-        logger.info(f"Invalidating cache entries tagged: {tag}")
-        # For now, this is a no-op
-        # In a full implementation, we'd query Qdrant for entries with this tag
+        """Invalidate cache entries by tag via the cache's tag index."""
+        deleted = await self.llm_cache.invalidate_by_tag(tag)
+        logger.info(f"Invalidated {deleted} cache entries tagged: {tag}")
 
     async def _periodic_cleanup(self) -> None:
         """Periodic cleanup of old cache entries."""
@@ -102,39 +97,48 @@ class CacheInvalidator:
                 await asyncio.sleep(3600)  # Run every hour
 
                 logger.info("Running periodic cache cleanup...")
-
-                now = current_timestamp()
-                max_age_ms = self.max_age_days * 24 * 60 * 60 * 1000
-                unused_age_ms = self.unused_age_days * 24 * 60 * 60 * 1000
-
-                # Find old entries
-                cursor = await self.db.execute(
-                    """
-                    SELECT prompt_hash, cached_at, last_hit_at
-                    FROM llm_cache
-                    WHERE
-                        (cached_at < ?) OR
-                        (last_hit_at IS NOT NULL AND last_hit_at < ?)
-                    """,
-                    (now - max_age_ms, now - unused_age_ms),
-                )
-
-                rows = await cursor.fetchall()
-
-                deleted_count = 0
-                for row in rows:
-                    prompt_hash = row[0]
-                    success = await self.llm_cache.invalidate(prompt_hash)
-                    if success:
-                        deleted_count += 1
-
-                if deleted_count > 0:
-                    logger.info(f"Deleted {deleted_count} old cache entries")
+                await self._delete_expired()
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in periodic cleanup: {e}", exc_info=True)
+
+    async def _delete_expired(self) -> int:
+        """Evict entries past the age / unused-age limits.
+
+        Returns:
+            Number of entries deleted.
+        """
+        now = current_timestamp()
+        max_age_ms = self.max_age_days * 24 * 60 * 60 * 1000
+        unused_age_ms = self.unused_age_days * 24 * 60 * 60 * 1000
+
+        # ``created_at`` is the store timestamp in the shared schema; there is
+        # no ``cached_at`` column (querying it raised and silently disabled the
+        # whole sweep).
+        cursor = await self.db.execute(
+            """
+            SELECT prompt_hash, created_at, last_hit_at
+            FROM llm_cache
+            WHERE
+                (created_at < ?) OR
+                (last_hit_at IS NOT NULL AND last_hit_at < ?)
+            """,
+            (now - max_age_ms, now - unused_age_ms),
+        )
+
+        rows = await cursor.fetchall()
+
+        deleted_count = 0
+        for row in rows:
+            if await self.llm_cache.invalidate(row[0]):
+                deleted_count += 1
+
+        if deleted_count > 0:
+            logger.info(f"Deleted {deleted_count} old cache entries")
+
+        return deleted_count
 
     async def invalidate_all(self) -> int:
         """

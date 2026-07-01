@@ -80,11 +80,13 @@ class CacheService(BaseService):
         prompt = data.get("prompt", "")
         model = data.get("model", "deepseek-coder:6.7b")
         force_live = data.get("force_live", False)
+        tags = data.get("tags")
 
         result = await self._autopilot.query_llm(
             prompt=prompt,
             model=model,
             force_live=force_live,
+            tags=tags,
         )
 
         if msg.reply:

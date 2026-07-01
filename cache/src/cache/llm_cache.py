@@ -5,8 +5,9 @@ Uses vector similarity to find cached responses for similar prompts.
 """
 
 import hashlib
+import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from activelearning import (
     EmbeddingService,
@@ -124,6 +125,7 @@ class LLMCache:
         prompt: str,
         response: str,
         model: str = "deepseek-coder:6.7b",
+        tags: Optional[List[str]] = None,
     ) -> bool:
         """
         Cache an LLM response.
@@ -132,6 +134,8 @@ class LLMCache:
             prompt: The LLM prompt
             response: The LLM response
             model: Model name
+            tags: Invalidation tags (e.g. "code_generation") used by the
+                CacheInvalidator to evict this entry on relevant system events.
 
         Returns:
             bool indicating success
@@ -152,6 +156,7 @@ class LLMCache:
                 "cached_at": current_timestamp(),
                 "hit_count": 0,
                 "last_hit_at": None,
+                "tags": list(tags) if tags else [],
             }
 
             # Store in Qdrant, then mirror into SQLite
@@ -168,19 +173,26 @@ class LLMCache:
             return False
 
     async def _store_in_db(self, cache_entry: Dict) -> None:
-        """Store cache entry in SQLite."""
+        """Store cache entry in SQLite.
+
+        The columns must match ``llm_cache`` in the shared SDK schema
+        (``schema.sql``): ``id`` mirrors the prompt hash, the store timestamp
+        lands in ``created_at``, and ``tags`` is a JSON array queried by
+        :meth:`invalidate_by_tag`.
+        """
         try:
             await self.db.execute(
                 """
                 INSERT OR REPLACE INTO llm_cache
-                (prompt_hash, prompt, response, model, cached_at, hit_count, last_hit_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, prompt_hash, prompt, response, tags, created_at, hit_count, last_hit_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     cache_entry["id"],
+                    cache_entry["id"],
                     cache_entry["prompt"],
                     cache_entry["response"],
-                    cache_entry["model"],
+                    json.dumps(cache_entry.get("tags", [])),
                     cache_entry["cached_at"],
                     cache_entry["hit_count"],
                     cache_entry["last_hit_at"],
@@ -238,3 +250,36 @@ class LLMCache:
         except Exception as e:
             logger.error(f"Error invalidating cache: {e}")
             return False
+
+    async def invalidate_by_tag(self, tag: str) -> int:
+        """Invalidate every cache entry carrying ``tag``.
+
+        Tags are stored as a JSON array in the ``tags`` column; ``json_each``
+        expands them so an exact tag match selects the owning entries. Each
+        match is removed from both Qdrant and SQLite via :meth:`invalidate`.
+
+        Returns:
+            Number of entries invalidated.
+        """
+        try:
+            cursor = await self.db.execute(
+                """
+                SELECT DISTINCT llm_cache.prompt_hash
+                FROM llm_cache, json_each(llm_cache.tags)
+                WHERE json_each.value = ?
+                """,
+                (tag,),
+            )
+            rows = await cursor.fetchall()
+
+            deleted = 0
+            for row in rows:
+                if await self.invalidate(row[0]):
+                    deleted += 1
+
+            logger.info(f"Invalidated {deleted} cache entries tagged: {tag}")
+            return deleted
+
+        except Exception as e:
+            logger.error(f"Error invalidating cache by tag '{tag}': {e}")
+            return 0
