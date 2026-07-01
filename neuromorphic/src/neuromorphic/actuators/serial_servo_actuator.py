@@ -246,8 +246,12 @@ class SerialServoActuator(ActuatorPlugin[dict]):
         """Connect to hardware and start publishing heartbeats."""
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._driver.connect)
-        await super().start(bus)
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        try:
+            await super().start(bus)
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        except Exception:
+            await loop.run_in_executor(None, self._driver.disconnect)
+            raise
         logger.info(
             "SerialServoActuator '%s' started (channel=%s, servos=%s)",
             self.actuator_id, self._channel, self._servo_ids,
@@ -275,7 +279,18 @@ class SerialServoActuator(ActuatorPlugin[dict]):
         intensity = float(action.get("intensity", 0.0))
         angle = float(action.get("angle", intensity * 180.0))
         speed = float(action.get("speed", 0.5))
-        target_ids: list[int] = action.get("servo_ids", self._servo_ids)
+        requested = action.get("servo_ids")
+        if requested is not None:
+            target_ids = [sid for sid in requested if sid in self._servo_ids]
+            if not target_ids:
+                logger.warning(
+                    "SerialServoActuator '%s': all requested servo_ids %s are outside "
+                    "configured set %s — command ignored",
+                    self.actuator_id, list(requested), self._servo_ids,
+                )
+                return False
+        else:
+            target_ids = self._servo_ids
 
         loop = asyncio.get_running_loop()
         results: list[bool] = list(

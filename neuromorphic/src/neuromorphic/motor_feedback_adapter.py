@@ -69,6 +69,7 @@ class MotorFeedbackAdapter:
         # registered and is_real() is True for that channel, handle_motor_command
         # dispatches via plugin.execute() instead of publishing to motor.execute.{channel}.
         self._actuator_plugins: dict[str, Any] = {}  # ActuatorPlugin, lazy-imported
+        self._started = False
 
     async def start(self) -> None:
         """Subscribe to actuator heartbeats and guidance commands."""
@@ -89,6 +90,13 @@ class MotorFeedbackAdapter:
                 "population_vector=True requires mujoco_continuous=True for per-joint "
                 "control. Non-continuous step_command uses uniform torque."
             )
+        for ch, plugin in self._actuator_plugins.items():
+            try:
+                await plugin.start(self._bus)
+                logger.info("Started pre-registered ActuatorPlugin for channel '%s'", ch)
+            except Exception as exc:
+                logger.error("Failed to start ActuatorPlugin for channel '%s': %s", ch, exc)
+        self._started = True
         logger.info("MotorFeedbackAdapter started — listening for actuator heartbeats + guidance")
 
     async def stop(self) -> None:
@@ -105,6 +113,12 @@ class MotorFeedbackAdapter:
             await self._bus.unsubscribe(_HEARTBEAT_SUBJECT)
         except Exception:
             pass  # best-effort on shutdown
+        self._started = False
+        for ch, plugin in self._actuator_plugins.items():
+            try:
+                await plugin.stop()
+            except Exception as exc:
+                logger.debug("Error stopping ActuatorPlugin for channel '%s': %s", ch, exc)
 
     def _ensure_mujoco(self) -> MuJoCoBody:
         """Lazy-load MuJoCo body on first physics command."""
@@ -132,6 +146,20 @@ class MotorFeedbackAdapter:
         logger.info(
             "ActuatorPlugin registered for channel '%s': %s", channel, plugin.actuator_id
         )
+        if self._started:
+            asyncio.create_task(self._launch_plugin(channel, plugin))
+
+    async def _launch_plugin(self, channel: str, plugin: Any) -> None:
+        """Start a plugin registered after the adapter was already started."""
+        try:
+            await plugin.start(self._bus)
+            logger.info(
+                "Started ActuatorPlugin for channel '%s' (registered post-start)", channel,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to start ActuatorPlugin for channel '%s': %s", channel, exc,
+            )
 
     def is_real(self, channel: str) -> bool:
         """Check if channel has a live real actuator (heartbeat within timeout)."""
@@ -188,7 +216,7 @@ class MotorFeedbackAdapter:
                 motor_outcome: dict[str, Any] = {
                     "channel": channel,
                     "success": outcome_obj.success,
-                    "confidence": 0.9 if outcome_obj.success else 0.0,
+                    "confidence": 0.9 if outcome_obj.success else 0.1,
                     "proprioceptive_state": [],
                     "error_magnitude": 0.0 if outcome_obj.success else 1.0,
                 }
