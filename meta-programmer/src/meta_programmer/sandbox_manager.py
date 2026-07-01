@@ -184,12 +184,9 @@ class SandboxManager:
                 }
 
         except Exception as e:
+            # Unknown failure — we cannot confirm containment ran, so fail closed.
             logger.error(f"Sandbox error: {e}", exc_info=True)
-            return {
-                "success": False,
-                "output": "",
-                "error": str(e),
-            }
+            return self._unavailable(f"Unexpected sandbox error: {e}.")
 
     async def _wait_for_container(self, container: Container) -> dict:
         """Wait for container to complete."""
@@ -198,6 +195,8 @@ class SandboxManager:
 
     def cleanup_old_containers(self) -> None:
         """Clean up any stale sandbox containers (shouldn't happen with auto-remove)."""
+        if self.docker_client is None:
+            return
         try:
             containers = self.docker_client.containers.list(
                 all=True,
