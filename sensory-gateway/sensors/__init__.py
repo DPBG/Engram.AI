@@ -44,11 +44,17 @@ def _audio_file():
     return AudioFileSensor
 
 
+def _imu():
+    from sensors.imu import IMUSensor
+    return IMUSensor
+
+
 CameraSensor = _optional(_camera, "camera")
 MicrophoneSensor = _optional(_microphone, "microphone")
 SerialSensor = _optional(_serial, "serial")
 VideoFileSensor = _optional(_video_file, "video_file")
 AudioFileSensor = _optional(_audio_file, "audio_file")
+IMUSensor = _optional(_imu, "imu")
 
 __all__ = [
     "CameraSensor",
@@ -56,4 +62,5 @@ __all__ = [
     "SerialSensor",
     "VideoFileSensor",
     "AudioFileSensor",
+    "IMUSensor",
 ]
