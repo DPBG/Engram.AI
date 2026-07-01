@@ -9,7 +9,7 @@
 > every scale tested. That doesn't prove a real GPU would also lose — no
 > GPU hardware was available to test — but it does mean this can't be
 > merged into the default runtime path on the evidence available today.
-> See [§5](#5-recommendation) for exactly what would change that.
+> See [§6](#6-recommendation) for exactly what would change that.
 
 ## 1. Context
 
@@ -125,7 +125,7 @@ is already near-instant.
 **This does not, by itself, tell us what a real GPU would do.** GPU
 sparse SpMV wins (when it does) come from massive core-count parallelism
 on very large matrices, which this CPU-only run cannot exercise. But it
-does mean the current evidence gives no basis to expect a win — see §5.
+does mean the current evidence gives no basis to expect a win — see [§6](#6-recommendation).
 
 **CPU fallback (acceptance criterion 3):** confirmed two ways —
 (a) JAX's own device selection: `jax.devices()` returns `[CpuDevice(id=0)]`
