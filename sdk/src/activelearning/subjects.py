@@ -15,12 +15,14 @@ class Subjects:
     PROPOSAL_NEW = "proposal.new"
     CODE_PROPOSAL = "code.proposal"
     KERNEL_STATUS = "kernel.status"
+    KERNEL_DECISION_RATES = "kernel.decision_rates"
     DECISION_PREFIX = "decision."
     CODE_DECISION_PREFIX = "code.decision."
 
     # Policy
     POLICY_LOAD_PROFILE = "policy.load_profile"
     POLICY_RESTRICT = "policy.restrict"
+    POLICY_RESTRICT_REQUEST = "policy.restrict.request"
     POLICY_ROLLBACK = "policy.rollback"
     POLICY_UPDATE = "policy.update"
     COGNITIVE_RESPONSE_VALIDATE = "cognitive.response.validate"
@@ -67,6 +69,9 @@ class Subjects:
 
     # Meta-programmer / learning
     KNOWLEDGE_GAP = "knowledge.gap"
+
+    # Kernel watchdog (E1.9.3)
+    KERNEL_HEARTBEAT = "kernel.heartbeat"
 
 
 def decision_subject(trace_id: str) -> str:

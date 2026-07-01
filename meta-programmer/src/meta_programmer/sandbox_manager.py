@@ -136,6 +136,7 @@ class SandboxManager:
                     cap_drop=["ALL"],  # Drop all Linux capabilities
                     security_opt=["no-new-privileges"],  # Block privilege escalation
                     mem_limit=self.memory_limit,
+                    memswap_limit=self.memory_limit,  # disable swap (same as --memory-swap = --memory)
                     cpu_quota=self.cpu_quota,
                     pids_limit=self.max_pids,
                     detach=True,

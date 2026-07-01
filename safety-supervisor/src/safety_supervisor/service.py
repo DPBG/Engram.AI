@@ -15,6 +15,7 @@ from dataclasses import asdict
 from activelearning import BaseService
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import Subjects
+from nats.aio.msg import Msg
 
 from safety_supervisor.analyzer import RiskAnalyzer
 
@@ -49,8 +50,10 @@ class SafetySupervisorService(BaseService):
             is_request_handler=True,
         )
 
-        # Subscribe to status requests
-        await self.event_bus.subscribe(Subjects.SAFETY_STATUS, self._handle_status)
+        # Subscribe to status requests (request-reply)
+        await self.event_bus.subscribe(
+            Subjects.SAFETY_STATUS, self._handle_status, is_request_handler=True,
+        )
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
@@ -120,20 +123,17 @@ class SafetySupervisorService(BaseService):
         except Exception as e:
             self.logger.error(f"Error analyzing code: {e}")
 
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status requests."""
-        try:
-            status = {
-                "status": "running",
-                "metrics": {
-                    "analysis_count": self._analysis_count,
-                    "high_risk_count": self._high_risk_count,
-                },
-            }
-
-            await self.event_bus.publish("safety.status.response", status)
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = {
+            "status": "running",
+            "metrics": {
+                "analysis_count": self._analysis_count,
+                "high_risk_count": self._high_risk_count,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
 
 async def main() -> None:

@@ -13,12 +13,15 @@ Body-profile integration:
 
 import logging
 import re
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional, TYPE_CHECKING
-import time
 
-from activelearning import KernelDecisionType as DecisionType, RiskAnalysis
+from activelearning import (
+    KernelDecisionType as DecisionType,
+    RiskAnalysis,
+    current_timestamp,
+    generate_trace_id,
+)
 
 if TYPE_CHECKING:
     from beliefs.profiles import BodyProfile
@@ -34,7 +37,7 @@ class KernelDecision:
     reason: Optional[str] = None
     transformations: Optional[list[dict[str, Any]]] = None
     risk_score: float = 0.0
-    issued_at: int = field(default_factory=lambda: int(time.time() * 1000))
+    issued_at: int = field(default_factory=current_timestamp)
     expires_at: Optional[int] = None
 
 
@@ -149,7 +152,7 @@ class KernelEvaluator:
         Returns:
             KernelDecision
         """
-        trace_id = proposal.get("trace_id", str(uuid.uuid4()))
+        trace_id = proposal.get("trace_id", generate_trace_id())
         action = proposal.get("action", {})
 
         # Kill switch: deny everything while halted.
@@ -177,20 +180,18 @@ class KernelEvaluator:
                 risk_score=1.0,
             )
 
-        # === Body-profile checks (capability markers + motor limits) ===
-        profile_result = self._check_body_profile(action, flags)
-        if profile_result is not None:
+        # === Body-profile hard DENYs (capability markers) ===
+        # Only outright denials run here, *before* the risk thresholds. The
+        # motor-limit clamp is a TRANSFORM and is applied later (after the
+        # DENY/DEFER gates) so a clamp can never short-circuit a high-risk
+        # denial — see _apply_body_profile_clamp below.
+        profile_deny = self._check_body_profile_denials(action, flags)
+        if profile_deny is not None:
             return KernelDecision(
                 trace_id=trace_id,
-                type=profile_result["type"],
-                reason=profile_result["reason"],
-                risk_score=profile_result.get("risk_score", 0.9),
-                transformations=profile_result.get("transformations"),
-                expires_at=(
-                    int(time.time() * 1000) + self.decision_ttl_ms
-                    if profile_result["type"] == DecisionType.TRANSFORM
-                    else None
-                ),
+                type=profile_deny["type"],
+                reason=profile_deny["reason"],
+                risk_score=profile_deny.get("risk_score", 1.0),
             )
 
         # Check action envelope limits
@@ -218,19 +219,34 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Elevated risk ({risk_score:.2f}) - requires human approval",
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
+                expires_at=current_timestamp() + self.defer_ttl_ms,
             )
 
-        # Check for transformable actions
-        transformations = self._generate_transformations(action, flags)
+        # Check for transformable actions. The body-profile motor clamp is
+        # applied here (only after the risk thresholds have cleared the action)
+        # and is composed with any other safety transformations, so a clamp
+        # never bypasses a DENY/DEFER.
+        clamp = self._apply_body_profile_clamp(action, flags)
+        working_action = clamp["transformations"][0] if clamp is not None else action
+
+        transformations = self._generate_transformations(working_action, flags)
+        if transformations is None and clamp is not None:
+            # No further safety transform needed; the clamp itself is the change.
+            transformations = clamp["transformations"]
+
         if transformations:
+            reason = (
+                clamp["reason"]
+                if clamp is not None and transformations is clamp["transformations"]
+                else "Action transformed for safety"
+            )
             return KernelDecision(
                 trace_id=trace_id,
                 type=DecisionType.TRANSFORM,
-                reason="Action transformed for safety",
+                reason=reason,
                 transformations=transformations,
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+                expires_at=current_timestamp() + self.decision_ttl_ms,
             )
 
         # Allow
@@ -238,7 +254,7 @@ class KernelEvaluator:
             trace_id=trace_id,
             type=DecisionType.ALLOW,
             risk_score=risk_score,
-            expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+            expires_at=current_timestamp() + self.decision_ttl_ms,
         )
 
     def evaluate_code_proposal(
@@ -256,7 +272,7 @@ class KernelEvaluator:
         Returns:
             KernelDecision
         """
-        trace_id = proposal.get("trace_id", str(uuid.uuid4()))
+        trace_id = proposal.get("trace_id", generate_trace_id())
         target_path = proposal.get("target_path", "")
         code_preview = proposal.get("code_preview", "")
 
@@ -312,14 +328,14 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Code requires human review: {', '.join(flags)}",
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
+                expires_at=current_timestamp() + self.defer_ttl_ms,
             )
 
         return KernelDecision(
             trace_id=trace_id,
             type=DecisionType.ALLOW,
             risk_score=risk_score,
-            expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+            expires_at=current_timestamp() + self.decision_ttl_ms,
         )
 
     def _is_protected_path(self, path: str) -> bool:
@@ -430,17 +446,22 @@ class KernelEvaluator:
     # Body-profile enforcement
     # ------------------------------------------------------------------
 
-    def _check_body_profile(
+    def _check_body_profile_denials(
         self,
         action: dict[str, Any],
         flags: list[str],
     ) -> Optional[dict[str, Any]]:
-        """Check action against body-profile capability markers and motor limits.
+        """Body-profile *hard denials* — capability markers only.
+
+        These are unconditional DENYs (a disabled channel/capability) and are
+        safe to evaluate before the risk thresholds. The motor-limit *clamp*
+        (a TRANSFORM) is intentionally NOT here: it is applied later, after the
+        risk-threshold gates, by :meth:`_apply_body_profile_clamp`, so that a
+        clamp can never short-circuit a high-risk DENY/DEFER.
 
         Returns:
-            None if no profile-level violation.
-            A dict with 'type', 'reason', and optional 'transformations'/'risk_score'
-            if the action should be DENIED or TRANSFORMED.
+            None if no capability is violated.
+            A DENY dict ('type', 'reason', 'risk_score') otherwise.
         """
         # Snapshot profile reference — safe even if set_body_profile() is called
         # between awaits in the Kernel service (asyncio cooperative scheduling).
@@ -449,10 +470,9 @@ class KernelEvaluator:
             return None
 
         channel = action.get("channel", "")
-        intensity = action.get("intensity")
         action_type = action.get("type", "")
 
-        # 1. Channel capability check — hard DENY if channel is disabled
+        # Channel capability check — hard DENY if channel is disabled
         if channel and not profile.is_channel_allowed(channel):
             flags.append(f"PROFILE_DENY:{channel}")
             return {
@@ -465,19 +485,40 @@ class KernelEvaluator:
             }
 
         # Cognitive channel check (action_type based)
-        if action_type == "cognitive_query":
-            if not profile.is_channel_allowed("cognitive"):
-                flags.append("PROFILE_DENY:cognitive")
-                return {
-                    "type": DecisionType.DENY,
-                    "reason": (
-                        f"Body profile '{profile.name}' disallows "
-                        f"cognitive queries"
-                    ),
-                    "risk_score": 1.0,
-                }
+        if action_type == "cognitive_query" and not profile.is_channel_allowed("cognitive"):
+            flags.append("PROFILE_DENY:cognitive")
+            return {
+                "type": DecisionType.DENY,
+                "reason": (
+                    f"Body profile '{profile.name}' disallows "
+                    f"cognitive queries"
+                ),
+                "risk_score": 1.0,
+            }
 
-        # 2. Motor-limit clamping — TRANSFORM if intensity exceeds profile max
+        return None
+
+    def _apply_body_profile_clamp(
+        self,
+        action: dict[str, Any],
+        flags: list[str],
+    ) -> Optional[dict[str, Any]]:
+        """Body-profile motor-limit clamp — a TRANSFORM, applied *after* the
+        risk thresholds.
+
+        Clamping intensity does not address why an action is high-risk (target,
+        context, norm violation), so this must run only once the DENY/DEFER
+        gates have already cleared the action. Returns a TRANSFORM dict
+        (with the clamped action in 'transformations') or None if no clamp is
+        needed.
+        """
+        profile = self._body_profile
+        if profile is None:
+            return None
+
+        channel = action.get("channel", "")
+        intensity = action.get("intensity")
+
         if channel and isinstance(intensity, (int, float)):
             limit = profile.get_motor_limit(channel)
             if intensity > limit.max_intensity:
