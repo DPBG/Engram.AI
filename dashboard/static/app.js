@@ -32,6 +32,7 @@ class ActiveLearningAI {
         setInterval(() => this.fetchSystemInfo(), 30000);
         setInterval(() => this.fetchFlywheel(), 20000);
         setInterval(() => this.fetchNeuro(), 5000);
+        setInterval(() => this.fetchKernelDecisionRates(), 60000);
         setInterval(() => this._checkGatewayStale(), 5000);
         setInterval(() => this.fetchVideoSessions(), 10000);
     }
@@ -139,6 +140,7 @@ class ActiveLearningAI {
                 }
                 this.updateTopStats(msg.data);
                 if (msg.data.halt_state) this.updateHaltUI(msg.data.halt_state);
+                if (msg.data.kernel_decision_rates) this.renderKernelDecisionRates(msg.data.kernel_decision_rates);
                 break;
             case 'safe_halt_status':
                 this.updateHaltUI(msg.data);
@@ -195,6 +197,9 @@ class ActiveLearningAI {
             case 'visual_body_frame':
                 this.updateBodySelfView(msg.data);
                 break;
+            case 'kernel_decision_rates':
+                this.renderKernelDecisionRates(msg.data);
+                break;
         }
     }
 
@@ -245,6 +250,7 @@ class ActiveLearningAI {
             this.fetchNeuro(),
             this.fetchGateway(),
             this.fetchVideoSessions(),
+            this.fetchKernelDecisionRates(),
         ]);
     }
 
@@ -278,6 +284,13 @@ class ActiveLearningAI {
             this.renderFlywheel(d);
             this.updateStatChip('stat-knowledge', d.total_knowledge_entries || 0);
         } catch (e) { console.warn('flywheel:', e); }
+    }
+
+    async fetchKernelDecisionRates() {
+        try {
+            const d = await (await fetch('/api/kernel/decision-rates')).json();
+            this.renderKernelDecisionRates(d);
+        } catch (e) { console.warn('kernel decision rates:', e); }
     }
 
     async fetchInsights() {
@@ -704,6 +717,38 @@ class ActiveLearningAI {
         const y2 = cy + r * Math.sin(rad(endDeg));
         const large = (endDeg - startDeg) > 180 ? 1 : 0;
         return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+    }
+
+    // ─── Render: Kernel Decision Rates (governance signal, issue #143) ─
+
+    renderKernelDecisionRates(d) {
+        if (!d || !d.all_time) return; // no Kernel publish received yet
+
+        // Prefer the recent window once it has data; fall back to all-time
+        // early on so the panel isn't empty for the first window_hours.
+        const bucket = (d.window && d.window.total > 0) ? d.window : d.all_time;
+        const usingWindow = bucket === d.window;
+        const rates = bucket.rates || {};
+
+        const setBar = (key, upperKey) => {
+            const pct = Math.round((rates[upperKey] || 0) * 100);
+            document.getElementById(`kr-${key}-bar`).style.width = `${pct}%`;
+            document.getElementById(`kr-${key}-val`).textContent = `${pct}%`;
+        };
+        setBar('allow', 'ALLOW');
+        setBar('transform', 'TRANSFORM');
+        setBar('deny', 'DENY');
+        setBar('defer', 'DEFER');
+
+        document.getElementById('kernel-rates-meta').textContent = bucket.total > 0
+            ? `${bucket.total} decisions (${usingWindow ? `last ${d.window_hours}h` : 'all-time'})`
+            : 'No Kernel decisions logged yet';
+
+        const mp = d.by_source && d.by_source['meta-programmer'];
+        const mpBucket = mp ? ((mp.window && mp.window.total > 0) ? mp.window : mp.all_time) : null;
+        document.getElementById('kr-mp-summary').textContent = (mpBucket && mpBucket.total > 0)
+            ? `${Math.round((mpBucket.rates.ALLOW || 0) * 100)}% allow, ${Math.round((mpBucket.rates.DENY || 0) * 100)}% deny (n=${mpBucket.total})`
+            : 'no data yet';
     }
 
     // ─── Render: Insights ────────────────────────────────────────────

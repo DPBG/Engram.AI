@@ -13,8 +13,9 @@ import json
 import logging
 import os
 import shutil
-import time
 from typing import Optional
+
+from activelearning import current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class StagingManager:
             "trace_id": trace_id,
             "target_path": target_path,
             "stage": "pending",
-            "created_at": int(time.time() * 1000),
+            "created_at": current_timestamp(),
         }
         metadata_path = os.path.join(stage_dir, "metadata.json")
         with open(metadata_path, "w") as f:

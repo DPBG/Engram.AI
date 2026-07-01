@@ -93,6 +93,39 @@
                 </div>
             </section>
 
+            <!-- Kernel Decision Rates — governance signal (issue #143 / M6) -->
+            <section class="panel" id="kernel-rates-panel">
+                <h2><span class="panel-icon">⚖️</span> Kernel Governance</h2>
+                <div style="font-size:11px; color:var(--text-3); margin-bottom:8px;" id="kernel-rates-meta">
+                    No Kernel decisions logged yet
+                </div>
+                <div class="gauges" id="kernel-rates-gauges">
+                    <div class="gauge-row">
+                        <label>Allow</label>
+                        <div class="bar-track"><div class="bar-fill" id="kr-allow-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-allow-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Transform</label>
+                        <div class="bar-track"><div class="bar-fill" id="kr-transform-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-transform-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Deny</label>
+                        <div class="bar-track"><div class="bar-fill crit" id="kr-deny-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-deny-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Defer</label>
+                        <div class="bar-track"><div class="bar-fill warn" id="kr-defer-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-defer-val">—</span>
+                    </div>
+                </div>
+                <div style="font-size:11px; color:var(--text-2); margin-top:8px;" id="kernel-rates-mp">
+                    meta-programmer: <span id="kr-mp-summary">—</span>
+                </div>
+            </section>
+
             <!-- System Awareness -->
             <section class="panel">
                 <h2><span class="panel-icon">🔍</span> System Awareness</h2>

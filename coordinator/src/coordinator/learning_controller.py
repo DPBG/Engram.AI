@@ -16,6 +16,8 @@ import os
 from typing import Any, Dict, List, Optional
 from enum import Enum
 
+from activelearning import current_timestamp, generate_trace_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,8 +64,7 @@ class LearningController:
         Returns:
             trace_id for tracking
         """
-        import uuid
-        trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
 
         logger.info(f"Starting demonstration learning: {task_name}")
 
@@ -253,7 +254,7 @@ class LearningController:
         metadata = {
             "task_name": task_name,
             "description": task_data["description"],
-            "learned_at": int(__import__('time').time() * 1000),
+            "learned_at": current_timestamp(),
             "observation_count": len(self._observation_buffer),
             "sensor_fusion": task_data["sensor_fusion"],
             "success_rate": 0.0,  # Will be updated after executions

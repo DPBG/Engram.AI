@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import ast
 import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -94,6 +96,24 @@ def scan_source(code: str) -> list[Finding]:
     except SyntaxError as e:
         return [Finding("high", "syntax_error", f"cannot parse generated code: {e}")]
 
+    # Pre-pass: resolve names bound by ``from <dangerous_module> import <sink>``.
+    # A later bare call to such a name (e.g. ``system(...)`` after
+    # ``from os import system``) is exactly as dangerous as ``os.system(...)``
+    # and must be flagged the same way — otherwise the ``from``-import form is a
+    # trivial bypass of the attribute-only call check below.
+    dangerous_local_names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            allowed = _DANGEROUS_MODULES.get(top, "MISS")
+            if allowed == "MISS":
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue  # star imports are flagged as a finding below
+                if allowed is None or alias.name in allowed:
+                    dangerous_local_names[alias.asname or alias.name] = f"{top}.{alias.name}"
+
     for node in ast.walk(tree):
         # Calls: eval/exec/compile/__import__, os.system, subprocess.*, getattr(__x__)
         if isinstance(node, ast.Call):
@@ -101,6 +121,9 @@ def scan_source(code: str) -> list[Finding]:
             if isinstance(fn, ast.Name):
                 if fn.id in _DANGEROUS_BUILTINS:
                     findings.append(Finding("high", "dangerous_builtin", f"{fn.id}()"))
+                elif fn.id in dangerous_local_names:
+                    findings.append(Finding("high", "dangerous_call",
+                                            f"{dangerous_local_names[fn.id]}()"))
                 elif fn.id in _REFLECTION_BUILTINS:
                     for arg in node.args:
                         if (isinstance(arg, ast.Constant) and isinstance(arg.value, str)
@@ -125,7 +148,14 @@ def scan_source(code: str) -> list[Finding]:
             mod = node.module or ""
             top = mod.split(".")[0]
             if top in _DANGEROUS_MODULES:
-                findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
+                if any(a.name == "*" for a in node.names):
+                    # `from os import *` / `from subprocess import *` pulls the
+                    # dangerous sinks into the namespace wholesale and defeats
+                    # name tracking — flag high.
+                    findings.append(Finding("high", "dangerous_import_star",
+                                            f"from {mod} import *"))
+                else:
+                    findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
             if any(s in mod.lower() for s in _SELF_REF):
                 findings.append(Finding("high", "self_referential", f"from {mod} import …"))
 
@@ -141,7 +171,43 @@ def is_dangerous(code: str) -> bool:
     return any(f.severity == "high" for f in scan_source(code))
 
 
-def deploy_atomically(target_path: str, code: str, validate_syntax: bool = True) -> tuple[bool, str]:
+def run_health_probe(target_path: str, timeout: float = 5.0) -> tuple[bool, str]:
+    """Import-probe the deployed module in an isolated subprocess (Phase E1.9.2).
+
+    Spawns a throwaway interpreter that tries to load the file via
+    ``importlib.util``. Any crash, import error, or hang within ``timeout``
+    seconds is treated as a probe failure and should trigger rollback.
+
+    Returns ``(ok, reason)``.
+    """
+    if not os.path.exists(target_path):
+        return False, f"deployed file not found: {target_path!r}"
+
+    probe = (
+        "import importlib.util, sys\n"
+        f"spec = importlib.util.spec_from_file_location('_probe', {target_path!r})\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        "print('ok')\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True, "health probe passed"
+        stderr = result.stderr.strip() or result.stdout.strip()
+        return False, f"probe failed (exit {result.returncode}): {stderr}"
+    except subprocess.TimeoutExpired:
+        return False, f"probe timed out after {timeout}s"
+    except Exception as e:  # noqa: BLE001
+        return False, f"probe error: {e}"
+
+
+def deploy_atomically(target_path: str, code: str, validate_syntax: bool = True, probe_timeout: float = 0.0) -> tuple[bool, str]:
     """Write ``code`` to ``target_path`` with automatic rollback on failure (Phase 1.9).
 
     A deploy must never leave the system in a half-broken state. This:
@@ -186,6 +252,12 @@ def deploy_atomically(target_path: str, code: str, validate_syntax: bool = True)
             except SyntaxError as e:
                 _rollback()
                 return False, f"rolled back — syntax error: {e}"
+
+        if probe_timeout > 0.0:
+            ok_probe, probe_reason = run_health_probe(target_path, timeout=probe_timeout)
+            if not ok_probe:
+                _rollback()
+                return False, f"rolled back — health probe failed: {probe_reason}"
 
         return True, "deployed"
     except Exception as e:  # noqa: BLE001 — any failure must trigger rollback
