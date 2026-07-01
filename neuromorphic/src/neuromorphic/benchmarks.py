@@ -322,13 +322,8 @@ class ConceptSeparabilityBenchmark:
                 vecs.append(acc)
 
         labels_arr = np.array(labels, dtype=np.int32)
-        mat = np.array(vecs, dtype=np.float32)  # (n_samples, concept_n)
 
-        # L2-normalise rows for cosine distance
-        norms = np.linalg.norm(mat, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        mat_unit = mat / norms
-
+        # Guard before any matrix operations so empty inputs don't crash norm/shape ops
         n_samples = len(labels)
         unique_labels = np.unique(labels_arr)
         n_classes = len(unique_labels)
@@ -340,6 +335,13 @@ class ConceptSeparabilityBenchmark:
                 "linear_probe_accuracy": 0.0,
                 "n_patterns": len(patterns),
             }
+
+        mat = np.array(vecs, dtype=np.float32)  # (n_samples, concept_n)
+
+        # L2-normalise rows for cosine distance
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        mat_unit = mat / norms
 
         # Cosine distance matrix: D[i,j] = 1 − cos_similarity
         sim = mat_unit @ mat_unit.T
@@ -376,21 +378,38 @@ class ConceptSeparabilityBenchmark:
             if other_mask.any():
                 inter.extend(dist[i, other_mask].tolist())
 
-        mean_intra = round(float(np.mean(intra)) if intra else 0.0, 4)
-        mean_inter = round(float(np.mean(inter)) if inter else 0.0, 4)
-        separation_ratio = round(mean_inter / (mean_intra + 1e-8), 4)
+        raw_intra = float(np.mean(intra)) if intra else 0.0
+        raw_inter = float(np.mean(inter)) if inter else 0.0
+        mean_intra = round(raw_intra, 4)
+        mean_inter = round(raw_inter, 4)
+        separation_ratio = round(raw_inter / (raw_intra + 1e-8), 4)
 
-        # Nearest-centroid linear probe (no sklearn required)
-        centroids = np.array(
-            [mat_unit[labels_arr == lbl].mean(axis=0) for lbl in unique_labels],
-            dtype=np.float32,
+        # Leave-one-out nearest-centroid linear probe (no sklearn, unbiased)
+        # Pre-compute class sums so each LOO centroid is O(1) to derive
+        n_features = mat_unit.shape[1]
+        class_idx = np.array(
+            [int(np.where(unique_labels == lbl)[0][0]) for lbl in labels_arr]
         )
-        c_norms = np.linalg.norm(centroids, axis=1, keepdims=True)
-        c_norms[c_norms == 0] = 1.0
-        centroids_unit = centroids / c_norms
-        preds_idx = np.argmax(mat_unit @ centroids_unit.T, axis=1)
-        preds = unique_labels[preds_idx]
-        accuracy = round(float((preds == labels_arr).mean()), 4)
+        class_sums = np.zeros((n_classes, n_features), dtype=np.float64)
+        class_counts = np.zeros(n_classes, dtype=np.int64)
+        for ci, vec in zip(class_idx, mat_unit):
+            class_sums[ci] += vec
+            class_counts[ci] += 1
+
+        loo_correct = 0
+        for i in range(n_samples):
+            ci = class_idx[i]
+            sims = np.empty(n_classes, dtype=np.float64)
+            for j in range(n_classes):
+                raw = class_sums[j] - mat_unit[i] if j == ci else class_sums[j]
+                cnt = class_counts[j] - 1 if j == ci else class_counts[j]
+                raw = raw / max(cnt, 1)
+                norm = np.linalg.norm(raw)
+                raw_unit = raw / (norm if norm > 0.0 else 1.0)
+                sims[j] = mat_unit[i].astype(np.float64) @ raw_unit
+            if unique_labels[int(np.argmax(sims))] == labels_arr[i]:
+                loo_correct += 1
+        accuracy = round(loo_correct / n_samples, 4)
 
         # Top concept neurons per pattern (most selective on average)
         raw_centroids = np.array(
@@ -491,14 +510,19 @@ class BenchmarkSuite:
                   f"   Energy units: {en.get('approx_energy_units', 0):.2f}",
                   ""]
         cs = results.get("concept_separability", {})
-        if cs and "error" not in cs:
-            lines += [f"5. Concept Separability",
-                      f"   Silhouette score: {cs.get('silhouette_score', 0):.4f}",
-                      f"   Linear-probe acc: {cs.get('linear_probe_accuracy', 0):.4f}",
-                      f"   Separation ratio: {cs.get('separation_ratio', 0):.2f}x",
-                      f"   Intra/inter dist: {cs.get('mean_intra_class_distance', 0):.4f} / "
-                      f"{cs.get('mean_inter_class_distance', 0):.4f}",
-                      ""]
+        if cs:
+            if "error" not in cs:
+                lines += [f"5. Concept Separability",
+                          f"   Silhouette score: {cs.get('silhouette_score', 0):.4f}",
+                          f"   Linear-probe acc: {cs.get('linear_probe_accuracy', 0):.4f}",
+                          f"   Separation ratio: {cs.get('separation_ratio', 0):.2f}x",
+                          f"   Intra/inter dist: {cs.get('mean_intra_class_distance', 0):.4f} / "
+                          f"{cs.get('mean_inter_class_distance', 0):.4f}",
+                          ""]
+            else:
+                lines += [f"5. Concept Separability",
+                          f"   (skipped — {cs['error']})",
+                          ""]
         lines.append("=" * 35)
         return "\n".join(lines)
 
