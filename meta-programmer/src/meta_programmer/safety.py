@@ -122,6 +122,24 @@ def scan_source(code: str) -> list[Finding]:
     except SyntaxError as e:
         return [Finding("high", "syntax_error", f"cannot parse generated code: {e}")]
 
+    # Pre-pass: resolve names bound by ``from <dangerous_module> import <sink>``.
+    # A later bare call to such a name (e.g. ``system(...)`` after
+    # ``from os import system``) is exactly as dangerous as ``os.system(...)``
+    # and must be flagged the same way — otherwise the ``from``-import form is a
+    # trivial bypass of the attribute-only call check below.
+    dangerous_local_names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            allowed = _DANGEROUS_MODULES.get(top, "MISS")
+            if allowed == "MISS":
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue  # star imports are flagged as a finding below
+                if allowed is None or alias.name in allowed:
+                    dangerous_local_names[alias.asname or alias.name] = f"{top}.{alias.name}"
+
     for node in ast.walk(tree):
         # Calls: eval/exec/compile/__import__, os.system, subprocess.*, getattr(__x__)
         if isinstance(node, ast.Call):
@@ -129,6 +147,9 @@ def scan_source(code: str) -> list[Finding]:
             if isinstance(fn, ast.Name):
                 if fn.id in _DANGEROUS_BUILTINS:
                     findings.append(Finding("high", "dangerous_builtin", f"{fn.id}()"))
+                elif fn.id in dangerous_local_names:
+                    findings.append(Finding("high", "dangerous_call",
+                                            f"{dangerous_local_names[fn.id]}()"))
                 elif fn.id in _REFLECTION_BUILTINS:
                     for arg in node.args:
                         if (
@@ -157,7 +178,14 @@ def scan_source(code: str) -> list[Finding]:
             mod = node.module or ""
             top = mod.split(".")[0]
             if top in _DANGEROUS_MODULES:
-                findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
+                if any(a.name == "*" for a in node.names):
+                    # `from os import *` / `from subprocess import *` pulls the
+                    # dangerous sinks into the namespace wholesale and defeats
+                    # name tracking — flag high.
+                    findings.append(Finding("high", "dangerous_import_star",
+                                            f"from {mod} import *"))
+                else:
+                    findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
             if any(s in mod.lower() for s in _SELF_REF):
                 findings.append(Finding("high", "self_referential", f"from {mod} import …"))
 

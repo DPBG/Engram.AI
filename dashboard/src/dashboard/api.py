@@ -9,33 +9,28 @@ FastAPI. The behaviour lives in those modules.
 """
 
 import asyncio
+import base64
+import json
 import logging
 import os
+import platform
+import shutil
+import subprocess
 import time
 import uuid
 from collections import deque
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
-from typing import Optional
 
-from fastapi import FastAPI
+import aiohttp
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from dashboard.auth import authorize_websocket, install_auth_middleware
-from dashboard.safe_halt import (
-    get_halt_state,
-    sanitize_halt_payload,
-    sanitize_resume_payload,
-    update_halt_state,
-from fastapi.staticfiles import StaticFiles
-
-from dashboard.auth import install_auth_middleware
 from dashboard.chat import ChatEngine
 from dashboard.context import DashboardContext
-from dashboard.knowledge import KnowledgeBase
 from dashboard.metrics import MetricsMonitor
 from dashboard.models import ChatMessage, ObservationPayload
 from dashboard.nats_stream import NatsStreamManager
@@ -46,11 +41,22 @@ from dashboard.routers import (
     build_stream_router,
     build_system_router,
 )
-from dashboard.skills import SkillRegistry
+from dashboard.safe_halt import (
+    get_halt_state,
+    sanitize_halt_payload,
+    sanitize_resume_payload,
+    update_halt_state,
+)
 from dashboard.state import DashboardState
-from dashboard.system import detect_system_info, get_live_metrics
+from dashboard.system import (
+    _detect_available_apis,
+    _detect_running_services,
+    get_live_metrics,
+)
 
 logger = logging.getLogger(__name__)
+
+_startup_time: float = time.time()
 
 # ═══════════════════════════════════════════════════════════════════════
 # STATE
@@ -82,6 +88,10 @@ _video_sessions: dict[str, dict] = {}  # session_id -> status dict
 # Safety / watchdog state (updated via NATS)
 _watchdog_status: dict[str, Any] = {}
 _deny_escalations: deque = deque(maxlen=50)
+
+# Kernel decision-rate governance signal — ALLOW/TRANSFORM/DENY/DEFER trend
+# (updated via NATS, kernel.decision_rates; see kernel/src/kernel/service.py)
+_kernel_decision_rates: dict[str, Any] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -214,7 +224,7 @@ class SkillRegistry:
         skill["calls"] += 1
         if not success:
             skill["errors"] += 1
-        skill["last_called"] = datetime.now(UTC).isoformat()
+        skill["last_called"] = datetime.now(timezone.utc).isoformat()
         # Running average
         old_avg = skill["avg_ms"]
         n = skill["calls"]
@@ -282,7 +292,7 @@ class KnowledgeBase:
             "category": category,
             "content": content,
             "metadata": metadata or {},
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         self._entries.append(entry)
         if source in self._source_counts:
@@ -469,174 +479,7 @@ def detect_system_info() -> dict[str, Any]:
     # ─── Available APIs ──────────────────────────────────────────
     info["apis"] = _detect_available_apis()
 
-    # ─── Capabilities ────────────────────────────────────────────
-    info["capabilities"] = _detect_capabilities()
 
-    _system_info = info
-    return info
-
-
-def _detect_running_services() -> list[dict]:
-    """Detect running services / listening ports."""
-    services = []
-    try:
-        # Check listening TCP ports
-        if platform.system() == "Linux":
-            r = subprocess.run(
-                ["ss", "-tlnp"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if r.returncode == 0:
-                for line in r.stdout.strip().split("\n")[1:]:  # skip header
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        local = parts[3]
-                        # Extract port
-                        port_match = re.search(r":(\d+)$", local)
-                        if port_match:
-                            port = int(port_match.group(1))
-                            proc = parts[-1] if len(parts) > 5 else ""
-                            # Map well-known ports
-                            name = _port_to_service_name(port, proc)
-                            services.append(
-                                {
-                                    "port": port,
-                                    "name": name,
-                                    "address": local,
-                                }
-                            )
-    except Exception:
-        pass
-
-    return services
-
-
-def _port_to_service_name(port: int, proc_info: str = "") -> str:
-    """Map port number to known service names."""
-    known = {
-        4222: "NATS (client)",
-        8222: "NATS (monitoring)",
-        6333: "Qdrant (HTTP)",
-        6334: "Qdrant (gRPC)",
-        8080: "Dashboard",
-        11434: "Ollama (LLM)",
-        7777: "Custom Service",
-        5432: "PostgreSQL",
-        3306: "MySQL",
-        6379: "Redis",
-        9090: "Prometheus",
-        3000: "Grafana",
-        443: "HTTPS",
-        80: "HTTP",
-    }
-    return known.get(port, f"port-{port}")
-
-
-def _detect_available_apis() -> list[dict]:
-    """Detect what APIs are reachable from this container."""
-    apis = []
-    checks = [
-        ("NATS", os.environ.get("NATS_URL", "nats://nats:4222"), "nats"),
-        ("Ollama", os.environ.get("OLLAMA_URL", "http://ollama:11434"), "llm"),
-        ("Qdrant", os.environ.get("QDRANT_URL", "http://qdrant:6333"), "vector_db"),
-    ]
-    for name, url, api_type in checks:
-        apis.append(
-            {
-                "name": name,
-                "url": url,
-                "type": api_type,
-                "configured": True,
-            }
-        )
-    return apis
-
-
-def _detect_capabilities() -> list[str]:
-    """What can this system do?"""
-    caps = [
-        "system_monitoring",
-        "resource_tracking",
-        "container_management",
-        "conversational_ai",
-        "nats_messaging",
-        "self_improvement",
-    ]
-    # Check for Docker socket
-    if os.path.exists("/var/run/docker.sock"):
-        caps.append("docker_orchestration")
-    # Check for Ollama env
-    if os.environ.get("OLLAMA_URL"):
-        caps.append("local_llm")
-    return caps
-
-
-def get_live_metrics() -> dict[str, Any]:
-    """Get live resource usage metrics."""
-    metrics: dict[str, Any] = {}
-    try:
-        if platform.system() == "Linux":
-            with open("/proc/loadavg") as f:
-                loadavg = f.read().split()
-            metrics["load_average"] = {
-                "1min": float(loadavg[0]),
-                "5min": float(loadavg[1]),
-                "15min": float(loadavg[2]),
-            }
-            with open("/proc/meminfo") as f:
-                meminfo = f.read()
-            mem_total = mem_avail = 0
-            for line in meminfo.split("\n"):
-                if line.startswith("MemTotal:"):
-                    mem_total = int(line.split()[1]) * 1024
-                elif line.startswith("MemAvailable:"):
-                    mem_avail = int(line.split()[1]) * 1024
-            metrics["memory"] = {
-                "total_gb": round(mem_total / (1024**3), 2),
-                "available_gb": round(mem_avail / (1024**3), 2),
-                "used_percent": (
-                    round(((mem_total - mem_avail) / mem_total) * 100, 1) if mem_total > 0 else 0
-                ),
-            }
-        disk = shutil.disk_usage("/")
-        metrics["disk"] = {
-            "used_percent": round((disk.used / disk.total) * 100, 1),
-            "free_gb": round(disk.free / (1024**3), 2),
-        }
-        try:
-            with open("/proc/uptime") as f:
-                secs = float(f.read().split()[0])
-            metrics["uptime"] = f"{int(secs // 3600)}h {int((secs % 3600) // 60)}m"
-        except Exception:
-            metrics["uptime"] = "unknown"
-    except Exception as e:
-        metrics["error"] = str(e)
-    metrics["timestamp"] = datetime.now(UTC).isoformat()
-    return metrics
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# PYDANTIC MODELS
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class ChatMessage(BaseModel):
-    message: str
-    context: str | None = None
-
-
-class ObservationPayload(BaseModel):
-    """Inject a sensory observation directly into the brain via NATS."""
-
-    provenance: str  # e.g. "observation.text", "sensor.image"
-    data: Any  # text string, or list of floats for image features
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# DASHBOARD SERVICE
-# ═══════════════════════════════════════════════════════════════════════
 # The dashboard's public surface. ``SkillRegistry``/``KnowledgeBase``/the models
 # and ``detect_system_info``/``get_live_metrics`` now live in focused modules but
 # are re-exported here for backwards compatibility with anything importing them
@@ -655,7 +498,6 @@ __all__ = [
 ]
 
 
-
 class DashboardService:
     """
     Engram Dashboard — interface to the neuromorphic brain.
@@ -669,17 +511,6 @@ class DashboardService:
     def __init__(self):
         self.app = FastAPI(title="Engram")
         self.logger = logging.getLogger("dashboard")
-        self._nats_connected = False
-        self._nc = None  # NATS connection for publishing
-        self._service_status: dict[str, dict] = {}
-        self._ollama_url = os.environ.get("OLLAMA_URL", "http://ollama:11434")
-        self._openai_url = os.environ.get("OPENAI_API_URL", "")
-        self._openai_key = os.environ.get("OPENAI_API_KEY", "")
-        self._llm_model = os.environ.get("LLM_MODEL", "llama3.2")
-        self._self_monitor_task: asyncio.Task | None = None
-        self._metrics_task: asyncio.Task | None = None
-        self._concept_probe_results: list[dict] = []
-        self._MAX_PROBE_RESULTS = 200
 
         # Shared state + focused components (the former god-class concerns).
         self.state = DashboardState()
@@ -687,11 +518,14 @@ class DashboardService:
         self.chat = ChatEngine(self.state, self.nats)
         self.metrics = MetricsMonitor(self.state)
         self.ctx = DashboardContext(
-            state=self.state, nats=self.nats, chat=self.chat, metrics=self.metrics,
+            state=self.state,
+            nats=self.nats,
+            chat=self.chat,
+            metrics=self.metrics,
         )
 
-        self._self_monitor_task: Optional[asyncio.Task] = None
-        self._metrics_task: Optional[asyncio.Task] = None
+        self._self_monitor_task: asyncio.Task | None = None
+        self._metrics_task: asyncio.Task | None = None
 
         self._configure_app()
 
@@ -720,10 +554,9 @@ class DashboardService:
         if not os.path.exists(brain_viz_dir):
             brain_viz_dir = "/app/brain-viz"
         if os.path.exists(brain_viz_dir):
-            self.app.mount(
+            app.mount(
                 "/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz"
             )
-            app.mount("/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz")
 
         if os.path.exists(static_dir):
             app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -739,35 +572,23 @@ class DashboardService:
 
     def _register_lifecycle(self):
         app = self.app
+        static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 
         @app.on_event("startup")
         async def on_startup():
             t0 = time.time()
-            detect_system_info()
-            self.skills.record_call("env.detect", (time.time() - t0) * 1000)
-            self.knowledge.learn(
-                "deployment",
-                "system",
-                f"Engram deployed on: {_system_info.get('os', {}).get('system', '?')} {_system_info.get('os', {}).get('machine', '?')}",
-            )
-            self.knowledge.learn(
-                "deployment",
-                "system",
-                f"Capabilities: {', '.join(_system_info.get('capabilities', []))}",
-            )
-            self._self_monitor_task = asyncio.create_task(self._self_improvement_loop())
-            self._metrics_task = asyncio.create_task(self._metrics_broadcast_loop())
-            asyncio.create_task(self._connect_nats())
             self.state.system_info = detect_system_info()
             self.state.skills.record_call("env.detect", (time.time() - t0) * 1000)
             info = self.state.system_info
             self.state.knowledge.learn(
-                "deployment", "system",
+                "deployment",
+                "system",
                 f"Engram deployed on: {info.get('os', {}).get('system', '?')} "
                 f"{info.get('os', {}).get('machine', '?')}",
             )
             self.state.knowledge.learn(
-                "deployment", "system",
+                "deployment",
+                "system",
                 f"Capabilities: {', '.join(info.get('capabilities', []))}",
             )
             self._self_monitor_task = asyncio.create_task(self.metrics.self_improvement_loop())
@@ -801,7 +622,7 @@ class DashboardService:
         async def health():
             return {
                 "status": "healthy",
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "nats": self._nats_connected,
                 "uptime_seconds": int(time.time() - _startup_time),
                 "total_skill_calls": self.skills.total_calls(),
@@ -817,7 +638,7 @@ class DashboardService:
             return {
                 "info": _system_info,
                 "live": get_live_metrics(),
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         # ── API: Skills ──────────────────────────────────────────────
@@ -855,7 +676,7 @@ class DashboardService:
             t0 = time.time()
             metrics = await self._fetch_docker_metrics()
             self.skills.record_call("env.docker", (time.time() - t0) * 1000)
-            return {"metrics": metrics, "timestamp": datetime.now(UTC).isoformat()}
+            return {"metrics": metrics, "timestamp": datetime.now(timezone.utc).isoformat()}
 
         # ── API: Services ────────────────────────────────────────────
 
@@ -867,7 +688,10 @@ class DashboardService:
 
         @self.app.get("/api/neuromorphic")
         async def get_neuromorphic():
-            return {"neuromorphic": _neuro_metrics, "timestamp": datetime.now(UTC).isoformat()}
+            return {
+                "neuromorphic": _neuro_metrics,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
 
         # ── API: Benchmark Results ─────────────────────────────────────
 
@@ -908,11 +732,25 @@ class DashboardService:
             except Exception as e:
                 return {"error": str(e), "results": []}
 
+        # ── API: Kernel Decision Rates (governance signal, issue #143) ─
+
+        @self.app.get("/api/kernel/decision-rates")
+        async def get_kernel_decision_rates():
+            """Return the latest ALLOW/TRANSFORM/DENY/DEFER rates from the Kernel.
+
+            Populated from the periodic kernel.decision_rates NATS publish;
+            empty until the Kernel has sent its first update. Advisory only —
+            this never influences Kernel decisions, it just makes drift in
+            meta-programmer / brain proposal quality visible before autonomy
+            is expanded (see docs/META-PROGRAMMER.md).
+            """
+            return _kernel_decision_rates
+
         # ── API: Sensory Gateway ──────────────────────────────────────
 
         @self.app.get("/api/gateway")
         async def get_gateway():
-            return {"gateway": _gateway_status, "timestamp": datetime.now(UTC).isoformat()}
+            return {"gateway": _gateway_status, "timestamp": datetime.now(timezone.utc).isoformat()}
 
         @self.app.post("/api/gateway/command")
         async def gateway_command(cmd: dict):
@@ -1085,7 +923,7 @@ class DashboardService:
         async def get_video_sessions():
             return {
                 "sessions": list(_video_sessions.values()),
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         @self.app.post("/api/video/submit")
@@ -1268,13 +1106,17 @@ class DashboardService:
             self.knowledge.learn("teleoperation", "conversation", msg.message[:200])
 
             chat_history.append(
-                {"role": "user", "content": msg.message, "timestamp": datetime.now(UTC).isoformat()}
+                {
+                    "role": "user",
+                    "content": msg.message,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
             )
             chat_history.append(
                 {
                     "role": "assistant",
                     "content": reply["content"],
-                    "timestamp": datetime.now(UTC).isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
             if len(chat_history) > MAX_CHAT_HISTORY:
@@ -1282,7 +1124,7 @@ class DashboardService:
 
             return {
                 "reply": reply["content"],
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "model": reply.get("model", self._llm_model),
             }
 
@@ -1377,6 +1219,7 @@ class DashboardService:
                             "gateway": _gateway_status,
                             "video_sessions": list(_video_sessions.values()),
                             "halt_state": get_halt_state(),
+                            "kernel_decision_rates": _kernel_decision_rates,
                         },
                     }
                 )
@@ -1403,14 +1246,14 @@ class DashboardService:
                                 {
                                     "role": "user",
                                     "content": payload.get("message", ""),
-                                    "timestamp": datetime.now(UTC).isoformat(),
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
                                 }
                             )
                             chat_history.append(
                                 {
                                     "role": "assistant",
                                     "content": reply["content"],
-                                    "timestamp": datetime.now(UTC).isoformat(),
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
                                 }
                             )
                             if len(chat_history) > MAX_CHAT_HISTORY:
@@ -1422,7 +1265,7 @@ class DashboardService:
                                     "data": {
                                         "reply": reply["content"],
                                         "model": reply.get("model", self._llm_model),
-                                        "timestamp": datetime.now(UTC).isoformat(),
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
                                     },
                                 }
                             )
@@ -1694,7 +1537,7 @@ class DashboardService:
                         if isinstance(raw, list) and len(raw) > 8:
                             data["data"] = raw[:4] + ["..."] + [f"({len(raw)} values)"]
                     msg_info = {
-                        "timestamp": datetime.now(UTC).isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                         "subject": msg.subject,
                         "data": data,
                     }
@@ -1710,7 +1553,7 @@ class DashboardService:
                 except Exception:
                     data = {"raw": msg.data.decode()[:500]}
                 msg_info = {
-                    "timestamp": datetime.now(UTC).isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "subject": msg.subject,
                     "data": data,
                 }
@@ -1726,7 +1569,7 @@ class DashboardService:
                         "name": svc,
                         "status": "running",
                         "uptime": data.get("uptime"),
-                        "last_seen": datetime.now(UTC).isoformat(),
+                        "last_seen": datetime.now(timezone.utc).isoformat(),
                     }
                     await self._broadcast(
                         {"type": "service_status", "data": self._service_status[svc]}
@@ -1880,6 +1723,16 @@ class DashboardService:
                 except Exception as e:
                     self.logger.error(f"Error handling watchdog status: {e}")
 
+            async def handle_kernel_decision_rates(msg):
+                """Cache and broadcast the Kernel's periodic decision-rate trend."""
+                try:
+                    data = json.loads(msg.data.decode())
+                    global _kernel_decision_rates
+                    _kernel_decision_rates = data
+                    await self._broadcast({"type": "kernel_decision_rates", "data": data})
+                except Exception as e:
+                    self.logger.error(f"Error handling kernel decision rates: {e}")
+
             async def handle_deny_escalation(msg):
                 try:
                     data = json.loads(msg.data.decode())
@@ -1921,6 +1774,7 @@ class DashboardService:
             _dedicated_subjects.add("neuromorphic.concept.result")
             _dedicated_subjects.add("safety.watchdog.status")
             _dedicated_subjects.add("safety.deny_escalation")
+            _dedicated_subjects.add("kernel.decision_rates")
             _dedicated_subjects.add("speech.execute")
             _dedicated_subjects.add("observation.visual.body")
             _dedicated_subjects.add("safety.halt.status")
@@ -1936,6 +1790,7 @@ class DashboardService:
             await nc.subscribe("neuromorphic.concept.result", cb=handle_concept_result)
             await nc.subscribe("safety.watchdog.status", cb=handle_watchdog_status)
             await nc.subscribe("safety.deny_escalation", cb=handle_deny_escalation)
+            await nc.subscribe("kernel.decision_rates", cb=handle_kernel_decision_rates)
             await nc.subscribe("speech.execute", cb=handle_speech_execute)
             await nc.subscribe("observation.visual.body", cb=handle_visual_body)
             await nc.subscribe("safety.halt.status", cb=handle_safe_halt_status)
@@ -2201,7 +2056,7 @@ class DashboardService:
 
     async def _run_health_check(self):
         findings = []
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         # Disk
         try:
