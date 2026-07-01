@@ -7,6 +7,7 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 
 import asyncio
 import json
+import math
 import os
 import time
 import uuid
@@ -625,11 +626,30 @@ class KernelService(BaseService):
             data = response
             if data.get("type") == "error":
                 return _unavailable(data.get("error", "unknown"))
+
+            raw_score = data.get("risk_score")
+            if raw_score is None:
+                return _unavailable("missing risk_score")
+            try:
+                risk_score = float(raw_score)
+            except (TypeError, ValueError):
+                return _unavailable(f"invalid risk_score: {raw_score!r}")
+            if not math.isfinite(risk_score):
+                return _unavailable(f"non-finite risk_score: {raw_score!r}")
+
+            flags = data.get("flags", [])
+            if not isinstance(flags, list):
+                return _unavailable("invalid flags: expected list")
+
+            recommendations = data.get("recommendations", [])
+            if not isinstance(recommendations, list):
+                recommendations = []
+
             return RiskAnalysis(
                 trace_id=data.get("trace_id", trace_id),
-                risk_score=data.get("risk_score", 0.0),
-                flags=data.get("flags", []),
-                recommendations=data.get("recommendations", []),
+                risk_score=risk_score,
+                flags=flags,
+                recommendations=recommendations,
             )
         except Exception as e:
             return _unavailable(str(e))

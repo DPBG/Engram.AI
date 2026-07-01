@@ -71,7 +71,7 @@ def test_missing_risk_analysis_denies_action():
         risk_analysis=None,
     )
     assert d.type == DecisionType.DENY
-    assert d.risk_score >= 0.8
+    assert d.risk_score == 1.0
 
 
 def test_missing_risk_analysis_denies_clean_code():
@@ -80,7 +80,7 @@ def test_missing_risk_analysis_denies_clean_code():
         risk_analysis=None,
     )
     assert d.type == DecisionType.DENY
-    assert d.risk_score >= 0.8
+    assert d.risk_score == 1.0
 
 
 # ── SAFE_HALT kill switch (Phase 1.9) ────────────────────────────────────────

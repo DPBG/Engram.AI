@@ -10,6 +10,7 @@ import logging
 
 from activelearning import KernelDecisionType as DecisionType
 from activelearning.subjects import code_decision_subject
+from kernel.evaluator import unavailable_risk_analysis
 from kernel.service import KernelService
 
 
@@ -63,3 +64,55 @@ def test_code_proposal_publishes_fail_safe_deny_on_internal_error():
     assert payload["trace_id"] == "t1"
     assert payload["risk_score"] == 1.0
     assert svc._deny_count == 1
+
+
+class _RequestBus:
+    def __init__(self, response):
+        self._response = response
+
+    async def request(self, subject, payload, timeout=5.0):
+        return self._response
+
+
+def _make_risk_service(response):
+    svc = KernelService.__new__(KernelService)
+    svc.logger = logging.getLogger("test-kernel")
+    svc.event_bus = _RequestBus(response)
+    return svc
+
+
+def _run_risk_analysis(response, proposal=None):
+    svc = _make_risk_service(response)
+    return asyncio.run(
+        svc._get_risk_analysis(proposal or {"trace_id": "t1"})
+    )
+
+
+def test_malformed_nan_risk_score_fails_closed():
+    result = _run_risk_analysis({"type": "analysis", "risk_score": float("nan"), "flags": []})
+    assert result.risk_score == 1.0
+    assert unavailable_risk_analysis().flags == result.flags
+
+
+def test_missing_risk_score_fails_closed():
+    result = _run_risk_analysis({"type": "analysis", "flags": []})
+    assert result.risk_score == 1.0
+    assert unavailable_risk_analysis().flags == result.flags
+
+
+def test_non_numeric_risk_score_fails_closed():
+    result = _run_risk_analysis({"type": "analysis", "risk_score": "high", "flags": []})
+    assert result.risk_score == 1.0
+    assert unavailable_risk_analysis().flags == result.flags
+
+
+def test_non_list_flags_fails_closed():
+    result = _run_risk_analysis({"type": "analysis", "risk_score": 0.1, "flags": "oops"})
+    assert result.risk_score == 1.0
+    assert unavailable_risk_analysis().flags == result.flags
+
+
+def test_valid_risk_analysis_parsed():
+    result = _run_risk_analysis({"type": "analysis", "risk_score": 0.2, "flags": ["OK"]})
+    assert result.risk_score == 0.2
+    assert result.flags == ["OK"]
