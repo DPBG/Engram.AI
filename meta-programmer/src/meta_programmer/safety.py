@@ -201,9 +201,6 @@ def is_dangerous(code: str) -> bool:
     return any(f.severity == "high" for f in scan_source(code))
 
 
-def deploy_atomically(
-    target_path: str, code: str, validate_syntax: bool = True
-) -> tuple[bool, str]:
 def run_health_probe(target_path: str, timeout: float = 5.0) -> tuple[bool, str]:
     """Import-probe the deployed module in an isolated subprocess (Phase E1.9.2).
 
