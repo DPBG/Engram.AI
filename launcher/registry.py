@@ -78,6 +78,15 @@ SERVICES: list[Service] = [
         note="Moral kernel - approves/denies/transforms action proposals",
     ),
     Service(
+        name="kernel-watchdog",
+        module="launcher.watchdog",
+        src=".",
+        profile="core",
+        deps=("kernel",),
+        readiness_timeout=2.0,
+        note="Kernel-loss watchdog — SAFE_HALT if kernel heartbeat stops (E1.9.3)",
+    ),
+    Service(
         name="safety-supervisor",
         module="safety_supervisor.service",
         src="safety-supervisor/src",

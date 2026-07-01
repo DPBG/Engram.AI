@@ -329,9 +329,17 @@ async def test_coordinator_status(nats_client: NATSClient):
 
     await nats_client.subscribe("coordinator.status.result", cb=status_handler)
     await asyncio.sleep(0.1)
+    """Test coordinator status query via request-reply."""
+    response = await nats_client.request(
+        "coordinator.status",
+        json.dumps({}).encode(),
+        timeout=2.0,
+    )
 
-    await nats_client.publish("coordinator.status", json.dumps({}).encode())
-    await asyncio.sleep(1.0)
+    status = json.loads(response.data.decode())
+    assert status.get("status") == "running"
+    assert "sensors" in status
+    assert "learning" in status
 
 
 # =============================================================================

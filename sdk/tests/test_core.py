@@ -1,5 +1,7 @@
 """Tests for core types and contracts."""
 
+import time
+
 import pytest
 
 from activelearning.core import (
@@ -35,6 +37,14 @@ class TestTraceIdAndTimestamp:
         ts = current_timestamp()
         assert ts > 1700000000000  # After 2023
         assert ts < 2000000000000  # Before 2033
+
+    def test_current_timestamp_matches_unix_millis(self):
+        # Exactly Unix epoch in integer milliseconds.
+        before = int(time.time() * 1000)
+        ts = current_timestamp()
+        after = int(time.time() * 1000)
+        assert isinstance(ts, int)
+        assert before <= ts <= after
 
 
 class TestObservation:

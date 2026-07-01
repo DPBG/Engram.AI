@@ -2,6 +2,20 @@
 #
 #   docker compose -f docker-compose.yml -f deploy/docker-compose.1m.yml up -d
 #
+# Prerequisites — generate per-service NATS passwords once per deployment:
+#
+#   export KERNEL_NATS_PASS=$(openssl rand -hex 32)
+#   export SAFETY_SUPERVISOR_NATS_PASS=$(openssl rand -hex 32)
+#   export BELIEFS_NATS_PASS=$(openssl rand -hex 32)
+#   export OVERRIDES_NATS_PASS=$(openssl rand -hex 32)
+#
+# Store these in your deployment secrets manager or a gitignored .env file.
+# All four must be set; the broker will reject services that present an unknown
+# password (fail-closed per ADR 0001-nats-authz.md §6).
+#
+# Services without dedicated credentials (neuromorphic, planner, etc.) connect
+# as the no_auth_user (dev_default in nats-1m.conf) which denies publish on
+# privileged governance subjects.
 # Per-service NATS credentials must be generated first:
 #   bash deploy/scripts/gen-creds.sh
 #
@@ -16,12 +30,20 @@ services:
     # on the developer machine; on the server, copy it to deploy/nats-1m.conf
     # before deploying (or bind-mount the generated file directly).
     command: ["-c", "/etc/nats/nats.conf"]
+    environment:
+      # Broker reads these variables to expand $*_NATS_PASS in nats-1m.conf.
+      KERNEL_NATS_PASS: ${KERNEL_NATS_PASS:?KERNEL_NATS_PASS must be set}
+      SAFETY_SUPERVISOR_NATS_PASS: ${SAFETY_SUPERVISOR_NATS_PASS:?SAFETY_SUPERVISOR_NATS_PASS must be set}
+      BELIEFS_NATS_PASS: ${BELIEFS_NATS_PASS:?BELIEFS_NATS_PASS must be set}
+      OVERRIDES_NATS_PASS: ${OVERRIDES_NATS_PASS:?OVERRIDES_NATS_PASS must be set}
     volumes:
       - ./deploy/nats-1m.conf:/etc/nats/nats.conf:ro
       - nats-data:/data
 
   neuromorphic:
     environment:
+      # No per-service password → connects as dev_default (privileged subjects denied).
+      NATS_URL: nats://nats:4222
       NATS_URL: nats://nats:4222
       NATS_CREDS: /run/secrets/neuromorphic.creds
       SQLITE_PATH: /data/sqlite/neuromorphic.db
@@ -49,6 +71,31 @@ services:
 
   kernel:
     environment:
+      NATS_URL: nats://kernel:${KERNEL_NATS_PASS}@nats:4222
+
+  safety-supervisor:
+    environment:
+      NATS_URL: nats://safety-supervisor:${SAFETY_SUPERVISOR_NATS_PASS}@nats:4222
+
+  beliefs:
+    environment:
+      NATS_URL: nats://beliefs:${BELIEFS_NATS_PASS}@nats:4222
+
+  overrides:
+    environment:
+      NATS_URL: nats://overrides:${OVERRIDES_NATS_PASS}@nats:4222
+
+  planner:
+    environment:
+      NATS_URL: nats://nats:4222
+
+  external-api:
+    environment:
+      NATS_URL: nats://nats:4222
+
+  dashboard:
+    environment:
+      NATS_URL: nats://nats:4222
       NATS_URL: nats://nats:4222
       NATS_CREDS: /run/secrets/kernel.creds
   safety-supervisor:

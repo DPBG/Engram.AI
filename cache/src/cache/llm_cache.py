@@ -8,11 +8,13 @@ import hashlib
 import logging
 import time
 from typing import Any
+from typing import Any, Dict, Optional
 
 from activelearning import (
     EmbeddingService,
     QdrantPoint,
     QdrantStore,
+    current_timestamp,
     get_embedding_service,
 )
 
@@ -149,7 +151,7 @@ class LLMCache:
                 "prompt": prompt,
                 "response": response,
                 "model": model,
-                "cached_at": int(time.time() * 1000),
+                "cached_at": current_timestamp(),
                 "hit_count": 0,
                 "last_hit_at": None,
             }
@@ -193,7 +195,7 @@ class LLMCache:
     async def _update_hit_stats(self, cache_id: str) -> None:
         """Update cache hit statistics."""
         try:
-            now = int(time.time() * 1000)
+            now = current_timestamp()
 
             await self.db.execute(
                 """

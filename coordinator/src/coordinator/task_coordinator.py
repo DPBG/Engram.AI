@@ -16,6 +16,7 @@ from activelearning import (
     EmbeddingService,
     QdrantPoint,
     QdrantStore,
+    generate_trace_id,
     get_embedding_service,
 )
 
@@ -214,6 +215,7 @@ class TaskCoordinator:
         import uuid
 
         trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
 
         gap = {
             "trace_id": trace_id,

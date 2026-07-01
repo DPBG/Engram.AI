@@ -1,32 +1,24 @@
 """
-Engram Dashboard — API.
+Engram Dashboard — composition root.
 
-Dashboard for the Engram neuromorphic brain. The LLM chat is a
-communication interface for the spiking neural network, not the
-intelligence itself. The brain learns through STDP on sensory
-experience; the LLM provides a natural-language window into its state.
-
-FastAPI backend with WebSocket, system detection, skill registry,
-knowledge base, conversational AI, and self-improvement loop.
+The LLM chat is a communication interface for the spiking neural network, not
+the intelligence itself — it provides a natural-language window into the brain's
+state. This module only assembles the app: it builds the shared state and the
+focused components (NATS, chat, metrics) and wires the router groups onto
+FastAPI. The behaviour lives in those modules.
 """
 
 import asyncio
-import base64
-import json
 import logging
 import os
-import platform
-import re
-import shutil
-import subprocess
 import time
 import uuid
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
+from typing import Optional
 
-import aiohttp
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,7 +30,25 @@ from dashboard.safe_halt import (
     sanitize_halt_payload,
     sanitize_resume_payload,
     update_halt_state,
+from fastapi.staticfiles import StaticFiles
+
+from dashboard.auth import install_auth_middleware
+from dashboard.chat import ChatEngine
+from dashboard.context import DashboardContext
+from dashboard.knowledge import KnowledgeBase
+from dashboard.metrics import MetricsMonitor
+from dashboard.models import ChatMessage, ObservationPayload
+from dashboard.nats_stream import NatsStreamManager
+from dashboard.routers import (
+    build_chat_router,
+    build_control_router,
+    build_introspection_router,
+    build_stream_router,
+    build_system_router,
 )
+from dashboard.skills import SkillRegistry
+from dashboard.state import DashboardState
+from dashboard.system import detect_system_info, get_live_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -627,6 +637,23 @@ class ObservationPayload(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════
 # DASHBOARD SERVICE
 # ═══════════════════════════════════════════════════════════════════════
+# The dashboard's public surface. ``SkillRegistry``/``KnowledgeBase``/the models
+# and ``detect_system_info``/``get_live_metrics`` now live in focused modules but
+# are re-exported here for backwards compatibility with anything importing them
+# from ``dashboard.api``.
+__all__ = [
+    "DashboardService",
+    "app",
+    "main",
+    "service",
+    "SkillRegistry",
+    "KnowledgeBase",
+    "ChatMessage",
+    "ObservationPayload",
+    "detect_system_info",
+    "get_live_metrics",
+]
+
 
 
 class DashboardService:
@@ -635,7 +662,8 @@ class DashboardService:
 
     Monitors the spiking neural network, provides a chat interface
     (LLM as communication layer), and manages the deployment
-    environment.
+    environment. Owns the shared state and the focused components, and wires
+    the routers + lifecycle onto the FastAPI app.
     """
 
     def __init__(self):
@@ -653,14 +681,24 @@ class DashboardService:
         self._concept_probe_results: list[dict] = []
         self._MAX_PROBE_RESULTS = 200
 
-        # Core components
-        self.skills = SkillRegistry()
-        self.knowledge = KnowledgeBase()
+        # Shared state + focused components (the former god-class concerns).
+        self.state = DashboardState()
+        self.nats = NatsStreamManager(self.state)
+        self.chat = ChatEngine(self.state, self.nats)
+        self.metrics = MetricsMonitor(self.state)
+        self.ctx = DashboardContext(
+            state=self.state, nats=self.nats, chat=self.chat, metrics=self.metrics,
+        )
 
-        self._setup_routes()
+        self._self_monitor_task: Optional[asyncio.Task] = None
+        self._metrics_task: Optional[asyncio.Task] = None
 
-    def _setup_routes(self):
-        self.app.add_middleware(
+        self._configure_app()
+
+    def _configure_app(self):
+        app = self.app
+
+        app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
             allow_credentials=True,
@@ -671,7 +709,7 @@ class DashboardService:
         # Authenticate the control plane: when ENGRAM_DASHBOARD_TOKEN is set,
         # every state-mutating request (POST/PUT/DELETE) must present it. No-op
         # in dev when the token is unset (logs a one-time warning). See auth.py.
-        install_auth_middleware(self.app)
+        install_auth_middleware(app)
 
         static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 
@@ -685,11 +723,24 @@ class DashboardService:
             self.app.mount(
                 "/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz"
             )
+            app.mount("/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz")
 
         if os.path.exists(static_dir):
-            self.app.mount("/static", StaticFiles(directory=static_dir), name="static")
+            app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-        @self.app.on_event("startup")
+        # Routers, grouped by area (replaces the old monolithic _setup_routes).
+        app.include_router(build_system_router(self.ctx, static_dir))
+        app.include_router(build_introspection_router(self.ctx))
+        app.include_router(build_control_router(self.ctx))
+        app.include_router(build_chat_router(self.ctx))
+        app.include_router(build_stream_router(self.ctx))
+
+        self._register_lifecycle()
+
+    def _register_lifecycle(self):
+        app = self.app
+
+        @app.on_event("startup")
         async def on_startup():
             t0 = time.time()
             detect_system_info()
@@ -707,9 +758,24 @@ class DashboardService:
             self._self_monitor_task = asyncio.create_task(self._self_improvement_loop())
             self._metrics_task = asyncio.create_task(self._metrics_broadcast_loop())
             asyncio.create_task(self._connect_nats())
+            self.state.system_info = detect_system_info()
+            self.state.skills.record_call("env.detect", (time.time() - t0) * 1000)
+            info = self.state.system_info
+            self.state.knowledge.learn(
+                "deployment", "system",
+                f"Engram deployed on: {info.get('os', {}).get('system', '?')} "
+                f"{info.get('os', {}).get('machine', '?')}",
+            )
+            self.state.knowledge.learn(
+                "deployment", "system",
+                f"Capabilities: {', '.join(info.get('capabilities', []))}",
+            )
+            self._self_monitor_task = asyncio.create_task(self.metrics.self_improvement_loop())
+            self._metrics_task = asyncio.create_task(self.metrics.metrics_broadcast_loop())
+            asyncio.create_task(self.nats.connect())
             self.logger.info("Engram Dashboard started")
 
-        @self.app.on_event("shutdown")
+        @app.on_event("shutdown")
         async def on_shutdown():
             if self._self_monitor_task:
                 self._self_monitor_task.cancel()
@@ -2357,7 +2423,6 @@ class DashboardService:
 # APPLICATION
 # ═══════════════════════════════════════════════════════════════════════
 
-_startup_time = time.time()
 service = DashboardService()
 app = service.app
 

@@ -9,8 +9,14 @@ import asyncio
 import os
 import time
 from typing import Any
+import json
+import math
+import os
+from typing import Any, Optional
 
-from activelearning import BaseService
+from activelearning import BaseService, current_timestamp, generate_trace_id
+from activelearning.nats_client import serialize_message
+from nats.aio.msg import Msg
 
 from meta_programmer.agents import MetaProgrammerTeam
 from meta_programmer.approval_consumer import ApprovalConsumer
@@ -50,6 +56,17 @@ class MetaProgrammerService(BaseService):
         self.defer_ttl_ms = int(os.environ.get("DEFER_TTL_MS", "300000"))  # 5 min
         self._sweep_task: asyncio.Task | None = None
 
+        # Post-deploy health probe timeout (E1.9.2); 0 disables the probe.
+        # Reject nan/inf/negative — any of these would silently disable or
+        # mis-configure the fail-closed probe, which is a safety violation.
+        _raw_timeout = float(os.environ.get("HEALTH_PROBE_TIMEOUT_SECONDS", "5.0"))
+        if not (math.isfinite(_raw_timeout) and _raw_timeout >= 0.0):
+            raise ValueError(
+                "HEALTH_PROBE_TIMEOUT_SECONDS must be 0 (probe disabled) or a "
+                f"positive finite number; got {os.environ.get('HEALTH_PROBE_TIMEOUT_SECONDS')!r}"
+            )
+        self._health_probe_timeout = _raw_timeout
+
         # Metrics
         self._gaps_processed = 0
         self._code_generated = 0
@@ -58,6 +75,8 @@ class MetaProgrammerService(BaseService):
         self._sandbox_unavailable = 0  # fail-closed blocks (containment could not run)
         self._deployments = 0
         self._reviews_expired = 0
+        self._health_probe_failures = 0  # E1.9.2: deploys that failed the post-deploy probe
+        self._auto_rollbacks = 0         # E1.9.2: automatic rollbacks triggered by probe failure
 
     async def _setup(self) -> None:
         """Initialize service-specific setup."""
@@ -87,8 +106,10 @@ class MetaProgrammerService(BaseService):
         # Subscribe to knowledge gaps
         await self.event_bus.subscribe("knowledge.gap", self._handle_knowledge_gap)
 
-        # Subscribe to status requests
-        await self.event_bus.subscribe("metaprogrammer.status", self._handle_status)
+        # Subscribe to status requests (request-reply)
+        await self.event_bus.subscribe(
+            "metaprogrammer.status", self._handle_status, is_request_handler=True,
+        )
 
         # Subscribe to human approval/denial responses from the Dashboard.
         await self.event_bus.subscribe(
@@ -112,7 +133,7 @@ class MetaProgrammerService(BaseService):
         while True:
             try:
                 await asyncio.sleep(interval)
-                await self._sweep_expired_reviews(int(time.time() * 1000))
+                await self._sweep_expired_reviews(current_timestamp())
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001 — a sweep error must not kill the loop
@@ -319,7 +340,7 @@ class MetaProgrammerService(BaseService):
             await self.event_bus.publish("code.proposal", proposal)
 
             # Wait for decision
-            decision = await self._wait_for_decision(trace_id, subject_prefix="code.decision")
+            decision = await self._wait_for_decision(trace_id, code=True)
             return decision
 
         except Exception as e:
@@ -329,12 +350,15 @@ class MetaProgrammerService(BaseService):
     async def _wait_for_decision(
         self,
         trace_id: str,
-        subject_prefix: str = "decision",
+        *,
+        code: bool = False,
         timeout: float = 30.0,
     ) -> dict:
         """Wait for a Kernel decision."""
         try:
-            decision = await self.event_bus.wait_for_decision(trace_id, timeout=timeout)
+            decision = await self.event_bus.wait_for_decision(
+                trace_id, timeout=timeout, code=code,
+            )
             return decision
         except TimeoutError:
             self.logger.error(f"Timeout waiting for decision: {trace_id}")
@@ -355,11 +379,34 @@ class MetaProgrammerService(BaseService):
             target_path = resolved
 
             # Write atomically: snapshot any existing file, validate the new
-            # code compiles, and roll back to the prior content (or remove a
-            # newly-created file) on any failure — never leave a broken artifact.
-            ok, detail = deploy_atomically(target_path, code)
+            # code compiles, run a post-deploy health probe (E1.9.2), and roll
+            # back to the prior content (or remove a newly-created file) on any
+            # failure — never leave a broken artifact.
+            ok, detail = await asyncio.to_thread(
+                lambda: deploy_atomically(target_path, code, probe_timeout=self._health_probe_timeout)
+            )
             if not ok:
-                self.logger.error("Deploy rolled back for %s: %s", target_path, detail)
+                if "health probe" in detail:
+                    self._health_probe_failures += 1
+                    self._auto_rollbacks += 1
+                    self.logger.error(
+                        "POST-DEPLOY HEALTH PROBE FAILED for %s at %s — auto-rolled back. %s",
+                        trace_id, target_path, detail,
+                    )
+                    try:
+                        await self.event_bus.publish(
+                            "deploy.rolled_back",
+                            {
+                                "trace_id": trace_id,
+                                "target_path": target_path,
+                                "reason": detail,
+                                "auto_rollback": True,
+                            },
+                        )
+                    except Exception as pub_err:
+                        self.logger.warning("Could not publish deploy.rolled_back event: %s", pub_err)
+                else:
+                    self.logger.error("Deploy rolled back for %s: %s", target_path, detail)
                 raise RuntimeError(f"Deploy rolled back: {detail}")
 
             self.logger.info(f"Deployed code to: {target_path}")
@@ -370,7 +417,7 @@ class MetaProgrammerService(BaseService):
             await self.database.insert(
                 "deployments",
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": generate_trace_id(),
                     "trace_id": trace_id,
                     "target_path": target_path,
                     "timestamp": int(asyncio.get_event_loop().time() * 1000),
@@ -421,6 +468,8 @@ class MetaProgrammerService(BaseService):
                     "deployments": self._deployments + (ac.deployments if ac else 0),
                     "reviews_expired": self._reviews_expired,
                     "sandbox_unavailable": self._sandbox_unavailable,
+                    "health_probe_failures": self._health_probe_failures,
+                    "auto_rollbacks": self._auto_rollbacks,
                 },
             }
 
@@ -428,6 +477,23 @@ class MetaProgrammerService(BaseService):
             await self.event_bus.publish("metaprogrammer.status.response", status)
         except Exception as e:
             self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict[str, Any], msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        ac = self._approval_consumer
+        status = {
+            "status": "running",
+            "metrics": {
+                "gaps_processed": self._gaps_processed,
+                "code_generated": self._code_generated,
+                "tests_passed": self._tests_passed + (ac.tests_passed if ac else 0),
+                "tests_failed": self._tests_failed + (ac.tests_failed if ac else 0),
+                "deployments": self._deployments + (ac.deployments if ac else 0),
+                "reviews_expired": self._reviews_expired,
+                "sandbox_unavailable": self._sandbox_unavailable,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
 
 async def main() -> None:
