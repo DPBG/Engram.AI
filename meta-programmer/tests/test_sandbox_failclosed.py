@@ -238,6 +238,7 @@ def _build_service():
     svc = MetaProgrammerService.__new__(MetaProgrammerService)
     svc.logger = _Logger()
     svc._gaps_processed = 0
+    svc._gaps_m1_blocked = 0
     svc._code_generated = 0
     svc._tests_passed = 0
     svc._tests_failed = 0
@@ -250,7 +251,9 @@ def _build_service():
     return svc
 
 
-def test_unavailable_sandbox_blocks_deploy():
+def test_unavailable_sandbox_blocks_deploy(monkeypatch):
+    monkeypatch.setenv("ENGRAM_DECISION_BUS_SIGNING_ENABLED", "1")
+    monkeypatch.setenv("ENGRAM_SANDBOX_FAIL_CLOSED_ENABLED", "1")
     svc = _build_service()
 
     deployed = []

@@ -53,6 +53,7 @@ class MetaProgrammerService(BaseService):
 
         # Metrics
         self._gaps_processed = 0
+        self._gaps_m1_blocked = 0  # gaps refused by the M1 prerequisite gate
         self._code_generated = 0
         self._tests_passed = 0
         self._tests_failed = 0
@@ -145,19 +146,18 @@ class MetaProgrammerService(BaseService):
         5. If tests pass: deploy
         6. If DENY/DEFER: notify and halt
         """
+        # M1 prerequisite gate — runs before try so a check failure cannot be
+        # silently caught and down-graded to a soft error (CLAUDE.md §3: fail-closed).
+        trace_id = data.get("trace_id", "")
+        m1_ok, m1_reason = check_m1_or_deny()
+        if not m1_ok:
+            self._gaps_m1_blocked += 1
+            self.logger.warning("Blocking knowledge.gap %s: %s", trace_id, m1_reason)
+            await self._publish_gap_result(trace_id, False, m1_reason, fail_closed=True)
+            return
         try:
-            trace_id = data.get("trace_id", "")
             description = data.get("description", "")
             context = data.get("context", {})
-
-            # M1 prerequisite gate (issue #140): refuse all autonomy-expanding
-            # proposals until decision-bus signing (Task 1.2) and sandbox
-            # fail-closed hardening (E1.3.2) are both confirmed live.
-            m1_ok, m1_reason = check_m1_or_deny()
-            if not m1_ok:
-                self.logger.warning("Blocking knowledge.gap %s: %s", trace_id, m1_reason)
-                await self._publish_gap_result(trace_id, False, m1_reason)
-                return
 
             self.logger.info(f"Processing knowledge gap: {trace_id}")
             self._gaps_processed += 1
@@ -301,8 +301,7 @@ class MetaProgrammerService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling knowledge gap: {e}", exc_info=True)
-            if "trace_id" in locals():
-                await self._publish_gap_result(trace_id, False, str(e))
+            await self._publish_gap_result(trace_id, False, str(e))
 
     async def _request_kernel_approval(
         self,
@@ -425,6 +424,7 @@ class MetaProgrammerService(BaseService):
                 "status": "running",
                 "metrics": {
                     "gaps_processed": self._gaps_processed,
+                    "gaps_m1_blocked": self._gaps_m1_blocked,
                     "code_generated": self._code_generated,
                     "tests_passed": self._tests_passed + (ac.tests_passed if ac else 0),
                     "tests_failed": self._tests_failed + (ac.tests_failed if ac else 0),

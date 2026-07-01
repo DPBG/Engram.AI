@@ -60,16 +60,21 @@ def check_m1_or_deny() -> tuple[bool, str]:
     When ``ok`` is True the caller may proceed with code generation / deploy.
     When ``ok`` is False the caller must deny the proposal immediately and
     surface ``denial_reason`` — do NOT fall through to generation or staging.
+
+    Each env var is read exactly once to avoid redundant OS lookups.
     """
-    if m1_complete():
+    signing = signing_enabled()
+    sandbox = sandbox_failclosed_enabled()
+
+    if signing and sandbox:
         return True, ""
 
     missing = []
-    if not signing_enabled():
+    if not signing:
         missing.append(
-            f"decision-bus signing not yet live " f"(set {SIGNING_ENV}=1 when Task 1.2 ships)"
+            f"decision-bus signing not yet live (set {SIGNING_ENV}=1 when Task 1.2 ships)"
         )
-    if not sandbox_failclosed_enabled():
+    if not sandbox:
         missing.append(
             f"sandbox fail-closed not yet live "
             f"(set {SANDBOX_FAILCLOSED_ENV}=1 when E1.3.2 ships)"
