@@ -8,6 +8,7 @@ and listens for network sensors announcing themselves over NATS.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -123,10 +124,49 @@ def discover_serial_devices() -> list[DiscoveredDevice]:
     return devices
 
 
+_IMU_DEVICES_ENV = "ENGRAM_IMU_DEVICES"
+
+
+def discover_imus() -> list[DiscoveredDevice]:
+    """List IMU devices declared via the ``ENGRAM_IMU_DEVICES`` env var.
+
+    IMUs attach over many buses (I2C/SPI/serial) with no universal probe, so
+    operators declare them explicitly as a comma-separated list of ``id@port``
+    (or bare ``port``) entries, e.g.
+    ``ENGRAM_IMU_DEVICES="waist@/dev/ttyUSB0,head@/dev/ttyUSB1"``. Returns an
+    empty list when unset — a graceful no-op when no IMU is present.
+    """
+    raw = os.environ.get(_IMU_DEVICES_ENV, "").strip()
+    if not raw:
+        return []
+
+    devices: list[DiscoveredDevice] = []
+    for i, entry in enumerate(raw.split(",")):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "@" in entry:
+            device_id, _, port = entry.partition("@")
+        else:
+            device_id, port = str(i), entry
+        device_id = device_id.strip() or str(i)
+        port = port.strip()
+        devices.append(
+            DiscoveredDevice(
+                device_type="imu",
+                device_id=f"imu:{device_id}",
+                name=f"IMU {device_id}" + (f" ({port})" if port else ""),
+                metadata={"id": device_id, "port": port},
+            )
+        )
+    return devices
+
+
 def discover_all(
     skip_cameras: bool = False,
     skip_microphones: bool = False,
     skip_serial: bool = False,
+    skip_imu: bool = False,
 ) -> list[DiscoveredDevice]:
     """Run local hardware discovery probes.
 
@@ -159,11 +199,19 @@ def discover_all(
         logger.info(f"  Found {len(serial_devs)} serial device(s)")
         devices.extend(serial_devs)
 
+    if skip_imu:
+        logger.info("Skipping IMU discovery")
+    else:
+        logger.info("Discovering IMUs...")
+        imus = discover_imus()
+        logger.info(f"  Found {len(imus)} IMU(s)")
+        devices.extend(imus)
+
     return devices
 
 
 # Device types the gateway knows how to handle natively.
-KNOWN_DEVICE_TYPES = {"camera", "mic", "serial"}
+KNOWN_DEVICE_TYPES = {"camera", "mic", "serial", "imu"}
 
 # Keywords that indicate a device is an actuator rather than a sensor.
 _ACTUATOR_KEYWORDS = ("motor", "servo", "actuator", "gripper")

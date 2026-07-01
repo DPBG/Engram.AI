@@ -272,6 +272,15 @@ def create_sensor(device: DiscoveredDevice, args: argparse.Namespace):
             port=device.metadata["port"],
         )
 
+    elif device.device_type == "imu":
+        from sensors.imu import ImuSensor, open_serial_imu_reader
+        port = device.metadata.get("port")
+        # Serial-JSON is the common IMU dev-board interface; deployments on
+        # other buses (I2C/SPI/ROS) can construct ImuSensor with their own
+        # reader. No port -> start() fails loudly (graceful, logged below).
+        reader = open_serial_imu_reader(port) if port else None
+        return ImuSensor(device_id=device.metadata.get("id", "0"), reader=reader)
+
     return None
 
 

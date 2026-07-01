@@ -79,6 +79,26 @@ class TestSpikeEncoder:
         sr = sensory.get_subrange("proprioceptive")
         assert current[sr.slice()].sum() > 0
 
+    def test_encode_imu_reading_to_proprioceptive(self, encoder, sensory):
+        # A full 9-DOF sample matching the IMU driver's canonical schema
+        # (accel/gyro/orientation) must rate-code into the proprioceptive
+        # sub-range. Provenance "sensor.imu.0" exercises the prefix match.
+        reading = {
+            "accel_x": 0.1,
+            "accel_y": 0.0,
+            "accel_z": 9.81,
+            "gyro_x": 0.01,
+            "gyro_y": 0.0,
+            "gyro_z": -0.02,
+            "roll": 0.0,
+            "pitch": 0.05,
+            "yaw": 1.57,
+        }
+        current = encoder.encode(sensory, reading, "sensor.imu.0")
+        assert current.shape == (sensory.n,)
+        proprioceptive = sensory.get_subrange("proprioceptive")
+        assert current[proprioceptive.slice()].sum() > 0
+
     def test_encode_scalar(self, encoder, sensory):
         current = encoder.encode(sensory, 0.7, "sensor.touch")
         sr = sensory.get_subrange("tactile")

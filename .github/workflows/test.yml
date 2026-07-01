@@ -97,7 +97,6 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + External-API tests
       - name: Install nats-server
         run: |
           set -euo pipefail
@@ -133,6 +132,33 @@ jobs:
         # fastapi + httpx (its TestClient backend); they self-skip via importorskip
         # if those are ever absent.
         run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
+
+  sensory-gateway:
+    name: Sensory-gateway test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      # sensory-gateway uses a flat layout (modules `sensors`, `discovery`), so
+      # add it to PYTHONPATH; --with-editable ./sdk provides activelearning.
+      # The IMU driver tests inject a mocked reader and drive coroutines with
+      # asyncio.run, so no hardware, optional sensor deps, or pytest-asyncio.
+      - name: Run sensory-gateway tests
+        env:
+          PYTHONPATH: sensory-gateway
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest sensory-gateway/tests -o addopts="" -v
 
   sandbox:
     name: Sandbox image build + smoke + containment
