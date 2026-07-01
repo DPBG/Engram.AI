@@ -214,7 +214,14 @@ def scan_source(code: str) -> list[Finding]:
             mod = node.module or ""
             top = mod.split(".")[0]
             if top in _DANGEROUS_MODULES:
-                findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
+                if any(a.name == "*" for a in node.names):
+                    # `from os import *` / `from subprocess import *` pulls the
+                    # dangerous sinks into the namespace wholesale and defeats
+                    # name tracking — flag high.
+                    findings.append(Finding("high", "dangerous_import_star",
+                                            f"from {mod} import *"))
+                else:
+                    findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
             if any(s in mod.lower() for s in _SELF_REF):
                 findings.append(Finding("high", "self_referential", f"from {mod} import …"))
 

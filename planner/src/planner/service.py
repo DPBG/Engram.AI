@@ -9,9 +9,8 @@ import asyncio
 import json
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
-import uuid
 
-from activelearning import BaseService
+from activelearning import BaseService, generate_trace_id
 from activelearning.nats_client import serialize_message
 from nats.aio.msg import Msg
 
@@ -123,7 +122,7 @@ class PlannerService(BaseService):
 
         This is a placeholder that should be extended with actual planning logic.
         """
-        trace_id = observation.get("trace_id", str(uuid.uuid4()))
+        trace_id = observation.get("trace_id", generate_trace_id())
         provenance = observation.get("provenance", subject)
         data = observation.get("data", {})
 

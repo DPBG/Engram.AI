@@ -2,16 +2,8 @@
 
 from dataclasses import dataclass, field
 from typing import Any
-import time
-import uuid
 
-
-def generate_id() -> str:
-    return str(uuid.uuid4())
-
-
-def current_timestamp() -> int:
-    return int(time.time() * 1000)
+from activelearning import current_timestamp, generate_trace_id
 
 
 @dataclass
@@ -22,7 +14,7 @@ class Episode:
     data: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     utility_score: float = 1.0
-    id: str = field(default_factory=generate_id)
+    id: str = field(default_factory=generate_trace_id)
     timestamp: int = field(default_factory=current_timestamp)
 
 
