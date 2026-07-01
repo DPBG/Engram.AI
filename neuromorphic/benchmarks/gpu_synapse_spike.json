@@ -1,0 +1,52 @@
+{
+  "timestamp": "2026-07-01T09:05:04Z",
+  "system": {
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "python_version": "3.14.5",
+    "numpy_version": "2.5.0"
+  },
+  "gpu_backend_available": true,
+  "results": [
+    {
+      "scale": "small",
+      "n_pre": 2000,
+      "n_post": 2000,
+      "sparsity": 0.02,
+      "fire_rate": 0.05,
+      "nnz": 79218,
+      "cpu_ms_per_call": 0.04075624999870797,
+      "jax_ms_per_call": 1.5284180999998398,
+      "slowdown_factor": 37.50144088448502,
+      "max_abs_diff": 0.0
+    },
+    {
+      "scale": "medium",
+      "n_pre": 20000,
+      "n_post": 20000,
+      "sparsity": 0.01,
+      "fire_rate": 0.05,
+      "nnz": 3980284,
+      "cpu_ms_per_call": 3.2890331499999093,
+      "jax_ms_per_call": 40.20771304999755,
+      "slowdown_factor": 12.224781939336385,
+      "max_abs_diff": 1.430511474609375e-06
+    },
+    {
+      "scale": "large",
+      "n_pre": 200000,
+      "n_post": 200000,
+      "sparsity": 0.0005,
+      "fire_rate": 0.02,
+      "nnz": 19994970,
+      "cpu_ms_per_call": 18.551125150000303,
+      "jax_ms_per_call": 296.0364547000012,
+      "slowdown_factor": 15.957870603875278,
+      "max_abs_diff": 0.0
+    }
+  ],
+  "jax_version": "0.10.2",
+  "jax_devices": [
+    "cpu:0"
+  ]
+}
