@@ -169,6 +169,7 @@ class SandboxManager:
                 }
 
             except TimeoutError:
+            except TimeoutError:  # asyncio.TimeoutError is TimeoutError on Python 3.11+
                 # Containment worked (and we kill the container); the code under
                 # test hung. That's a test failure, not sandbox unavailability.
                 logger.error(f"Sandbox timeout after {self.timeout}s")
