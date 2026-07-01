@@ -10,13 +10,12 @@ Manages the flow:
 """
 
 import asyncio
-from typing import Optional
 
 from activelearning import BaseService
 from activelearning.nats_client import serialize_message
 
-from overrides.verifier import HumanVerifier
 from overrides.processor import OverrideProcessor
+from overrides.verifier import HumanVerifier
 
 
 class OverrideService(BaseService):
@@ -30,8 +29,8 @@ class OverrideService(BaseService):
     def __init__(self):
         super().__init__("overrides", use_database=True, use_event_bus=True)
 
-        self._verifier: Optional[HumanVerifier] = None
-        self._processor: Optional[OverrideProcessor] = None
+        self._verifier: HumanVerifier | None = None
+        self._processor: OverrideProcessor | None = None
 
         # Metrics
         self._overrides_requested = 0

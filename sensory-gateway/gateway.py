@@ -24,11 +24,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import signal
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -41,16 +39,17 @@ from pathlib import Path
 os.environ.setdefault("OPENCV_FFMPEG_THREADS", "1")
 
 import cv2  # noqa: E402 — must import after setting env vars above
+
 cv2.setNumThreads(2)  # Limit OpenCV parallel_for pool (default = CPU count = 64)
 
-from activelearning.nats_client import EventBus
-from activelearning.plugins import register_sensor, list_sensors
-from aggregating_bus import AggregatingEventBus
+from activelearning.nats_client import EventBus  # noqa: E402
+from activelearning.plugins import register_sensor  # noqa: E402
 
-from discovery import discover_all, DiscoveredDevice, KNOWN_DEVICE_TYPES
-from queue_state import QueueStateManager
-from video_quality import VideoQualityGate
-from dataset_manifest import DatasetManifest
+from aggregating_bus import AggregatingEventBus  # noqa: E402
+from dataset_manifest import DatasetManifest  # noqa: E402
+from discovery import KNOWN_DEVICE_TYPES, DiscoveredDevice, discover_all  # noqa: E402
+from queue_state import QueueStateManager  # noqa: E402
+from video_quality import VideoQualityGate  # noqa: E402
 
 logger = logging.getLogger("sensory-gateway")
 
@@ -117,10 +116,7 @@ class ConvergenceTracker:
             return False
 
         # Average delta across key learning connections only
-        relevant = [
-            v for k, v in stdp_deltas.items()
-            if k in _LEARNING_SYNAPSE_GROUPS and v > 0
-        ]
+        relevant = [v for k, v in stdp_deltas.items() if k in _LEARNING_SYNAPSE_GROUPS and v > 0]
         if not relevant:
             return False
 
@@ -178,7 +174,9 @@ class VideoTrainingSession:
         self.url = url
         self.target_loops = target_loops  # 0 = infinite
         self.category = category
-        self.status = "pending"  # pending, downloading, starting, running, completed, error, stopped, queued
+        self.status = (
+            "pending"  # pending, downloading, starting, running, completed, error, stopped, queued
+        )
         self.error: str | None = None
         self.video_sensor = None
         self.audio_sensor = None
@@ -195,10 +193,7 @@ class VideoTrainingSession:
     def update_learning_metrics(self, metrics: dict) -> None:
         """Update per-video learning score from neuromorphic metrics."""
         stdp_deltas = metrics.get("stdp_deltas", {})
-        relevant = [
-            v for k, v in stdp_deltas.items()
-            if k in _LEARNING_SYNAPSE_GROUPS and v > 0
-        ]
+        relevant = [v for k, v in stdp_deltas.items() if k in _LEARNING_SYNAPSE_GROUPS and v > 0]
         if relevant:
             mean_delta = sum(relevant) / len(relevant)
             self.learning_score += mean_delta
@@ -251,6 +246,7 @@ def create_sensor(device: DiscoveredDevice, args: argparse.Namespace):
         if args.no_camera:
             return None
         from sensors.camera import CameraSensor
+
         return CameraSensor(
             device_index=device.metadata["index"],
             fps=args.camera_fps,
@@ -261,6 +257,7 @@ def create_sensor(device: DiscoveredDevice, args: argparse.Namespace):
         if args.no_mic:
             return None
         from sensors.microphone import MicrophoneSensor
+
         return MicrophoneSensor(
             device_index=device.metadata["index"],
             hz=args.audio_hz,
@@ -268,6 +265,7 @@ def create_sensor(device: DiscoveredDevice, args: argparse.Namespace):
 
     elif device.device_type == "serial":
         from sensors.serial_device import SerialSensor
+
         return SerialSensor(
             port=device.metadata["port"],
         )
@@ -314,12 +312,15 @@ async def run(args: argparse.Namespace) -> None:
         if device.device_type not in KNOWN_DEVICE_TYPES:
             # Unknown device — publish for coordinator/meta-programmer pipeline
             if device.device_id not in unknown_published:
-                await bus.publish(SUBJECT_DEVICE_UNKNOWN, {
-                    "device_type": device.device_type,
-                    "device_id": device.device_id,
-                    "name": device.name,
-                    "metadata": device.metadata,
-                })
+                await bus.publish(
+                    SUBJECT_DEVICE_UNKNOWN,
+                    {
+                        "device_type": device.device_type,
+                        "device_id": device.device_id,
+                        "name": device.name,
+                        "metadata": device.metadata,
+                    },
+                )
                 unknown_published.add(device.device_id)
                 logger.info(f"Unknown device published: {device.device_id} ({device.name})")
             continue
@@ -340,6 +341,7 @@ async def run(args: argparse.Namespace) -> None:
     if args.stt:
         try:
             from sensors.speech import SpeechSensor
+
             speech = SpeechSensor(model_size=args.stt_model)
             register_sensor(speech)
             await speech.start(bus)
@@ -374,13 +376,13 @@ async def run(args: argparse.Namespace) -> None:
             f"Saved queue state ignored. Delete {_queue_state.path} to suppress this warning."
         )
     if _resumable and not has_video:
-        logger.info(
-            f"Found {len(_resumable)} resumable video session(s) from previous run"
-        )
+        logger.info(f"Found {len(_resumable)} resumable video session(s) from previous run")
         for entry in _resumable:
             sid = entry.get("session_id", uuid.uuid4().hex[:8])
             filepath = entry.get("filepath", "")
-            if not filepath or (not Path(filepath).exists() and not (entry.get("url") or "").startswith("http")):
+            if not filepath or (
+                not Path(filepath).exists() and not (entry.get("url") or "").startswith("http")
+            ):
                 logger.warning(f"Skipping resume of {entry.get('title', sid)}: file not found")
                 continue
             session = VideoTrainingSession(
@@ -432,11 +434,19 @@ async def run(args: argparse.Namespace) -> None:
         session.started_at = time.time()
 
         try:
-            from sensors.video_file import VideoFileSensor
             from sensors.audio_file import AudioFileSensor
+            from sensors.video_file import VideoFileSensor
 
             # Video sensor
-            vsensor = VideoFileSensor(filepath, fps=fps, loop=loop, session_id=session_id, cnn=args.cnn, turbo=args.turbo, sparse_threshold=args.sparse_threshold)
+            vsensor = VideoFileSensor(
+                filepath,
+                fps=fps,
+                loop=loop,
+                session_id=session_id,
+                cnn=args.cnn,
+                turbo=args.turbo,
+                sparse_threshold=args.sparse_threshold,
+            )
             register_sensor(vsensor)
             await vsensor.start(bus)
             active_sensors.append(vsensor)
@@ -449,7 +459,9 @@ async def run(args: argparse.Namespace) -> None:
             try:
                 if AudioFileSensor is None:
                     raise ImportError("AudioFileSensor unavailable (sounddevice not installed)")
-                asensor = AudioFileSensor(filepath, hz=10.0, loop=loop, session_id=session_id, turbo=args.turbo)
+                asensor = AudioFileSensor(
+                    filepath, hz=10.0, loop=loop, session_id=session_id, turbo=args.turbo
+                )
                 register_sensor(asensor)
                 await asensor.start(bus)
                 active_sensors.append(asensor)
@@ -466,8 +478,12 @@ async def run(args: argparse.Namespace) -> None:
             if transcript:
                 try:
                     from sensors.transcript import TranscriptSensor
+
                     tsensor = TranscriptSensor(
-                        filepath, model_size=args.stt_model, loop=loop, session_id=session_id,
+                        filepath,
+                        model_size=args.stt_model,
+                        loop=loop,
+                        session_id=session_id,
                     )
                     register_sensor(tsensor)
                     await tsensor.start(bus)
@@ -522,6 +538,7 @@ async def run(args: argparse.Namespace) -> None:
         await bus.publish(SUBJECT_VIDEO_STATUS, entry.get_status())
         try:
             from scripts.download_video import download_video_async
+
             logger.info(f"Queue: downloading {entry.url}")
             info = await download_video_async(entry.url)
             entry.filepath = info["filepath"]
@@ -566,9 +583,13 @@ async def run(args: argparse.Namespace) -> None:
             # Wait for something in the queue
             while not video_queue:
                 _queue_active_id = None
-                await bus.publish(SUBJECT_VIDEO_STATUS, {
-                    "type": "queue_update", **_get_queue_status(),
-                })
+                await bus.publish(
+                    SUBJECT_VIDEO_STATUS,
+                    {
+                        "type": "queue_update",
+                        **_get_queue_status(),
+                    },
+                )
                 _queue_advance_event.clear()
                 await _queue_advance_event.wait()
 
@@ -608,7 +629,8 @@ async def run(args: argparse.Namespace) -> None:
                 logger.info(f"Queue: {session.title} is a duplicate (proceeding anyway)")
             # Pass pre-computed hash to avoid re-opening the video file
             _quality_gate.register_hash(
-                session.filepath, session.session_id,
+                session.filepath,
+                session.session_id,
                 video_hash=qr.get("metadata", {}).get("hash"),
             )
 
@@ -633,9 +655,13 @@ async def run(args: argparse.Namespace) -> None:
                 # Remove the placeholder and replace with the real session
                 video_sessions.pop(session_id, None)
 
-                await bus.publish(SUBJECT_VIDEO_STATUS, {
-                    "type": "queue_update", **_get_queue_status(),
-                })
+                await bus.publish(
+                    SUBJECT_VIDEO_STATUS,
+                    {
+                        "type": "queue_update",
+                        **_get_queue_status(),
+                    },
+                )
             except Exception as e:
                 logger.error(f"Queue: failed to start {session.title}: {e}")
                 session.status = "error"
@@ -673,21 +699,26 @@ async def run(args: argparse.Namespace) -> None:
                         break
 
                 # Convergence auto-advance: when brain has learned this video, move on
-                if started.convergence._converged and not getattr(started, '_convergence_announced', False):
+                if started.convergence._converged and not getattr(
+                    started, "_convergence_announced", False
+                ):
                     loop_count = started.video_sensor.loop_count if started.video_sensor else 0
                     logger.info(
                         f"Convergence auto-advance: {started.title} after {loop_count} loops "
                         f"(mean delta: {started.convergence._last_mean_delta:.6f}, "
                         f"learning score: {started.learning_score:.6f})"
                     )
-                    await bus.publish(SUBJECT_VIDEO_STATUS, {
-                        "type": "converged",
-                        "session_id": started.session_id,
-                        "title": started.title,
-                        "loop_count": loop_count,
-                        "learning_score": round(started.learning_score, 6),
-                        **started.convergence.status,
-                    })
+                    await bus.publish(
+                        SUBJECT_VIDEO_STATUS,
+                        {
+                            "type": "converged",
+                            "session_id": started.session_id,
+                            "title": started.title,
+                            "loop_count": loop_count,
+                            "learning_score": round(started.learning_score, 6),
+                            **started.convergence.status,
+                        },
+                    )
                     started._convergence_announced = True
                     # Auto-advance: stop this video and move to next
                     started.status = "completed"
@@ -725,9 +756,13 @@ async def run(args: argparse.Namespace) -> None:
                 video_queue.pop(0)
             _queue_active_id = None
             _save_queue_state()
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
     # Start video files from CLI args (batched to avoid thundering herd)
     if args.video:
@@ -739,7 +774,7 @@ async def run(args: argparse.Namespace) -> None:
             f"({batch_delay}s delay between batches)"
         )
         for batch_start in range(0, total, batch_size):
-            batch = args.video[batch_start:batch_start + batch_size]
+            batch = args.video[batch_start : batch_start + batch_size]
             batch_num = batch_start // batch_size + 1
             total_batches = (total + batch_size - 1) // batch_size
             logger.info(f"Batch {batch_num}/{total_batches}: starting {len(batch)} sensor(s)")
@@ -752,6 +787,7 @@ async def run(args: argparse.Namespace) -> None:
                 if path.startswith("http"):
                     try:
                         from scripts.download_video import download_video_async
+
                         logger.info(f"Downloading: {path}")
                         info = await download_video_async(path)
                         filepath = info["filepath"]
@@ -795,13 +831,15 @@ async def run(args: argparse.Namespace) -> None:
         for sid, state in sensor_state.items():
             s = state["sensor"]
             meta = s.describe()
-            sensors_info.append({
-                "sensor_id": sid,
-                "name": meta.name,
-                "type": meta.description,
-                "hz": meta.rate_limit_hz,
-                "running": state["running"],
-            })
+            sensors_info.append(
+                {
+                    "sensor_id": sid,
+                    "name": meta.name,
+                    "type": meta.description,
+                    "hz": meta.rate_limit_hz,
+                    "running": state["running"],
+                }
+            )
         return {
             "gateway": "running",
             "timestamp": time.time(),
@@ -886,11 +924,14 @@ async def run(args: argparse.Namespace) -> None:
                 _loop = asyncio.get_event_loop()
                 if await _loop.run_in_executor(None, _quality_gate.is_blacklisted, url_or_path):
                     logger.warning(f"Video is blacklisted: {url_or_path}")
-                    await bus.publish(SUBJECT_VIDEO_STATUS, {
-                        "type": "queue_rejected",
-                        "url": url_or_path,
-                        "reason": "Video is blacklisted",
-                    })
+                    await bus.publish(
+                        SUBJECT_VIDEO_STATUS,
+                        {
+                            "type": "queue_rejected",
+                            "url": url_or_path,
+                            "reason": "Video is blacklisted",
+                        },
+                    )
                     return
 
             # Create a placeholder session in "queued" state
@@ -919,9 +960,13 @@ async def run(args: argparse.Namespace) -> None:
             _queue_advance_event.set()
             _save_queue_state()
 
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
         elif action == "skip_video":
             # Skip the currently playing video, advance to next in queue
@@ -932,9 +977,13 @@ async def run(args: argparse.Namespace) -> None:
                     await _stop_video_session(_queue_active_id)
                     logger.info(f"Skipped video: {session.title}")
             _save_queue_state()
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
         elif action == "remove_queued":
             # Remove a specific video from the queue (not the active one)
@@ -946,9 +995,13 @@ async def run(args: argparse.Namespace) -> None:
                     s.status = "stopped"
                 logger.info(f"Removed from queue: {session_id}")
             _save_queue_state()
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
         elif action == "clear_queue":
             # Clear all queued (not active) videos
@@ -964,9 +1017,13 @@ async def run(args: argparse.Namespace) -> None:
             video_queue.extend(kept)
             logger.info("Queue cleared")
             _save_queue_state()
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
         elif action == "reorder_queue":
             # Reorder the queue: move session_id to position
@@ -976,9 +1033,13 @@ async def run(args: argparse.Namespace) -> None:
                 video_queue.remove(session_id)
                 video_queue.insert(min(position, len(video_queue)), session_id)
             _save_queue_state()
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
         elif action == "blacklist_video":
             # Blacklist a video — stop if active, remove from queue, add to blacklist
@@ -1007,37 +1068,53 @@ async def run(args: argparse.Namespace) -> None:
                 if filepath:
                     _quality_gate.blacklist(filepath, reason)
             _save_queue_state()
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
         elif action == "unblacklist_video":
             video_hash = data.get("hash", "")
             if video_hash:
                 _quality_gate.unblacklist(video_hash)
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "blacklist_update",
-                "blacklist": _quality_gate.get_blacklist(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "blacklist_update",
+                    "blacklist": _quality_gate.get_blacklist(),
+                },
+            )
 
         elif action == "get_blacklist":
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "blacklist_update",
-                "blacklist": _quality_gate.get_blacklist(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "blacklist_update",
+                    "blacklist": _quality_gate.get_blacklist(),
+                },
+            )
 
         elif action == "get_manifest":
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "manifest_update",
-                "runs": _manifest.list_runs(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "manifest_update",
+                    "runs": _manifest.list_runs(),
+                },
+            )
 
         elif action == "save_manifest":
             path = _manifest.save()
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "manifest_saved",
-                "path": str(path),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "manifest_saved",
+                    "path": str(path),
+                },
+            )
 
         elif action == "add_video":
             # Direct play (bypass queue) — kept for backwards compat
@@ -1062,25 +1139,32 @@ async def run(args: argparse.Namespace) -> None:
                 if url_or_path.startswith("http"):
                     try:
                         from scripts.download_video import download_video_async
+
                         logger.info(f"Downloading video: {url_or_path}")
-                        await bus.publish(SUBJECT_VIDEO_STATUS, {
-                            "session_id": "pending",
-                            "status": "downloading",
-                            "title": url_or_path,
-                            "url": url_or_path,
-                        })
+                        await bus.publish(
+                            SUBJECT_VIDEO_STATUS,
+                            {
+                                "session_id": "pending",
+                                "status": "downloading",
+                                "title": url_or_path,
+                                "url": url_or_path,
+                            },
+                        )
                         info = await download_video_async(url_or_path)
                         filepath = info["filepath"]
                         title = info.get("title", title)
                         duration_s = info.get("duration", 0)
                     except Exception as e:
                         logger.error(f"Failed to download {url_or_path}: {e}")
-                        await bus.publish(SUBJECT_VIDEO_STATUS, {
-                            "session_id": "download_error",
-                            "status": "error",
-                            "error": str(e),
-                            "url": url_or_path,
-                        })
+                        await bus.publish(
+                            SUBJECT_VIDEO_STATUS,
+                            {
+                                "session_id": "download_error",
+                                "status": "error",
+                                "error": str(e),
+                                "url": url_or_path,
+                            },
+                        )
                         return
                 else:
                     title = Path(filepath).stem
@@ -1107,9 +1191,13 @@ async def run(args: argparse.Namespace) -> None:
 
         elif action == "get_queue":
             # Dashboard requests full queue state
-            await bus.publish(SUBJECT_VIDEO_STATUS, {
-                "type": "queue_update", **_get_queue_status(),
-            })
+            await bus.publish(
+                SUBJECT_VIDEO_STATUS,
+                {
+                    "type": "queue_update",
+                    **_get_queue_status(),
+                },
+            )
 
         elif action == "status":
             pass  # Just triggers an immediate status publish below
@@ -1131,9 +1219,13 @@ async def run(args: argparse.Namespace) -> None:
                         await bus.publish(SUBJECT_VIDEO_STATUS, session.get_status())
                 # Publish queue state
                 if video_queue or _queue_active_id:
-                    await bus.publish(SUBJECT_VIDEO_STATUS, {
-                        "type": "queue_update", **_get_queue_status(),
-                    })
+                    await bus.publish(
+                        SUBJECT_VIDEO_STATUS,
+                        {
+                            "type": "queue_update",
+                            **_get_queue_status(),
+                        },
+                    )
             except Exception as e:
                 logger.debug(f"Video status publish error: {e}")
             await asyncio.sleep(3)
@@ -1164,18 +1256,19 @@ async def run(args: argparse.Namespace) -> None:
 
         try:
             import importlib.util
+
             spec = importlib.util.spec_from_file_location("_hotloaded_plugin", target_path)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
 
             # Find the Plugin subclass in the module
-            from activelearning.plugins import SensorPlugin, ActuatorPlugin
+            from activelearning.plugins import ActuatorPlugin, SensorPlugin
+
             plugin_cls = None
             base = SensorPlugin if plugin_type == "sensor" else ActuatorPlugin
             for attr_name in dir(mod):
                 attr = getattr(mod, attr_name)
-                if (isinstance(attr, type) and issubclass(attr, base)
-                        and attr is not base):
+                if isinstance(attr, type) and issubclass(attr, base) and attr is not base:
                     plugin_cls = attr
                     break
 
@@ -1258,91 +1351,124 @@ def parse_args() -> argparse.Namespace:
         description="Sensory Gateway — stream sensor data to the neuromorphic brain",
     )
     parser.add_argument(
-        "--nats", default="nats://localhost:4222",
+        "--nats",
+        default="nats://localhost:4222",
         help="NATS server URL (default: nats://localhost:4222)",
     )
     parser.add_argument(
-        "--list", action="store_true",
+        "--list",
+        action="store_true",
         help="List discovered sensors and exit",
     )
     parser.add_argument(
-        "--no-camera", action="store_true",
+        "--no-camera",
+        action="store_true",
         help="Skip camera sensors",
     )
     parser.add_argument(
-        "--no-mic", action="store_true",
+        "--no-mic",
+        action="store_true",
         help="Skip microphone sensors",
     )
     parser.add_argument(
-        "--camera-fps", type=float, default=5.0,
+        "--camera-fps",
+        type=float,
+        default=5.0,
         help="Camera capture rate in FPS (default: 5)",
     )
     parser.add_argument(
-        "--audio-hz", type=float, default=30.0,
+        "--audio-hz",
+        type=float,
+        default=30.0,
         help="Audio MFCC extraction rate in Hz (default: 30)",
     )
     parser.add_argument(
-        "--stt", action="store_true",
+        "--stt",
+        action="store_true",
         help="Enable speech-to-text via Whisper",
     )
     parser.add_argument(
-        "--stt-model", default="tiny",
+        "--stt-model",
+        default="tiny",
         choices=["tiny", "base", "small", "medium"],
         help="Whisper model size (default: tiny)",
     )
     _default_video = os.environ.get("SENSORY_VIDEO")
     parser.add_argument(
-        "--video", nargs="+",
+        "--video",
+        nargs="+",
         default=[_default_video] if _default_video else None,
         help="Video file path(s) or YouTube URL(s) to play as training input "
-             "(default: $SENSORY_VIDEO)",
+        "(default: $SENSORY_VIDEO)",
     )
     parser.add_argument(
-        "--video-fps", type=float, default=2.0,
+        "--video-fps",
+        type=float,
+        default=2.0,
         help="Video playback FPS (default: 2)",
     )
     parser.add_argument(
-        "--sparse-threshold", type=float, default=0.05,
+        "--sparse-threshold",
+        type=float,
+        default=0.05,
         help="Sparse encoding threshold — skip frames with mean pixel diff below this (default: 0.05)",
     )
     parser.add_argument(
-        "--video-loop", action="store_true",
+        "--video-loop",
+        action="store_true",
         help="Loop video playback",
     )
     parser.add_argument(
-        "--video-transcript", action="store_true",
+        "--video-transcript",
+        action="store_true",
         help="Enable Whisper transcription of video audio",
     )
     parser.add_argument(
-        "--turbo", action="store_true", default=False,
+        "--turbo",
+        action="store_true",
+        default=False,
         help="Turbo training mode: remove sleep between frames for max throughput",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=25,
+        "--batch-size",
+        type=int,
+        default=25,
         help="Number of video sensors to start per batch (default: 25)",
     )
     parser.add_argument(
-        "--batch-delay", type=float, default=2.0,
+        "--batch-delay",
+        type=float,
+        default=2.0,
         help="Seconds to wait between sensor startup batches (default: 2.0)",
     )
     parser.add_argument(
-        "--cnn", action="store_true", default=False,
+        "--cnn",
+        action="store_true",
+        default=False,
         help="Enable CNN feature extraction (MobileNetV3) for visual sensors",
     )
     parser.add_argument(
-        "--no-cnn", action="store_true", default=False,
+        "--no-cnn",
+        action="store_true",
+        default=False,
         help="Disable CNN feature extraction (use raw 64x64 pixels)",
     )
     parser.add_argument(
-        "--no-aggregate", action="store_true", default=False,
+        "--no-aggregate",
+        action="store_true",
+        default=False,
         help="Disable observation aggregation (send every sensor message individually)",
     )
     parser.add_argument(
-        "--aggregate-hz", type=float, default=2.0,
+        "--aggregate-hz",
+        type=float,
+        default=2.0,
         help="Aggregation flush rate in Hz (default: 2.0 — matches brain step rate)",
     )
     parser.add_argument(
-        "-v", "--verbose", action="store_true",
+        "-v",
+        "--verbose",
+        action="store_true",
         help="Enable debug logging",
     )
     return parser.parse_args()

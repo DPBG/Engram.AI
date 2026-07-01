@@ -15,7 +15,7 @@ decision never reaches this check.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 #: Subject the Kernel listens on for action proposals.
 from activelearning.subjects import Subjects
@@ -29,7 +29,7 @@ APPROVED_TYPES = frozenset({"ALLOW", "TRANSFORM"})
 def build_execution_proposal(
     trace_id: str,
     task_id: str,
-    parameters: Optional[dict[str, Any]] = None,
+    parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the action proposal the Kernel evaluates before a task runs."""
     return {
@@ -43,7 +43,7 @@ def build_execution_proposal(
     }
 
 
-def decision_allows(decision: Optional[dict[str, Any]]) -> bool:
+def decision_allows(decision: dict[str, Any] | None) -> bool:
     """Return ``True`` only for an explicit ALLOW/TRANSFORM decision.
 
     Fail-closed: ``None`` (timeout), ``{}``, missing/unknown ``type``, DENY, and

@@ -86,26 +86,31 @@ DecisionType = _FakeDecisionType
 
 # ===== Discovery: KNOWN_DEVICE_TYPES =====
 
+
 class TestDiscoveryKnownTypes(unittest.TestCase):
     def test_known_types_include_basics(self):
         from discovery import KNOWN_DEVICE_TYPES
+
         assert "camera" in KNOWN_DEVICE_TYPES
         assert "mic" in KNOWN_DEVICE_TYPES
         assert "serial" in KNOWN_DEVICE_TYPES
 
     def test_unknown_type_not_in_known(self):
         from discovery import KNOWN_DEVICE_TYPES
+
         assert "lidar" not in KNOWN_DEVICE_TYPES
         assert "imu" not in KNOWN_DEVICE_TYPES
 
     def test_sanitize_device_string(self):
         from discovery import sanitize_device_string
+
         assert sanitize_device_string("hello\nworld") == "hello world"
         assert sanitize_device_string("a" * 300) == "a" * 200
         assert sanitize_device_string(None) == "None"
 
     def test_discovered_device_dataclass(self):
         from discovery import DiscoveredDevice
+
         d = DiscoveredDevice(
             device_type="lidar",
             device_id="lidar:0",
@@ -117,6 +122,7 @@ class TestDiscoveryKnownTypes(unittest.TestCase):
 
 
 # ===== Kernel Envelope: intensity + channel validation =====
+
 
 class TestKernelEnvelopeExtension(unittest.TestCase):
     def setUp(self):
@@ -192,17 +198,14 @@ class TestKernelEnvelopeExtension(unittest.TestCase):
 
 # ===== Meta-Programmer: Device-Aware Prompts =====
 
+
 class TestMetaProgrammerDevicePrompt(unittest.TestCase):
     def setUp(self):
         # Load agents.py directly, bypassing __init__.py
-        agents_path = os.path.join(
-            _ROOT, "meta-programmer", "src", "meta_programmer", "agents.py"
-        )
+        agents_path = os.path.join(_ROOT, "meta-programmer", "src", "meta_programmer", "agents.py")
         self.agents_mod = _load_module("meta_programmer.agents", agents_path)
         # Create team instance without __init__
-        team = self.agents_mod.MetaProgrammerTeam.__new__(
-            self.agents_mod.MetaProgrammerTeam
-        )
+        team = self.agents_mod.MetaProgrammerTeam.__new__(self.agents_mod.MetaProgrammerTeam)
         team.ollama_url = "http://localhost:11434"
         team.model_name = "test"
         self.team = team
@@ -273,6 +276,7 @@ class TestMetaProgrammerDevicePrompt(unittest.TestCase):
 
 # ===== Coordinator: dedup + plugin type inference logic =====
 
+
 class TestCoordinatorDeviceRouting(unittest.TestCase):
     def test_device_routing_deduplication(self):
         """Same device_id should not trigger duplicate knowledge gaps."""
@@ -284,18 +288,22 @@ class TestCoordinatorDeviceRouting(unittest.TestCase):
 
     def test_plugin_type_inference_sensor(self):
         from discovery import infer_plugin_type
+
         assert infer_plugin_type("RPLidar A1 Scanner") == "sensor"
 
     def test_plugin_type_inference_actuator(self):
         from discovery import infer_plugin_type
+
         assert infer_plugin_type("Dynamixel Servo Motor") == "actuator"
 
     def test_gripper_detected_as_actuator(self):
         from discovery import infer_plugin_type
+
         assert infer_plugin_type("Robotiq 2F-85 Gripper") == "actuator"
 
 
 # ===== Gateway: source verification =====
+
 
 class TestGatewaySourceVerification(unittest.TestCase):
     def test_subjects_defined(self):

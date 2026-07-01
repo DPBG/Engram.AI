@@ -5,13 +5,13 @@ import pytest
 
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.regions import (
+    AssociationCortex,
     Brainstem,
+    Cerebellum,
+    MotorCortex,
+    PredictiveLayer,
     ReflexArc,
     SensoryCortex,
-    MotorCortex,
-    Cerebellum,
-    AssociationCortex,
-    PredictiveLayer,
     WorkingMemory,
     create_all_regions,
 )
@@ -140,8 +140,14 @@ class TestCreateAllRegions:
     def test_region_names(self, config):
         regions = create_all_regions(config)
         expected = {
-            "brainstem", "reflex_arc", "sensory_cortex", "motor_cortex",
-            "cerebellum", "association_cortex", "predictive_layer", "working_memory",
+            "brainstem",
+            "reflex_arc",
+            "sensory_cortex",
+            "motor_cortex",
+            "cerebellum",
+            "association_cortex",
+            "predictive_layer",
+            "working_memory",
         }
         assert set(regions.keys()) == expected
 

@@ -22,20 +22,22 @@ import subprocess
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import aiohttp
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from dashboard.auth import install_auth_middleware, authorize_websocket
+from dashboard.auth import authorize_websocket, install_auth_middleware
 from dashboard.safe_halt import (
-    get_halt_state, update_halt_state,
-    sanitize_halt_payload, sanitize_resume_payload,
+    get_halt_state,
+    sanitize_halt_payload,
+    sanitize_resume_payload,
+    update_halt_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,7 @@ _deny_escalations: deque = deque(maxlen=50)
 # ═══════════════════════════════════════════════════════════════════════
 # SKILL REGISTRY — abstracted capabilities
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class SkillRegistry:
     """
@@ -201,18 +204,20 @@ class SkillRegistry:
         skill["calls"] += 1
         if not success:
             skill["errors"] += 1
-        skill["last_called"] = datetime.now(timezone.utc).isoformat()
+        skill["last_called"] = datetime.now(UTC).isoformat()
         # Running average
         old_avg = skill["avg_ms"]
         n = skill["calls"]
         skill["avg_ms"] = round(old_avg + (duration_ms - old_avg) / n, 1)
 
-        self._execution_log.append({
-            "skill_id": skill_id,
-            "timestamp": skill["last_called"],
-            "duration_ms": round(duration_ms, 1),
-            "success": success,
-        })
+        self._execution_log.append(
+            {
+                "skill_id": skill_id,
+                "timestamp": skill["last_called"],
+                "duration_ms": round(duration_ms, 1),
+                "success": success,
+            }
+        )
 
     def get_all(self) -> list[dict]:
         return list(self._skills.values())
@@ -237,6 +242,7 @@ class SkillRegistry:
 # KNOWLEDGE BASE — Data Flywheel
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class KnowledgeBase:
     """
     In-memory knowledge base tracking the data flywheel.
@@ -251,10 +257,10 @@ class KnowledgeBase:
     def __init__(self):
         self._entries: deque = deque(maxlen=1000)
         self._source_counts = {
-            "teleoperation": 0,   # Chat interactions
-            "observation": 0,     # System observations, NATS messages
-            "deployment": 0,      # Self-generated from monitoring
-            "simulation": 0,      # Synthetic / test data
+            "teleoperation": 0,  # Chat interactions
+            "observation": 0,  # System observations, NATS messages
+            "deployment": 0,  # Self-generated from monitoring
+            "simulation": 0,  # Synthetic / test data
         }
         self._total_interactions = 0
 
@@ -266,7 +272,7 @@ class KnowledgeBase:
             "category": category,
             "content": content,
             "metadata": metadata or {},
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._entries.append(entry)
         if source in self._source_counts:
@@ -290,7 +296,8 @@ class KnowledgeBase:
         now = time.time()
         one_hour_ago = now - 3600
         recent = sum(
-            1 for e in self._entries
+            1
+            for e in self._entries
             if datetime.fromisoformat(e["timestamp"]).timestamp() > one_hour_ago
         )
         return round(recent, 1)
@@ -305,6 +312,7 @@ class KnowledgeBase:
 # ═══════════════════════════════════════════════════════════════════════
 # DEEP SYSTEM DETECTION
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def detect_system_info() -> dict[str, Any]:
     """
@@ -340,8 +348,12 @@ def detect_system_info() -> dict[str, Any]:
                 pass
         elif platform.system() == "Darwin":
             try:
-                r = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
-                                   capture_output=True, text=True, timeout=5)
+                r = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
                 if r.returncode == 0:
                     info["cpu"]["model"] = r.stdout.strip()
             except Exception:
@@ -386,21 +398,28 @@ def detect_system_info() -> dict[str, Any]:
     # ─── GPU ─────────────────────────────────────────────────────
     try:
         r = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if r.returncode == 0 and r.stdout.strip():
             gpus = []
             for line in r.stdout.strip().split("\n"):
                 parts = [p.strip() for p in line.split(",")]
                 if len(parts) >= 4:
-                    gpus.append({
-                        "name": parts[0],
-                        "memory_total_mb": int(parts[1]),
-                        "memory_used_mb": int(parts[2]),
-                        "utilization_percent": int(parts[3]),
-                    })
+                    gpus.append(
+                        {
+                            "name": parts[0],
+                            "memory_total_mb": int(parts[1]),
+                            "memory_used_mb": int(parts[2]),
+                            "utilization_percent": int(parts[3]),
+                        }
+                    )
             info["gpu"] = gpus
         else:
             info["gpu"] = None
@@ -455,7 +474,9 @@ def _detect_running_services() -> list[dict]:
         if platform.system() == "Linux":
             r = subprocess.run(
                 ["ss", "-tlnp"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if r.returncode == 0:
                 for line in r.stdout.strip().split("\n")[1:]:  # skip header
@@ -463,17 +484,19 @@ def _detect_running_services() -> list[dict]:
                     if len(parts) >= 4:
                         local = parts[3]
                         # Extract port
-                        port_match = re.search(r':(\d+)$', local)
+                        port_match = re.search(r":(\d+)$", local)
                         if port_match:
                             port = int(port_match.group(1))
                             proc = parts[-1] if len(parts) > 5 else ""
                             # Map well-known ports
                             name = _port_to_service_name(port, proc)
-                            services.append({
-                                "port": port,
-                                "name": name,
-                                "address": local,
-                            })
+                            services.append(
+                                {
+                                    "port": port,
+                                    "name": name,
+                                    "address": local,
+                                }
+                            )
     except Exception:
         pass
 
@@ -510,12 +533,14 @@ def _detect_available_apis() -> list[dict]:
         ("Qdrant", os.environ.get("QDRANT_URL", "http://qdrant:6333"), "vector_db"),
     ]
     for name, url, api_type in checks:
-        apis.append({
-            "name": name,
-            "url": url,
-            "type": api_type,
-            "configured": True,
-        })
+        apis.append(
+            {
+                "name": name,
+                "url": url,
+                "type": api_type,
+                "configured": True,
+            }
+        )
     return apis
 
 
@@ -561,7 +586,9 @@ def get_live_metrics() -> dict[str, Any]:
             metrics["memory"] = {
                 "total_gb": round(mem_total / (1024**3), 2),
                 "available_gb": round(mem_avail / (1024**3), 2),
-                "used_percent": round(((mem_total - mem_avail) / mem_total) * 100, 1) if mem_total > 0 else 0,
+                "used_percent": (
+                    round(((mem_total - mem_avail) / mem_total) * 100, 1) if mem_total > 0 else 0
+                ),
             }
         disk = shutil.disk_usage("/")
         metrics["disk"] = {
@@ -576,7 +603,7 @@ def get_live_metrics() -> dict[str, Any]:
             metrics["uptime"] = "unknown"
     except Exception as e:
         metrics["error"] = str(e)
-    metrics["timestamp"] = datetime.now(timezone.utc).isoformat()
+    metrics["timestamp"] = datetime.now(UTC).isoformat()
     return metrics
 
 
@@ -584,13 +611,15 @@ def get_live_metrics() -> dict[str, Any]:
 # PYDANTIC MODELS
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class ChatMessage(BaseModel):
     message: str
-    context: Optional[str] = None
+    context: str | None = None
 
 
 class ObservationPayload(BaseModel):
     """Inject a sensory observation directly into the brain via NATS."""
+
     provenance: str  # e.g. "observation.text", "sensor.image"
     data: Any  # text string, or list of floats for image features
 
@@ -598,6 +627,7 @@ class ObservationPayload(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════
 # DASHBOARD SERVICE
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class DashboardService:
     """
@@ -618,8 +648,8 @@ class DashboardService:
         self._openai_url = os.environ.get("OPENAI_API_URL", "")
         self._openai_key = os.environ.get("OPENAI_API_KEY", "")
         self._llm_model = os.environ.get("LLM_MODEL", "llama3.2")
-        self._self_monitor_task: Optional[asyncio.Task] = None
-        self._metrics_task: Optional[asyncio.Task] = None
+        self._self_monitor_task: asyncio.Task | None = None
+        self._metrics_task: asyncio.Task | None = None
         self._concept_probe_results: list[dict] = []
         self._MAX_PROBE_RESULTS = 200
 
@@ -632,8 +662,10 @@ class DashboardService:
     def _setup_routes(self):
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"], allow_credentials=True,
-            allow_methods=["*"], allow_headers=["*"],
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
         )
 
         # Authenticate the control plane: when ENGRAM_DASHBOARD_TOKEN is set,
@@ -650,7 +682,9 @@ class DashboardService:
         if not os.path.exists(brain_viz_dir):
             brain_viz_dir = "/app/brain-viz"
         if os.path.exists(brain_viz_dir):
-            self.app.mount("/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz")
+            self.app.mount(
+                "/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz"
+            )
 
         if os.path.exists(static_dir):
             self.app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -660,8 +694,16 @@ class DashboardService:
             t0 = time.time()
             detect_system_info()
             self.skills.record_call("env.detect", (time.time() - t0) * 1000)
-            self.knowledge.learn("deployment", "system", f"Engram deployed on: {_system_info.get('os', {}).get('system', '?')} {_system_info.get('os', {}).get('machine', '?')}")
-            self.knowledge.learn("deployment", "system", f"Capabilities: {', '.join(_system_info.get('capabilities', []))}")
+            self.knowledge.learn(
+                "deployment",
+                "system",
+                f"Engram deployed on: {_system_info.get('os', {}).get('system', '?')} {_system_info.get('os', {}).get('machine', '?')}",
+            )
+            self.knowledge.learn(
+                "deployment",
+                "system",
+                f"Capabilities: {', '.join(_system_info.get('capabilities', []))}",
+            )
             self._self_monitor_task = asyncio.create_task(self._self_improvement_loop())
             self._metrics_task = asyncio.create_task(self._metrics_broadcast_loop())
             asyncio.create_task(self._connect_nats())
@@ -693,7 +735,7 @@ class DashboardService:
         async def health():
             return {
                 "status": "healthy",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "nats": self._nats_connected,
                 "uptime_seconds": int(time.time() - _startup_time),
                 "total_skill_calls": self.skills.total_calls(),
@@ -709,7 +751,7 @@ class DashboardService:
             return {
                 "info": _system_info,
                 "live": get_live_metrics(),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
         # ── API: Skills ──────────────────────────────────────────────
@@ -747,7 +789,7 @@ class DashboardService:
             t0 = time.time()
             metrics = await self._fetch_docker_metrics()
             self.skills.record_call("env.docker", (time.time() - t0) * 1000)
-            return {"metrics": metrics, "timestamp": datetime.now(timezone.utc).isoformat()}
+            return {"metrics": metrics, "timestamp": datetime.now(UTC).isoformat()}
 
         # ── API: Services ────────────────────────────────────────────
 
@@ -759,7 +801,7 @@ class DashboardService:
 
         @self.app.get("/api/neuromorphic")
         async def get_neuromorphic():
-            return {"neuromorphic": _neuro_metrics, "timestamp": datetime.now(timezone.utc).isoformat()}
+            return {"neuromorphic": _neuro_metrics, "timestamp": datetime.now(UTC).isoformat()}
 
         # ── API: Benchmark Results ─────────────────────────────────────
 
@@ -804,7 +846,7 @@ class DashboardService:
 
         @self.app.get("/api/gateway")
         async def get_gateway():
-            return {"gateway": _gateway_status, "timestamp": datetime.now(timezone.utc).isoformat()}
+            return {"gateway": _gateway_status, "timestamp": datetime.now(UTC).isoformat()}
 
         @self.app.post("/api/gateway/command")
         async def gateway_command(cmd: dict):
@@ -824,19 +866,76 @@ class DashboardService:
         @self.app.get("/api/mujoco/model")
         async def get_mujoco_model():
             """Return static geometry definitions for the MuJoCo humanoid."""
-            return {"geoms": [
-                {"body": "world", "type": "plane", "size": [10, 10, 0.1], "rgba": [0.8, 0.8, 0.8, 1]},
-                {"body": "torso", "type": "capsule", "size": [0.1, 0.2, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "head", "type": "sphere", "size": [0.1, 0, 0], "rgba": [0.9, 0.8, 0.7, 1]},
-                {"body": "r_upper_arm", "type": "capsule", "size": [0.04, 0.15, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "r_forearm", "type": "capsule", "size": [0.03, 0.12, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "l_upper_arm", "type": "capsule", "size": [0.04, 0.15, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "l_forearm", "type": "capsule", "size": [0.03, 0.12, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "r_thigh", "type": "capsule", "size": [0.05, 0.2, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "r_shin", "type": "capsule", "size": [0.04, 0.18, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "l_thigh", "type": "capsule", "size": [0.05, 0.2, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-                {"body": "l_shin", "type": "capsule", "size": [0.04, 0.18, 0], "rgba": [0.3, 0.6, 0.9, 1]},
-            ]}
+            return {
+                "geoms": [
+                    {
+                        "body": "world",
+                        "type": "plane",
+                        "size": [10, 10, 0.1],
+                        "rgba": [0.8, 0.8, 0.8, 1],
+                    },
+                    {
+                        "body": "torso",
+                        "type": "capsule",
+                        "size": [0.1, 0.2, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "head",
+                        "type": "sphere",
+                        "size": [0.1, 0, 0],
+                        "rgba": [0.9, 0.8, 0.7, 1],
+                    },
+                    {
+                        "body": "r_upper_arm",
+                        "type": "capsule",
+                        "size": [0.04, 0.15, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "r_forearm",
+                        "type": "capsule",
+                        "size": [0.03, 0.12, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "l_upper_arm",
+                        "type": "capsule",
+                        "size": [0.04, 0.15, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "l_forearm",
+                        "type": "capsule",
+                        "size": [0.03, 0.12, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "r_thigh",
+                        "type": "capsule",
+                        "size": [0.05, 0.2, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "r_shin",
+                        "type": "capsule",
+                        "size": [0.04, 0.18, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "l_thigh",
+                        "type": "capsule",
+                        "size": [0.05, 0.2, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                    {
+                        "body": "l_shin",
+                        "type": "capsule",
+                        "size": [0.04, 0.18, 0],
+                        "rgba": [0.3, 0.6, 0.9, 1],
+                    },
+                ]
+            }
 
         @self.app.post("/api/mujoco/guide")
         async def mujoco_guide(body: dict):
@@ -866,43 +965,53 @@ class DashboardService:
 
             Static fallback — 29-DOF humanoid (Optimus/G1/Atlas class).
             """
-            return {"joints": [
-                # Waist (locomotion)
-                {"name": "waist_yaw", "channel": "locomotion", "range_deg": [-75, 75]},
-                {"name": "waist_roll", "channel": "locomotion", "range_deg": [-30, 30]},
-                {"name": "waist_pitch", "channel": "locomotion", "range_deg": [-30, 45]},
-                # Right leg (locomotion)
-                {"name": "r_hip_yaw", "channel": "locomotion", "range_deg": [-40, 40]},
-                {"name": "r_hip_roll", "channel": "locomotion", "range_deg": [-25, 45]},
-                {"name": "r_hip_pitch", "channel": "locomotion", "range_deg": [-30, 120]},
-                {"name": "r_knee", "channel": "locomotion", "range_deg": [-145, 0]},
-                {"name": "r_ankle_pitch", "channel": "locomotion", "range_deg": [-40, 50]},
-                {"name": "r_ankle_roll", "channel": "locomotion", "range_deg": [-25, 25]},
-                # Left leg (locomotion)
-                {"name": "l_hip_yaw", "channel": "locomotion", "range_deg": [-40, 40]},
-                {"name": "l_hip_roll", "channel": "locomotion", "range_deg": [-45, 25]},
-                {"name": "l_hip_pitch", "channel": "locomotion", "range_deg": [-30, 120]},
-                {"name": "l_knee", "channel": "locomotion", "range_deg": [-145, 0]},
-                {"name": "l_ankle_pitch", "channel": "locomotion", "range_deg": [-40, 50]},
-                {"name": "l_ankle_roll", "channel": "locomotion", "range_deg": [-25, 25]},
-                # Right arm (manipulation)
-                {"name": "r_shoulder_pitch", "channel": "manipulation", "range_deg": [-90, 180]},
-                {"name": "r_shoulder_roll", "channel": "manipulation", "range_deg": [-30, 150]},
-                {"name": "r_shoulder_yaw", "channel": "manipulation", "range_deg": [-90, 70]},
-                {"name": "r_elbow", "channel": "manipulation", "range_deg": [0, 145]},
-                {"name": "r_wrist_pitch", "channel": "manipulation", "range_deg": [-70, 70]},
-                {"name": "r_wrist_yaw", "channel": "manipulation", "range_deg": [-45, 45]},
-                # Left arm (manipulation)
-                {"name": "l_shoulder_pitch", "channel": "manipulation", "range_deg": [-90, 180]},
-                {"name": "l_shoulder_roll", "channel": "manipulation", "range_deg": [-150, 30]},
-                {"name": "l_shoulder_yaw", "channel": "manipulation", "range_deg": [-70, 90]},
-                {"name": "l_elbow", "channel": "manipulation", "range_deg": [0, 145]},
-                {"name": "l_wrist_pitch", "channel": "manipulation", "range_deg": [-70, 70]},
-                {"name": "l_wrist_yaw", "channel": "manipulation", "range_deg": [-45, 45]},
-                # Neck (head)
-                {"name": "neck_pitch", "channel": "head", "range_deg": [-40, 40]},
-                {"name": "neck_yaw", "channel": "head", "range_deg": [-55, 55]},
-            ]}
+            return {
+                "joints": [
+                    # Waist (locomotion)
+                    {"name": "waist_yaw", "channel": "locomotion", "range_deg": [-75, 75]},
+                    {"name": "waist_roll", "channel": "locomotion", "range_deg": [-30, 30]},
+                    {"name": "waist_pitch", "channel": "locomotion", "range_deg": [-30, 45]},
+                    # Right leg (locomotion)
+                    {"name": "r_hip_yaw", "channel": "locomotion", "range_deg": [-40, 40]},
+                    {"name": "r_hip_roll", "channel": "locomotion", "range_deg": [-25, 45]},
+                    {"name": "r_hip_pitch", "channel": "locomotion", "range_deg": [-30, 120]},
+                    {"name": "r_knee", "channel": "locomotion", "range_deg": [-145, 0]},
+                    {"name": "r_ankle_pitch", "channel": "locomotion", "range_deg": [-40, 50]},
+                    {"name": "r_ankle_roll", "channel": "locomotion", "range_deg": [-25, 25]},
+                    # Left leg (locomotion)
+                    {"name": "l_hip_yaw", "channel": "locomotion", "range_deg": [-40, 40]},
+                    {"name": "l_hip_roll", "channel": "locomotion", "range_deg": [-45, 25]},
+                    {"name": "l_hip_pitch", "channel": "locomotion", "range_deg": [-30, 120]},
+                    {"name": "l_knee", "channel": "locomotion", "range_deg": [-145, 0]},
+                    {"name": "l_ankle_pitch", "channel": "locomotion", "range_deg": [-40, 50]},
+                    {"name": "l_ankle_roll", "channel": "locomotion", "range_deg": [-25, 25]},
+                    # Right arm (manipulation)
+                    {
+                        "name": "r_shoulder_pitch",
+                        "channel": "manipulation",
+                        "range_deg": [-90, 180],
+                    },
+                    {"name": "r_shoulder_roll", "channel": "manipulation", "range_deg": [-30, 150]},
+                    {"name": "r_shoulder_yaw", "channel": "manipulation", "range_deg": [-90, 70]},
+                    {"name": "r_elbow", "channel": "manipulation", "range_deg": [0, 145]},
+                    {"name": "r_wrist_pitch", "channel": "manipulation", "range_deg": [-70, 70]},
+                    {"name": "r_wrist_yaw", "channel": "manipulation", "range_deg": [-45, 45]},
+                    # Left arm (manipulation)
+                    {
+                        "name": "l_shoulder_pitch",
+                        "channel": "manipulation",
+                        "range_deg": [-90, 180],
+                    },
+                    {"name": "l_shoulder_roll", "channel": "manipulation", "range_deg": [-150, 30]},
+                    {"name": "l_shoulder_yaw", "channel": "manipulation", "range_deg": [-70, 90]},
+                    {"name": "l_elbow", "channel": "manipulation", "range_deg": [0, 145]},
+                    {"name": "l_wrist_pitch", "channel": "manipulation", "range_deg": [-70, 70]},
+                    {"name": "l_wrist_yaw", "channel": "manipulation", "range_deg": [-45, 45]},
+                    # Neck (head)
+                    {"name": "neck_pitch", "channel": "head", "range_deg": [-40, 40]},
+                    {"name": "neck_yaw", "channel": "head", "range_deg": [-55, 55]},
+                ]
+            }
 
         # ── API: Video Training ──────────────────────────────────────
 
@@ -910,7 +1019,7 @@ class DashboardService:
         async def get_video_sessions():
             return {
                 "sessions": list(_video_sessions.values()),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
         @self.app.post("/api/video/submit")
@@ -1092,16 +1201,22 @@ class DashboardService:
             # Flywheel: every chat interaction is learning
             self.knowledge.learn("teleoperation", "conversation", msg.message[:200])
 
-            chat_history.append({"role": "user", "content": msg.message,
-                                 "timestamp": datetime.now(timezone.utc).isoformat()})
-            chat_history.append({"role": "assistant", "content": reply["content"],
-                                 "timestamp": datetime.now(timezone.utc).isoformat()})
+            chat_history.append(
+                {"role": "user", "content": msg.message, "timestamp": datetime.now(UTC).isoformat()}
+            )
+            chat_history.append(
+                {
+                    "role": "assistant",
+                    "content": reply["content"],
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+            )
             if len(chat_history) > MAX_CHAT_HISTORY:
                 chat_history[:] = chat_history[-MAX_CHAT_HISTORY:]
 
             return {
                 "reply": reply["content"],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "model": reply.get("model", self._llm_model),
             }
 
@@ -1120,10 +1235,15 @@ class DashboardService:
             if not self._nc:
                 return {"error": "NATS not connected", "ok": False}
             try:
-                await self._nc.publish(obs.provenance, json.dumps({
-                    "provenance": obs.provenance,
-                    "data": obs.data,
-                }).encode())
+                await self._nc.publish(
+                    obs.provenance,
+                    json.dumps(
+                        {
+                            "provenance": obs.provenance,
+                            "data": obs.data,
+                        }
+                    ).encode(),
+                )
                 self.logger.info(f"Injected observation via {obs.provenance}")
                 return {"ok": True, "provenance": obs.provenance}
             except Exception as e:
@@ -1175,23 +1295,25 @@ class DashboardService:
             self.logger.info(f"WS connected ({len(active_connections)})")
 
             try:
-                await websocket.send_json({
-                    "type": "init",
-                    "data": {
-                        "system": _system_info,
-                        "skills": self.skills.get_all(),
-                        "skills_by_category": self.skills.get_by_category(),
-                        "flywheel": self.knowledge.get_flywheel_stats(),
-                        "services": list(self._service_status.values()),
-                        "messages": list(message_buffer)[-30:],
-                        "insights": list(insights_log)[-10:],
-                        "live_metrics": get_live_metrics(),
-                        "neuromorphic": _neuro_metrics,
-                        "gateway": _gateway_status,
-                        "video_sessions": list(_video_sessions.values()),
-                        "halt_state": get_halt_state(),
-                    },
-                })
+                await websocket.send_json(
+                    {
+                        "type": "init",
+                        "data": {
+                            "system": _system_info,
+                            "skills": self.skills.get_all(),
+                            "skills_by_category": self.skills.get_by_category(),
+                            "flywheel": self.knowledge.get_flywheel_stats(),
+                            "services": list(self._service_status.values()),
+                            "messages": list(message_buffer)[-30:],
+                            "insights": list(insights_log)[-10:],
+                            "live_metrics": get_live_metrics(),
+                            "neuromorphic": _neuro_metrics,
+                            "gateway": _gateway_status,
+                            "video_sessions": list(_video_sessions.values()),
+                            "halt_state": get_halt_state(),
+                        },
+                    }
+                )
 
                 while True:
                     data = await websocket.receive_text()
@@ -1204,24 +1326,40 @@ class DashboardService:
                             t0 = time.time()
                             reply = await self._chat_with_llm(payload.get("message", ""))
                             dur = (time.time() - t0) * 1000
-                            self.skills.record_call("brain.chat", dur, reply.get("model") != "error")
-                            self.knowledge.learn("teleoperation", "conversation", payload.get("message", "")[:200])
+                            self.skills.record_call(
+                                "brain.chat", dur, reply.get("model") != "error"
+                            )
+                            self.knowledge.learn(
+                                "teleoperation", "conversation", payload.get("message", "")[:200]
+                            )
 
-                            chat_history.append({"role": "user", "content": payload.get("message", ""),
-                                                 "timestamp": datetime.now(timezone.utc).isoformat()})
-                            chat_history.append({"role": "assistant", "content": reply["content"],
-                                                 "timestamp": datetime.now(timezone.utc).isoformat()})
+                            chat_history.append(
+                                {
+                                    "role": "user",
+                                    "content": payload.get("message", ""),
+                                    "timestamp": datetime.now(UTC).isoformat(),
+                                }
+                            )
+                            chat_history.append(
+                                {
+                                    "role": "assistant",
+                                    "content": reply["content"],
+                                    "timestamp": datetime.now(UTC).isoformat(),
+                                }
+                            )
                             if len(chat_history) > MAX_CHAT_HISTORY:
                                 chat_history[:] = chat_history[-MAX_CHAT_HISTORY:]
 
-                            await websocket.send_json({
-                                "type": "chat_response",
-                                "data": {
-                                    "reply": reply["content"],
-                                    "model": reply.get("model", self._llm_model),
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                },
-                            })
+                            await websocket.send_json(
+                                {
+                                    "type": "chat_response",
+                                    "data": {
+                                        "reply": reply["content"],
+                                        "model": reply.get("model", self._llm_model),
+                                        "timestamp": datetime.now(UTC).isoformat(),
+                                    },
+                                }
+                            )
                         elif payload.get("type") == "gateway_command":
                             if self._nc:
                                 await self._nc.publish(
@@ -1281,20 +1419,24 @@ class DashboardService:
                             if self._nc:
                                 await self._nc.publish(
                                     "sensory.gateway.command",
-                                    json.dumps({
-                                        "action": "remove_queued",
-                                        "session_id": payload.get("session_id", ""),
-                                    }).encode(),
+                                    json.dumps(
+                                        {
+                                            "action": "remove_queued",
+                                            "session_id": payload.get("session_id", ""),
+                                        }
+                                    ).encode(),
                                 )
                         elif payload.get("type") == "video_blacklist":
                             if self._nc:
                                 await self._nc.publish(
                                     "sensory.gateway.command",
-                                    json.dumps({
-                                        "action": "blacklist_video",
-                                        "session_id": payload.get("session_id", ""),
-                                        "reason": payload.get("reason", "Blacklisted by user"),
-                                    }).encode(),
+                                    json.dumps(
+                                        {
+                                            "action": "blacklist_video",
+                                            "session_id": payload.get("session_id", ""),
+                                            "reason": payload.get("reason", "Blacklisted by user"),
+                                        }
+                                    ).encode(),
                                 )
                         elif payload.get("type") == "approval_response":
                             # Human responded to a DEFER approval request
@@ -1305,14 +1447,21 @@ class DashboardService:
                             else:
                                 try:
                                     # Sanitize trace_id for NATS subject safety
-                                    safe_trace = trace_id.replace(" ", "").replace(">", "").replace("*", "")
+                                    safe_trace = (
+                                        trace_id.replace(" ", "").replace(">", "").replace("*", "")
+                                    )
                                     await self._nc.publish(
                                         f"approval.response.{safe_trace}",
                                         json.dumps(resp).encode(),
                                     )
                                 except Exception as e:
                                     self.logger.error(f"Failed to publish approval response: {e}")
-                                    await websocket.send_json({"type": "error", "data": {"message": "Approval delivery failed"}})
+                                    await websocket.send_json(
+                                        {
+                                            "type": "error",
+                                            "data": {"message": "Approval delivery failed"},
+                                        }
+                                    )
                         elif payload.get("type") == "mujoco_guide":
                             # Forward guidance command to NATS
                             guide_data = payload.get("data", {})
@@ -1325,31 +1474,60 @@ class DashboardService:
                                 except Exception as e:
                                     self.logger.error(f"Guidance publish failed: {e}")
                         elif payload.get("type") == "safe_halt":
-                            ok, reason, operator_id = sanitize_halt_payload(
-                                payload.get("data", {})
-                            )
+                            ok, reason, operator_id = sanitize_halt_payload(payload.get("data", {}))
                             if not ok:
-                                await websocket.send_json({"type": "error", "data": {"message": "Invalid SAFE_HALT payload"}})
+                                await websocket.send_json(
+                                    {
+                                        "type": "error",
+                                        "data": {"message": "Invalid SAFE_HALT payload"},
+                                    }
+                                )
                             elif not self._nc:
-                                await websocket.send_json({"type": "error", "data": {"message": "NATS not connected — SAFE_HALT not delivered"}})
+                                await websocket.send_json(
+                                    {
+                                        "type": "error",
+                                        "data": {
+                                            "message": "NATS not connected — SAFE_HALT not delivered"
+                                        },
+                                    }
+                                )
                             else:
                                 try:
                                     await self._nc.publish(
                                         "safety.halt",
-                                        json.dumps({"reason": reason, "operator_id": operator_id}).encode(),
+                                        json.dumps(
+                                            {"reason": reason, "operator_id": operator_id}
+                                        ).encode(),
                                     )
-                                    self.logger.critical("SAFE_HALT published by %s: %s", operator_id, reason)
+                                    self.logger.critical(
+                                        "SAFE_HALT published by %s: %s", operator_id, reason
+                                    )
                                 except Exception as e:
                                     self.logger.error(f"Failed to publish safety.halt: {e}")
-                                    await websocket.send_json({"type": "error", "data": {"message": "SAFE_HALT delivery failed"}})
+                                    await websocket.send_json(
+                                        {
+                                            "type": "error",
+                                            "data": {"message": "SAFE_HALT delivery failed"},
+                                        }
+                                    )
                         elif payload.get("type") == "safe_resume":
-                            ok, operator_id = sanitize_resume_payload(
-                                payload.get("data", {})
-                            )
+                            ok, operator_id = sanitize_resume_payload(payload.get("data", {}))
                             if not ok:
-                                await websocket.send_json({"type": "error", "data": {"message": "Invalid SAFE_RESUME payload"}})
+                                await websocket.send_json(
+                                    {
+                                        "type": "error",
+                                        "data": {"message": "Invalid SAFE_RESUME payload"},
+                                    }
+                                )
                             elif not self._nc:
-                                await websocket.send_json({"type": "error", "data": {"message": "NATS not connected — SAFE_RESUME not delivered"}})
+                                await websocket.send_json(
+                                    {
+                                        "type": "error",
+                                        "data": {
+                                            "message": "NATS not connected — SAFE_RESUME not delivered"
+                                        },
+                                    }
+                                )
                             else:
                                 try:
                                     await self._nc.publish(
@@ -1359,7 +1537,12 @@ class DashboardService:
                                     self.logger.warning("SAFE_HALT released by %s", operator_id)
                                 except Exception as e:
                                     self.logger.error(f"Failed to publish safety.resume: {e}")
-                                    await websocket.send_json({"type": "error", "data": {"message": "SAFE_RESUME delivery failed"}})
+                                    await websocket.send_json(
+                                        {
+                                            "type": "error",
+                                            "data": {"message": "SAFE_RESUME delivery failed"},
+                                        }
+                                    )
                         elif payload.get("type") == "ping":
                             await websocket.send_json({"type": "pong"})
                     except json.JSONDecodeError:
@@ -1380,10 +1563,15 @@ class DashboardService:
             self.logger.debug(f"Skip publish: nc={self._nc is not None}, text={bool(text)}")
             return
         try:
-            await self._nc.publish("observation.text", json.dumps({
-                "provenance": "observation.text",
-                "data": text,
-            }).encode())
+            await self._nc.publish(
+                "observation.text",
+                json.dumps(
+                    {
+                        "provenance": "observation.text",
+                        "data": text,
+                    }
+                ).encode(),
+            )
             self.logger.info(f"Published observation.text ({len(text)} chars)")
         except Exception as e:
             self.logger.warning(f"Failed to publish text observation: {e}")
@@ -1391,6 +1579,7 @@ class DashboardService:
     async def _connect_nats(self):
         try:
             import nats as nats_lib
+
             nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
             nc = await nats_lib.connect(nats_url, name="activelearning-dashboard")
             self._nc = nc
@@ -1439,7 +1628,7 @@ class DashboardService:
                         if isinstance(raw, list) and len(raw) > 8:
                             data["data"] = raw[:4] + ["..."] + [f"({len(raw)} values)"]
                     msg_info = {
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                         "subject": msg.subject,
                         "data": data,
                     }
@@ -1455,7 +1644,7 @@ class DashboardService:
                 except Exception:
                     data = {"raw": msg.data.decode()[:500]}
                 msg_info = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "subject": msg.subject,
                     "data": data,
                 }
@@ -1468,11 +1657,14 @@ class DashboardService:
                     data = json.loads(msg.data.decode())
                     svc = data.get("service", "?")
                     self._service_status[svc] = {
-                        "name": svc, "status": "running",
+                        "name": svc,
+                        "status": "running",
                         "uptime": data.get("uptime"),
-                        "last_seen": datetime.now(timezone.utc).isoformat(),
+                        "last_seen": datetime.now(UTC).isoformat(),
                     }
-                    await self._broadcast({"type": "service_status", "data": self._service_status[svc]})
+                    await self._broadcast(
+                        {"type": "service_status", "data": self._service_status[svc]}
+                    )
                 except Exception:
                     pass
 
@@ -1481,7 +1673,9 @@ class DashboardService:
                 try:
                     data = json.loads(msg.data.decode())
                     _neuro_metrics = data
-                    self.knowledge.learn("simulation", "neural_simulation", f"step={data.get('step_count', '?')}")
+                    self.knowledge.learn(
+                        "simulation", "neural_simulation", f"step={data.get('step_count', '?')}"
+                    )
                     await self._broadcast({"type": "neuro_update", "data": data})
                 except Exception:
                     pass
@@ -1497,11 +1691,16 @@ class DashboardService:
                     provenance = data.get("provenance", "")
                     if provenance.startswith("neuromorphic."):
                         _last_proposal_broadcast[0] = now
-                        await self._broadcast({"type": "neuro_response", "data": {
-                            "action": data.get("action", {}),
-                            "provenance": provenance,
-                            "metadata": data.get("metadata", {}),
-                        }})
+                        await self._broadcast(
+                            {
+                                "type": "neuro_response",
+                                "data": {
+                                    "action": data.get("action", {}),
+                                    "provenance": provenance,
+                                    "metadata": data.get("metadata", {}),
+                                },
+                            }
+                        )
                 except Exception:
                     pass
 
@@ -1524,11 +1723,12 @@ class DashboardService:
                         # Prune oldest completed/stopped/error sessions if over limit
                         if len(_video_sessions) > MAX_VIDEO_SESSIONS:
                             removable = [
-                                (k, v) for k, v in _video_sessions.items()
+                                (k, v)
+                                for k, v in _video_sessions.items()
                                 if v.get("status") in ("stopped", "completed", "error")
                             ]
                             removable.sort(key=lambda x: x[1].get("created_at", 0))
-                            for k, _ in removable[:len(_video_sessions) - MAX_VIDEO_SESSIONS]:
+                            for k, _ in removable[: len(_video_sessions) - MAX_VIDEO_SESSIONS]:
                                 _video_sessions.pop(k, None)
                     await self._broadcast({"type": "video_training_update", "data": data})
                 except Exception:
@@ -1546,7 +1746,9 @@ class DashboardService:
                     if not isinstance(channel, str) or len(channel) > 128:
                         return
                     intensity = data.get("intensity")
-                    if intensity is not None and (not isinstance(intensity, (int, float)) or intensity < 0 or intensity > 1):
+                    if intensity is not None and (
+                        not isinstance(intensity, (int, float)) or intensity < 0 or intensity > 1
+                    ):
                         data["intensity"] = None  # sanitize invalid
                     reason = str(data.get("reason", ""))[:500]
                     data["reason"] = reason
@@ -1583,10 +1785,12 @@ class DashboardService:
                     # Convert [0,1] floats to uint8 bytes, then base64
                     raw = bytes(min(255, max(0, int(v * 255))) for v in pixels)
                     b64 = base64.b64encode(raw).decode("ascii")
-                    await self._broadcast({
-                        "type": "visual_body_frame",
-                        "data": {"pixels_b64": b64, "width": 64, "height": 64},
-                    })
+                    await self._broadcast(
+                        {
+                            "type": "visual_body_frame",
+                            "data": {"pixels_b64": b64, "width": 64, "height": 64},
+                        }
+                    )
                 except Exception:
                     pass
 
@@ -1723,15 +1927,19 @@ class DashboardService:
             os_i = _system_info.get("os", {})
             cpu = _system_info.get("cpu", {})
             mem = _system_info.get("memory", {})
-            parts.append(f"Server: {os_i.get('system', '?')} {os_i.get('release', '')} -- {cpu.get('model', cpu.get('architecture', '?'))} ({cpu.get('cores', '?')} cores), {mem.get('total_gb', '?')} GB RAM")
+            parts.append(
+                f"Server: {os_i.get('system', '?')} {os_i.get('release', '')} -- {cpu.get('model', cpu.get('architecture', '?'))} ({cpu.get('cores', '?')} cores), {mem.get('total_gb', '?')} GB RAM"
+            )
 
-        parts.extend([
-            "",
-            "When the user teaches you something (e.g., 'a ball is round'), explain that the text has",
-            "been injected into the brain's sensory cortex as a spike pattern. The brain will form",
-            "associations through STDP if this input correlates with other sensory experience.",
-            "The brain learns from temporal correlation, not from understanding the sentence.",
-        ])
+        parts.extend(
+            [
+                "",
+                "When the user teaches you something (e.g., 'a ball is round'), explain that the text has",
+                "been injected into the brain's sensory cortex as a spike pattern. The brain will form",
+                "associations through STDP if this input correlates with other sensory experience.",
+                "The brain learns from temporal correlation, not from understanding the sentence.",
+            ]
+        )
         return "\n".join(parts)
 
     def _interpret_brain_state(self) -> str:
@@ -1826,7 +2034,9 @@ class DashboardService:
         # Prediction error
         pred_error = _neuro_metrics.get("drives", {}).get("prediction_error")
         if pred_error is not None and pred_error > 0.5:
-            parts.append(f"Surprise level: high ({pred_error:.2f}) — world model is being challenged")
+            parts.append(
+                f"Surprise level: high ({pred_error:.2f}) — world model is being challenged"
+            )
 
         return "\n".join(parts)
 
@@ -1847,7 +2057,9 @@ class DashboardService:
         # Report active regions
         active = [(k, v) for k, v in firing.items() if v > 0.01]
         if active:
-            rates = ", ".join(f"{k} {v*100:.0f}%" for k, v in sorted(active, key=lambda x: -x[1])[:5])
+            rates = ", ".join(
+                f"{k} {v*100:.0f}%" for k, v in sorted(active, key=lambda x: -x[1])[:5]
+            )
             parts.append(f"Active regions: {rates}.")
         else:
             parts.append("Neurons are mostly quiet. The brain needs sensory input to activate.")
@@ -1868,10 +2080,16 @@ class DashboardService:
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return {"content": data.get("message", {}).get("content", "No response."), "model": f"ollama/{self._llm_model}"}
+                        return {
+                            "content": data.get("message", {}).get("content", "No response."),
+                            "model": f"ollama/{self._llm_model}",
+                        }
                     else:
                         txt = await resp.text()
-                        return {"content": f"⚠️ Ollama {resp.status}. Model '{self._llm_model}' may not be pulled.\n\n`docker exec activelearning-ollama ollama pull {self._llm_model}`\n\n{txt[:200]}", "model": "error"}
+                        return {
+                            "content": f"⚠️ Ollama {resp.status}. Model '{self._llm_model}' may not be pulled.\n\n`docker exec activelearning-ollama ollama pull {self._llm_model}`\n\n{txt[:200]}",
+                            "model": "error",
+                        }
         except aiohttp.ClientConnectorError:
             return self._generate_brain_only_response()
         except Exception as e:
@@ -1883,11 +2101,17 @@ class DashboardService:
                 async with session.post(
                     f"{self._openai_url}/v1/chat/completions",
                     json={"model": self._llm_model, "messages": messages, "max_tokens": 2000},
-                    headers={"Authorization": f"Bearer {self._openai_key}", "Content-Type": "application/json"},
+                    headers={
+                        "Authorization": f"Bearer {self._openai_key}",
+                        "Content-Type": "application/json",
+                    },
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return {"content": data["choices"][0]["message"]["content"], "model": data.get("model", self._llm_model)}
+                        return {
+                            "content": data["choices"][0]["message"]["content"],
+                            "model": data.get("model", self._llm_model),
+                        }
                     return {"content": f"OpenAI API error: {resp.status}", "model": "error"}
         except Exception as e:
             self.logger.warning(f"OpenAI failed, falling back to Ollama: {e}")
@@ -1911,16 +2135,28 @@ class DashboardService:
 
     async def _run_health_check(self):
         findings = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Disk
         try:
             disk = shutil.disk_usage("/")
             pct = (disk.used / disk.total) * 100
             if pct > 90:
-                findings.append({"level": "critical", "message": f"Disk usage critical: {pct:.1f}%", "timestamp": now})
+                findings.append(
+                    {
+                        "level": "critical",
+                        "message": f"Disk usage critical: {pct:.1f}%",
+                        "timestamp": now,
+                    }
+                )
             elif pct > 75:
-                findings.append({"level": "warning", "message": f"Disk usage high: {pct:.1f}%", "timestamp": now})
+                findings.append(
+                    {
+                        "level": "warning",
+                        "message": f"Disk usage high: {pct:.1f}%",
+                        "timestamp": now,
+                    }
+                )
         except Exception:
             pass
 
@@ -1931,14 +2167,28 @@ class DashboardService:
                     meminfo = f.read()
                 total = avail = 0
                 for line in meminfo.split("\n"):
-                    if line.startswith("MemTotal:"): total = int(line.split()[1])
-                    elif line.startswith("MemAvailable:"): avail = int(line.split()[1])
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1])
+                    elif line.startswith("MemAvailable:"):
+                        avail = int(line.split()[1])
                 if total > 0:
                     pct = ((total - avail) / total) * 100
                     if pct > 90:
-                        findings.append({"level": "critical", "message": f"Memory critical: {pct:.1f}%", "timestamp": now})
+                        findings.append(
+                            {
+                                "level": "critical",
+                                "message": f"Memory critical: {pct:.1f}%",
+                                "timestamp": now,
+                            }
+                        )
                     elif pct > 80:
-                        findings.append({"level": "warning", "message": f"Memory high: {pct:.1f}%", "timestamp": now})
+                        findings.append(
+                            {
+                                "level": "warning",
+                                "message": f"Memory high: {pct:.1f}%",
+                                "timestamp": now,
+                            }
+                        )
         except Exception:
             pass
 
@@ -1949,7 +2199,13 @@ class DashboardService:
                     load = float(f.read().split()[0])
                 cores = os.cpu_count() or 1
                 if load > cores * 2:
-                    findings.append({"level": "warning", "message": f"Load {load:.1f} exceeds 2x cores ({cores})", "timestamp": now})
+                    findings.append(
+                        {
+                            "level": "warning",
+                            "message": f"Load {load:.1f} exceeds 2x cores ({cores})",
+                            "timestamp": now,
+                        }
+                    )
         except Exception:
             pass
 
@@ -1958,9 +2214,21 @@ class DashboardService:
             metrics = await self._fetch_docker_metrics()
             for m in metrics:
                 if m.get("cpu_percent", 0) > 80:
-                    findings.append({"level": "warning", "message": f"Container '{m['service']}' CPU: {m['cpu_percent']:.1f}%", "timestamp": now})
+                    findings.append(
+                        {
+                            "level": "warning",
+                            "message": f"Container '{m['service']}' CPU: {m['cpu_percent']:.1f}%",
+                            "timestamp": now,
+                        }
+                    )
                 if m.get("memory_percent", 0) > 80:
-                    findings.append({"level": "warning", "message": f"Container '{m['service']}' Mem: {m['memory_percent']:.1f}%", "timestamp": now})
+                    findings.append(
+                        {
+                            "level": "warning",
+                            "message": f"Container '{m['service']}' Mem: {m['memory_percent']:.1f}%",
+                            "timestamp": now,
+                        }
+                    )
         except Exception:
             pass
 
@@ -1973,7 +2241,9 @@ class DashboardService:
 
         # Broadcast findings + updated flywheel stats
         await self._broadcast({"type": "insights", "data": findings})
-        await self._broadcast({"type": "flywheel_update", "data": self.knowledge.get_flywheel_stats()})
+        await self._broadcast(
+            {"type": "flywheel_update", "data": self.knowledge.get_flywheel_stats()}
+        )
         await self._broadcast({"type": "skills_update", "data": self.skills.get_all()})
 
     # ── Metrics Broadcast ────────────────────────────────────────────
@@ -1987,10 +2257,12 @@ class DashboardService:
                     live = get_live_metrics()
                     docker = await self._fetch_docker_metrics()
                     self.skills.record_call("env.monitor", (time.time() - t0) * 1000)
-                    await self._broadcast({
-                        "type": "metrics_update",
-                        "data": {"live": live, "docker": docker},
-                    })
+                    await self._broadcast(
+                        {
+                            "type": "metrics_update",
+                            "data": {"live": live, "docker": docker},
+                        }
+                    )
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -2020,7 +2292,9 @@ class DashboardService:
             return _system_metrics_cache.get("metrics", [])
         try:
             connector = aiohttp.UnixConnector(path="/var/run/docker.sock")
-            async with aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with aiohttp.ClientSession(
+                connector=connector, timeout=aiohttp.ClientTimeout(total=10)
+            ) as session:
                 async with session.get("http://localhost/containers/json") as resp:
                     containers = await resp.json()
                 metrics = []
@@ -2028,10 +2302,18 @@ class DashboardService:
                     cid = ctr["Id"]
                     name = ctr["Names"][0].lstrip("/")
                     try:
-                        async with session.get(f"http://localhost/containers/{cid}/stats?stream=false") as resp:
+                        async with session.get(
+                            f"http://localhost/containers/{cid}/stats?stream=false"
+                        ) as resp:
                             stats = await resp.json()
-                            cpu_d = stats["cpu_stats"]["cpu_usage"]["total_usage"] - stats["precpu_stats"]["cpu_usage"]["total_usage"]
-                            sys_d = stats["cpu_stats"]["system_cpu_usage"] - stats["precpu_stats"]["system_cpu_usage"]
+                            cpu_d = (
+                                stats["cpu_stats"]["cpu_usage"]["total_usage"]
+                                - stats["precpu_stats"]["cpu_usage"]["total_usage"]
+                            )
+                            sys_d = (
+                                stats["cpu_stats"]["system_cpu_usage"]
+                                - stats["precpu_stats"]["system_cpu_usage"]
+                            )
                             cpus = stats["cpu_stats"].get("online_cpus", 1)
                             cpu_pct = (cpu_d / sys_d) * cpus * 100 if sys_d > 0 else 0
                             mem_u = stats["memory_stats"].get("usage", 0)
@@ -2039,18 +2321,31 @@ class DashboardService:
                             nets = stats.get("networks", {})
                             rx = sum(n.get("rx_bytes", 0) for n in nets.values())
                             tx = sum(n.get("tx_bytes", 0) for n in nets.values())
-                            metrics.append({
-                                "service": name, "status": ctr.get("State", "?"),
-                                "cpu_percent": round(cpu_pct, 2),
-                                "memory_mb": round(mem_u / (1024*1024), 2),
-                                "memory_percent": round((mem_u / mem_l) * 100, 2) if mem_l else 0,
-                                "network_rx_mb": round(rx / (1024*1024), 2),
-                                "network_tx_mb": round(tx / (1024*1024), 2),
-                            })
+                            metrics.append(
+                                {
+                                    "service": name,
+                                    "status": ctr.get("State", "?"),
+                                    "cpu_percent": round(cpu_pct, 2),
+                                    "memory_mb": round(mem_u / (1024 * 1024), 2),
+                                    "memory_percent": (
+                                        round((mem_u / mem_l) * 100, 2) if mem_l else 0
+                                    ),
+                                    "network_rx_mb": round(rx / (1024 * 1024), 2),
+                                    "network_tx_mb": round(tx / (1024 * 1024), 2),
+                                }
+                            )
                     except Exception:
-                        metrics.append({"service": name, "status": ctr.get("State", "?"),
-                                        "cpu_percent": 0, "memory_mb": 0, "memory_percent": 0,
-                                        "network_rx_mb": 0, "network_tx_mb": 0})
+                        metrics.append(
+                            {
+                                "service": name,
+                                "status": ctr.get("State", "?"),
+                                "cpu_percent": 0,
+                                "memory_mb": 0,
+                                "memory_percent": 0,
+                                "network_rx_mb": 0,
+                                "network_tx_mb": 0,
+                            }
+                        )
                 _system_metrics_cache = {"metrics": metrics}
                 _last_metrics_update = time.time()
                 return metrics
@@ -2069,14 +2364,17 @@ app = service.app
 
 async def main():
     import uvicorn
+
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s - %(message)s")
     config = uvicorn.Config(
-        app, host="0.0.0.0",
+        app,
+        host="0.0.0.0",
         port=int(os.environ.get("DASHBOARD_PORT", 8080)),
         log_level="info",
     )
     server = uvicorn.Server(config)
     await server.serve()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -21,26 +21,31 @@ def _optional(import_fn, name):
 
 def _camera():
     from sensors.camera import CameraSensor
+
     return CameraSensor
 
 
 def _microphone():
     from sensors.microphone import MicrophoneSensor
+
     return MicrophoneSensor
 
 
 def _serial():
     from sensors.serial_device import SerialSensor
+
     return SerialSensor
 
 
 def _video_file():
     from sensors.video_file import VideoFileSensor
+
     return VideoFileSensor
 
 
 def _audio_file():
     from sensors.audio_file import AudioFileSensor
+
     return AudioFileSensor
 
 

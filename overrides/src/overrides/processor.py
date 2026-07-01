@@ -5,10 +5,10 @@ Parses natural language override prompts and applies them to system parameters
 after Kernel validation.
 """
 
+import json
 import logging
 import re
 from typing import Any
-import json
 
 from activelearning.nats_client import EventBus
 
@@ -65,7 +65,9 @@ class OverrideProcessor:
             prompt_lower = prompt.lower().strip()
 
             # Pattern: "switch to X mode"
-            mode_match = re.search(r"(?:switch to|change to|set mode to|enter)\s+(\w+)\s+mode", prompt_lower)
+            mode_match = re.search(
+                r"(?:switch to|change to|set mode to|enter)\s+(\w+)\s+mode", prompt_lower
+            )
             if mode_match:
                 mode = mode_match.group(1).upper()
                 valid_modes = self.OPERATIONAL_PARAMS["planner.mode"]
@@ -121,7 +123,7 @@ class OverrideProcessor:
                 else:
                     try:
                         value = float(value_str)
-                    except:
+                    except Exception:
                         value = value_str
 
                 # Check if this is an operational parameter
@@ -214,6 +216,7 @@ class OverrideProcessor:
 
             # Store in database
             import uuid
+
             await self.db.execute(
                 """
                 INSERT INTO human_overrides
@@ -226,7 +229,7 @@ class OverrideProcessor:
                     parameter,
                     json.dumps(value),
                     verified_by,
-                    int(__import__('time').time() * 1000),
+                    int(__import__("time").time() * 1000),
                 ),
             )
             await self.db.commit()

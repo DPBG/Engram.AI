@@ -122,8 +122,9 @@ class TestGainFloor:
         active = {"visual": (0, 50)}
         for step in range(30):
             gain = instincts.compute_gain(current, active, step=step)
-            assert gain.min() >= 1.0 - 1e-6, \
-                f"Gain dropped below 1.0 at step {step}: min={gain.min():.6f}"
+            assert (
+                gain.min() >= 1.0 - 1e-6
+            ), f"Gain dropped below 1.0 at step {step}: min={gain.min():.6f}"
 
     def test_gain_floor_multi_modality(self, instincts):
         """Gain must be >= 1.0 with multiple modalities active."""
@@ -131,8 +132,7 @@ class TestGainFloor:
         active = {"visual": (0, 30), "auditory": (30, 60), "tactile": (60, 90)}
         for step in range(20):
             gain = instincts.compute_gain(current, active, step=step)
-            assert gain.min() >= 1.0 - 1e-6, \
-                f"Multi-modal gain dropped below 1.0 at step {step}"
+            assert gain.min() >= 1.0 - 1e-6, f"Multi-modal gain dropped below 1.0 at step {step}"
 
     def test_gain_floor_zero_current(self, instincts):
         """Gain must be >= 1.0 even with zero input current."""
@@ -148,5 +148,4 @@ class TestGainFloor:
         # Habituate heavily
         for step in range(200):
             gain = instincts.compute_gain(current, active, step=step)
-        assert gain.min() >= 1.0 - 1e-6, \
-            f"Habituated gain dropped below 1.0: min={gain.min():.6f}"
+        assert gain.min() >= 1.0 - 1e-6, f"Habituated gain dropped below 1.0: min={gain.min():.6f}"

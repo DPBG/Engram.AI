@@ -8,16 +8,15 @@ import pytest
 
 mujoco = pytest.importorskip("mujoco", reason="MuJoCo not installed")
 
-from neuromorphic.mujoco_body import MuJoCoBody
-from neuromorphic.tasks import (
-    SupportedStandTask,
-    StandTask,
+from neuromorphic.mujoco_body import MuJoCoBody  # noqa: E402
+from neuromorphic.tasks import (  # noqa: E402
     BalanceTask,
-    ReachTask,
     HeadTrackTask,
-    WalkTask,
+    ReachTask,
+    StandTask,
     TaskCurriculum,
     TaskResult,
+    WalkTask,
     task_result_to_outcome,
 )
 

@@ -9,7 +9,6 @@ analysis before making ALLOW/DENY/TRANSFORM/DEFER decisions.
 """
 
 import asyncio
-import json
 from dataclasses import asdict
 
 from activelearning import BaseService
@@ -83,7 +82,9 @@ class SafetySupervisorService(BaseService):
                     response,
                 )
 
-            self.logger.debug(f"Action {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}")
+            self.logger.debug(
+                f"Action {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}"
+            )
 
         except Exception as e:
             self.logger.error(f"Error analyzing action: {e}")
@@ -115,7 +116,9 @@ class SafetySupervisorService(BaseService):
                     response,
                 )
 
-            self.logger.debug(f"Code {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}")
+            self.logger.debug(
+                f"Code {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}"
+            )
 
         except Exception as e:
             self.logger.error(f"Error analyzing code: {e}")

@@ -1,18 +1,20 @@
 """Tests for sparse synapse connections and STDP learning."""
 
 import numpy as np
-import pytest
 from scipy import sparse
 
-from neuromorphic.config import STDPParams, RSTDPParams
+from neuromorphic.config import RSTDPParams, STDPParams
 from neuromorphic.synapses import SynapseGroup
 
 
 class TestSynapseGroup:
     def test_sparse_construction(self):
         syn = SynapseGroup(
-            n_pre=1000, n_post=500, sparsity=0.01,
-            init_weight=0.3, rng=np.random.default_rng(42),
+            n_pre=1000,
+            n_post=500,
+            sparsity=0.01,
+            init_weight=0.3,
+            rng=np.random.default_rng(42),
         )
         assert syn.weights.shape == (500, 1000)
         assert sparse.issparse(syn.weights)
@@ -23,8 +25,11 @@ class TestSynapseGroup:
 
     def test_compute_current(self):
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.1,
-            init_weight=0.5, rng=np.random.default_rng(42),
+            n_pre=100,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            rng=np.random.default_rng(42),
         )
         pre_spikes = np.zeros(100, dtype=bool)
         pre_spikes[:10] = True
@@ -36,8 +41,11 @@ class TestSynapseGroup:
 
     def test_no_current_no_spikes(self):
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.1,
-            init_weight=0.5, rng=np.random.default_rng(42),
+            n_pre=100,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            rng=np.random.default_rng(42),
         )
         pre_spikes = np.zeros(100, dtype=bool)
         current = syn.compute_current(pre_spikes)
@@ -45,8 +53,12 @@ class TestSynapseGroup:
 
     def test_non_plastic_frozen(self):
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.1,
-            init_weight=0.5, plastic=False, rng=np.random.default_rng(42),
+            n_pre=100,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            plastic=False,
+            rng=np.random.default_rng(42),
         )
         original_data = syn.weights.data.copy()
 
@@ -65,8 +77,12 @@ class TestSynapseGroup:
         """Post fires after pre → weights should increase (LTP)."""
         stdp = STDPParams(a_plus=0.05, a_minus=0.06, w_min=0.0, w_max=1.0)
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.5,
-            init_weight=0.3, plastic=True, stdp_params=stdp,
+            n_pre=100,
+            n_post=50,
+            sparsity=0.5,
+            init_weight=0.3,
+            plastic=True,
+            stdp_params=stdp,
             rng=np.random.default_rng(42),
         )
         original_mean = syn.weights.data.mean()
@@ -84,15 +100,20 @@ class TestSynapseGroup:
 
         # On average, weights should have increased (LTP)
         new_mean = syn.weights.data.mean()
-        assert new_mean > original_mean, \
-            f"LTP should increase mean weight: {original_mean:.6f} → {new_mean:.6f}"
+        assert (
+            new_mean > original_mean
+        ), f"LTP should increase mean weight: {original_mean:.6f} → {new_mean:.6f}"
 
     def test_stdp_ltd(self):
         """Pre fires after post → weights should decrease (LTD)."""
         stdp = STDPParams(a_plus=0.05, a_minus=0.06, w_min=0.0, w_max=1.0)
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.5,
-            init_weight=0.5, plastic=True, stdp_params=stdp,
+            n_pre=100,
+            n_post=50,
+            sparsity=0.5,
+            init_weight=0.5,
+            plastic=True,
+            stdp_params=stdp,
             rng=np.random.default_rng(42),
         )
         original_mean = syn.weights.data.mean()
@@ -108,15 +129,20 @@ class TestSynapseGroup:
 
         syn.update_weights_stdp(pre_spikes, post_spikes, pre_times, post_times, 12.0)
         new_mean = syn.weights.data.mean()
-        assert new_mean < original_mean, \
-            f"LTD should decrease mean weight: {original_mean:.6f} → {new_mean:.6f}"
+        assert (
+            new_mean < original_mean
+        ), f"LTD should decrease mean weight: {original_mean:.6f} → {new_mean:.6f}"
 
     def test_weight_bounds(self):
         """Weights should stay within [w_min, w_max]."""
         stdp = STDPParams(a_plus=0.5, a_minus=0.5, w_min=0.0, w_max=1.0)
         syn = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.5,
-            init_weight=0.9, plastic=True, stdp_params=stdp,
+            n_pre=50,
+            n_post=50,
+            sparsity=0.5,
+            init_weight=0.9,
+            plastic=True,
+            stdp_params=stdp,
             rng=np.random.default_rng(42),
         )
 
@@ -138,8 +164,12 @@ class TestSynapseGroup:
         """R-STDP should scale weight changes by modulation signal."""
         rstdp = RSTDPParams(a_plus=0.05, a_minus=0.06, w_min=0.0, w_max=1.0)
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.5,
-            init_weight=0.3, plastic=True, rstdp_params=rstdp,
+            n_pre=100,
+            n_post=50,
+            sparsity=0.5,
+            init_weight=0.3,
+            plastic=True,
+            rstdp_params=rstdp,
             rng=np.random.default_rng(42),
         )
 
@@ -152,14 +182,19 @@ class TestSynapseGroup:
 
         # High modulation (surprise) → larger weight change
         syn_copy_data = syn.weights.data.copy()
-        syn.update_weights_rstdp(pre_spikes, post_spikes, pre_times, post_times, 12.0, modulation=3.0)
+        syn.update_weights_rstdp(
+            pre_spikes, post_spikes, pre_times, post_times, 12.0, modulation=3.0
+        )
         high_mod_change = abs(syn.weights.data.mean() - syn_copy_data.mean())
         assert high_mod_change > 0
 
     def test_normalize_weights(self):
         syn = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.5,
-            init_weight=0.5, plastic=True,
+            n_pre=50,
+            n_post=50,
+            sparsity=0.5,
+            init_weight=0.5,
+            plastic=True,
             rng=np.random.default_rng(42),
         )
         # Artificially inflate weights beyond w_max
@@ -172,8 +207,11 @@ class TestSynapseGroup:
     def test_synaptic_scaling_reduces_saturated_weights(self):
         """Repeated scaling should pull saturated weights toward the target."""
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.3,
-            init_weight=0.99, plastic=True,
+            n_pre=100,
+            n_post=50,
+            sparsity=0.3,
+            init_weight=0.99,
+            plastic=True,
             rng=np.random.default_rng(42),
         )
         mean_before = syn.weights.data.mean()
@@ -187,8 +225,11 @@ class TestSynapseGroup:
     def test_synaptic_scaling_preserves_within_row_order(self):
         """Multiplicative scaling preserves relative weight ordering within each row."""
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.3,
-            init_weight=0.5, plastic=True,
+            n_pre=100,
+            n_post=50,
+            sparsity=0.3,
+            init_weight=0.5,
+            plastic=True,
             rng=np.random.default_rng(42),
         )
         indptr = syn.weights.indptr
@@ -211,8 +252,11 @@ class TestSynapseGroup:
 
     def test_state_serialization(self):
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.1,
-            init_weight=0.4, rng=np.random.default_rng(42),
+            n_pre=100,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.4,
+            rng=np.random.default_rng(42),
         )
         state = syn.get_state()
         assert "weights_data" in state
@@ -221,16 +265,22 @@ class TestSynapseGroup:
         assert "shape" in state
 
         syn2 = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.0,
-            init_weight=0.0, rng=np.random.default_rng(0),
+            n_pre=100,
+            n_post=50,
+            sparsity=0.0,
+            init_weight=0.0,
+            rng=np.random.default_rng(0),
         )
         syn2.set_state(state)
         np.testing.assert_array_equal(syn.weights.data, syn2.weights.data)
 
     def test_float32_storage(self):
         syn = SynapseGroup(
-            n_pre=100, n_post=50, sparsity=0.1,
-            init_weight=0.3, rng=np.random.default_rng(42),
+            n_pre=100,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.3,
+            rng=np.random.default_rng(42),
         )
         assert syn.weights.dtype == np.float32
 
@@ -241,11 +291,15 @@ class TestSynapseGroup:
         smaller corrections so STDP can "win". During mature phase (low
         plasticity), homeostasis should be stronger to maintain stability.
         """
+
         # Create two identical synapse groups with saturated weights
         def make_syn():
             syn = SynapseGroup(
-                n_pre=100, n_post=50, sparsity=0.3,
-                init_weight=0.9, plastic=True,
+                n_pre=100,
+                n_post=50,
+                sparsity=0.3,
+                init_weight=0.9,
+                plastic=True,
                 rng=np.random.default_rng(42),
             )
             return syn
@@ -257,21 +311,26 @@ class TestSynapseGroup:
 
         # Infant: high plasticity_multiplier -> gentle correction (H1)
         syn_infant.normalize_weights(
-            target_frac=0.5, base_rate=0.01,
-            plasticity_multiplier=2.0, adolescent_bypass=False,
+            target_frac=0.5,
+            base_rate=0.01,
+            plasticity_multiplier=2.0,
+            adolescent_bypass=False,
         )
         infant_correction = abs(syn_infant.weights.data.mean() - mean_before)
 
         # Mature: low plasticity_multiplier -> strong correction (H1)
         syn_mature.normalize_weights(
-            target_frac=0.5, base_rate=0.01,
-            plasticity_multiplier=0.5, adolescent_bypass=False,
+            target_frac=0.5,
+            base_rate=0.01,
+            plasticity_multiplier=0.5,
+            adolescent_bypass=False,
         )
         mature_correction = abs(syn_mature.weights.data.mean() - mean_before)
 
-        assert mature_correction > infant_correction, \
-            f"Mature correction ({mature_correction:.6f}) should exceed " \
+        assert mature_correction > infant_correction, (
+            f"Mature correction ({mature_correction:.6f}) should exceed "
             f"infant ({infant_correction:.6f}) due to H1 inverse scaling"
+        )
 
     def test_homeostasis_adolescent_bypass(self):
         """When adolescent_bypass=True, base_rate is used directly (H2).
@@ -279,10 +338,14 @@ class TestSynapseGroup:
         This produces stronger correction than the default H1 path would
         at the same plasticity_multiplier, counteracting widened STDP.
         """
+
         def make_syn():
             return SynapseGroup(
-                n_pre=100, n_post=50, sparsity=0.3,
-                init_weight=0.9, plastic=True,
+                n_pre=100,
+                n_post=50,
+                sparsity=0.3,
+                init_weight=0.9,
+                plastic=True,
                 rng=np.random.default_rng(42),
             )
 
@@ -292,18 +355,23 @@ class TestSynapseGroup:
 
         # H1 path: inverse scaling with high plasticity (adolescent DA=2.5)
         syn_h1.normalize_weights(
-            target_frac=0.5, base_rate=0.01,
-            plasticity_multiplier=2.5, adolescent_bypass=False,
+            target_frac=0.5,
+            base_rate=0.01,
+            plasticity_multiplier=2.5,
+            adolescent_bypass=False,
         )
         h1_correction = abs(syn_h1.weights.data.mean() - mean_before)
 
         # H2 path: bypass, use base_rate directly
         syn_h2.normalize_weights(
-            target_frac=0.5, base_rate=0.01,
-            plasticity_multiplier=2.5, adolescent_bypass=True,
+            target_frac=0.5,
+            base_rate=0.01,
+            plasticity_multiplier=2.5,
+            adolescent_bypass=True,
         )
         h2_correction = abs(syn_h2.weights.data.mean() - mean_before)
 
-        assert h2_correction > h1_correction, \
-            f"H2 bypass ({h2_correction:.6f}) should produce stronger " \
+        assert h2_correction > h1_correction, (
+            f"H2 bypass ({h2_correction:.6f}) should produce stronger "
             f"correction than H1 ({h1_correction:.6f}) during adolescent"
+        )

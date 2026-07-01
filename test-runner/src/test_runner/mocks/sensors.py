@@ -5,9 +5,9 @@ These mocks simulate hardware sensors without requiring physical devices.
 """
 
 import asyncio
-import time
-from typing import Any, Optional
 import random
+import time
+from typing import Any
 
 
 class MockCamera:
@@ -57,7 +57,7 @@ class MockCamera:
             "metadata": {
                 "exposure": random.uniform(0.01, 0.1),
                 "gain": random.uniform(1.0, 4.0),
-            }
+            },
         }
 
     def is_running(self) -> bool:

@@ -1,20 +1,21 @@
 """Tests for core types and contracts."""
 
 import pytest
+
 from activelearning.core import (
-    KernelDecisionType,
-    Observation,
     ActionProposal,
-    KernelDecision,
-    Outcome,
-    BeliefNode,
     BeliefEdge,
-    BeliefNodeType,
     BeliefEdgeType,
-    KnowledgeGap,
+    BeliefNode,
+    BeliefNodeType,
     CodeProposal,
-    generate_trace_id,
+    KernelDecision,
+    KernelDecisionType,
+    KnowledgeGap,
+    Observation,
+    Outcome,
     current_timestamp,
+    generate_trace_id,
 )
 
 

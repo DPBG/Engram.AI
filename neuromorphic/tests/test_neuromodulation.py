@@ -1,9 +1,8 @@
 """Tests for neuromodulation system and critical periods (Phases 6-7)."""
 
-import numpy as np
 import pytest
 
-from neuromorphic.config import NeuromorphicConfig, CriticalPeriodConfig
+from neuromorphic.config import CriticalPeriodConfig, NeuromorphicConfig
 from neuromorphic.neuromodulation import NeuromodulationSystem
 
 

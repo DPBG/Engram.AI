@@ -11,10 +11,10 @@ import json
 from dataclasses import asdict
 
 from activelearning import BaseService
-from activelearning.subjects import Subjects
 from activelearning.nats_client import serialize_message
+from activelearning.subjects import Subjects
 
-from beliefs.graph import BeliefGraph, BeliefNode, BeliefEdge, NodeType, EdgeType
+from beliefs.graph import BeliefEdge, BeliefGraph, BeliefNode, EdgeType, NodeType
 
 
 class BeliefsService(BaseService):
@@ -144,7 +144,9 @@ class BeliefsService(BaseService):
                     },
                 )
 
-            self.logger.info(f"Saved {len(data['nodes'])} nodes and {len(data['edges'])} edges to database")
+            self.logger.info(
+                f"Saved {len(data['nodes'])} nodes and {len(data['edges'])} edges to database"
+            )
         except Exception as e:
             self.logger.error(f"Error saving beliefs to database: {e}")
 
@@ -159,7 +161,7 @@ class BeliefsService(BaseService):
                 source=data.get("source", "unknown"),
                 metadata=data.get("metadata", {}),
             )
-            node_id = self._graph.add_node(node)
+            self._graph.add_node(node)
         except Exception as e:
             self.logger.error(f"Error adding node: {e}")
 
@@ -174,14 +176,14 @@ class BeliefsService(BaseService):
                 strength=data.get("strength", 1.0),
                 evidence=data.get("evidence"),
             )
-            edge_id = self._graph.add_edge(edge)
+            self._graph.add_edge(edge)
         except Exception as e:
             self.logger.error(f"Error adding edge: {e}")
 
     async def _handle_update(self, data: dict) -> None:
         """Handle belief update requests."""
         try:
-            update = self._graph.update_belief(
+            self._graph.update_belief(
                 node_id=data["node_id"],
                 evidence_strength=data["evidence_strength"],
                 supports=data.get("supports", True),
@@ -195,22 +197,22 @@ class BeliefsService(BaseService):
         try:
             query_type = data.get("type", "by_id")
 
-            result = None
+            _result = None
             if query_type == "by_id":
                 node = self._graph.get_node(data["node_id"])
-                result = asdict(node) if node else None
+                _result = asdict(node) if node else None
             elif query_type == "by_type":
                 nodes = self._graph.get_beliefs_by_type(NodeType(data["node_type"]))
-                result = [asdict(n) for n in nodes]
+                _result = [asdict(n) for n in nodes]
             elif query_type == "high_confidence":
                 nodes = self._graph.get_high_confidence_beliefs(data.get("threshold", 0.8))
-                result = [asdict(n) for n in nodes]
+                _result = [asdict(n) for n in nodes]
             elif query_type == "supporting":
-                result = self._graph.get_supporting_beliefs(data["node_id"])
+                _result = self._graph.get_supporting_beliefs(data["node_id"])
             elif query_type == "contradicting":
-                result = self._graph.get_contradicting_beliefs(data["node_id"])
+                _result = self._graph.get_contradicting_beliefs(data["node_id"])
             elif query_type == "export":
-                result = self._graph.export_to_dict()
+                _result = self._graph.export_to_dict()
         except Exception as e:
             self.logger.error(f"Error querying beliefs: {e}")
 
@@ -218,7 +220,7 @@ class BeliefsService(BaseService):
         """Handle contradiction detection requests."""
         try:
             threshold = data.get("threshold", 0.5)
-            contradictions = self._graph.find_contradictions(threshold)
+            self._graph.find_contradictions(threshold)
         except Exception as e:
             self.logger.error(f"Error finding contradictions: {e}")
 

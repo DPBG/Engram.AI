@@ -148,19 +148,16 @@ jobs:
       - name: Ruff (blocking bug gate)
         run: uvx ruff check --select E9,F63,F7,F82 .
 
-      # ADVISORY: full style rule set. Flip to blocking once the backlog is
-      # cleared (ROADMAP.md P5).
-      - name: Ruff (full, advisory)
-        continue-on-error: true
+      # BLOCKING: full style rule set.
+      - name: Ruff (full)
         run: uvx ruff check .
 
-      # ADVISORY: formatting. Flip to blocking after a one-time `black .` pass.
-      - name: Black (advisory)
-        continue-on-error: true
+      # BLOCKING: formatting enforced at line-length 100.
+      - name: Black
         run: uvx black --check --line-length 100 .
 
   typecheck:
-    name: Type check (advisory)
+    name: Type check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -170,9 +167,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      # ADVISORY for now: strict mypy has a backlog. Step-level continue-on-error
-      # keeps the job (and its check) green while still surfacing type errors in
-      # the log. Flip to blocking once the backlog is cleared (ROADMAP.md P5).
+      # BLOCKING: all mypy errors in sdk/src/activelearning are resolved.
       - name: Mypy (sdk)
-        continue-on-error: true
         run: uvx mypy --python-version 3.11 --ignore-missing-imports sdk/src/activelearning

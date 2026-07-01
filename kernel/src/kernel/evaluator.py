@@ -13,12 +13,13 @@ Body-profile integration:
 
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
-import time
+from typing import TYPE_CHECKING, Any, Optional
 
-from activelearning import KernelDecisionType as DecisionType, RiskAnalysis
+from activelearning import KernelDecisionType as DecisionType
+from activelearning import RiskAnalysis
 
 if TYPE_CHECKING:
     from beliefs.profiles import BodyProfile
@@ -29,13 +30,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class KernelDecision:
     """A decision from the Kernel."""
+
     trace_id: str
     type: DecisionType
-    reason: Optional[str] = None
-    transformations: Optional[list[dict[str, Any]]] = None
+    reason: str | None = None
+    transformations: list[dict[str, Any]] | None = None
     risk_score: float = 0.0
     issued_at: int = field(default_factory=lambda: int(time.time() * 1000))
-    expires_at: Optional[int] = None
+    expires_at: int | None = None
 
 
 # Protected paths that cannot be modified
@@ -90,7 +92,7 @@ class KernelEvaluator:
         # approval consumer must treat the pending proposal as DENY (fail-closed,
         # Phase 1.9) rather than letting it linger indefinitely.
         self.defer_ttl_ms = defer_ttl_ms
-        self._body_profile: Optional["BodyProfile"] = body_profile
+        self._body_profile: BodyProfile | None = body_profile
         # SAFE_HALT kill switch (Phase 1.9). When halted, the Kernel — the sole
         # authority that may approve anything — DENIES every proposal. Because
         # actions, code deployments, and Coordinator task execution all route
@@ -134,8 +136,8 @@ class KernelEvaluator:
     def evaluate_action_proposal(
         self,
         proposal: dict[str, Any],
-        risk_analysis: Optional[RiskAnalysis] = None,
-        norm_violations: Optional[list[dict[str, Any]]] = None,
+        risk_analysis: RiskAnalysis | None = None,
+        norm_violations: list[dict[str, Any]] | None = None,
     ) -> KernelDecision:
         """
         Evaluate an action proposal.
@@ -159,7 +161,6 @@ class KernelEvaluator:
         # Initialize risk score — clamp external input to [0.0, 1.0]
         risk_score = max(0.0, min(risk_analysis.risk_score, 1.0)) if risk_analysis else 0.0
         flags = list(risk_analysis.flags) if risk_analysis else []
-        reason = None
 
         # Apply norm violations from Beliefs system
         if norm_violations:
@@ -244,7 +245,7 @@ class KernelEvaluator:
     def evaluate_code_proposal(
         self,
         proposal: dict[str, Any],
-        risk_analysis: Optional[RiskAnalysis] = None,
+        risk_analysis: RiskAnalysis | None = None,
     ) -> KernelDecision:
         """
         Evaluate a code proposal from Meta-Programmer.
@@ -348,11 +349,15 @@ class KernelEvaluator:
 
     # Valid motor channels from the brain's motor cortex sub-ranges.
     _KNOWN_CHANNELS = {
-        "locomotion", "manipulation", "head",
-        "speech", "expression", "cognitive",
+        "locomotion",
+        "manipulation",
+        "head",
+        "speech",
+        "expression",
+        "cognitive",
     }
 
-    def _check_envelope(self, action: dict[str, Any]) -> Optional[str]:
+    def _check_envelope(self, action: dict[str, Any]) -> str | None:
         """Check if action violates safety envelopes."""
         # Motor command envelope
         if "intensity" in action:
@@ -388,7 +393,7 @@ class KernelEvaluator:
         self,
         action: dict[str, Any],
         flags: list[str],
-    ) -> Optional[list[dict[str, Any]]]:
+    ) -> list[dict[str, Any]] | None:
         """Generate safe transformations for an action."""
         if not flags:
             return None
@@ -434,7 +439,7 @@ class KernelEvaluator:
         self,
         action: dict[str, Any],
         flags: list[str],
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Check action against body-profile capability markers and motor limits.
 
         Returns:
@@ -457,10 +462,7 @@ class KernelEvaluator:
             flags.append(f"PROFILE_DENY:{channel}")
             return {
                 "type": DecisionType.DENY,
-                "reason": (
-                    f"Body profile '{profile.name}' disallows "
-                    f"channel '{channel}'"
-                ),
+                "reason": (f"Body profile '{profile.name}' disallows " f"channel '{channel}'"),
                 "risk_score": 1.0,
             }
 
@@ -470,10 +472,7 @@ class KernelEvaluator:
                 flags.append("PROFILE_DENY:cognitive")
                 return {
                     "type": DecisionType.DENY,
-                    "reason": (
-                        f"Body profile '{profile.name}' disallows "
-                        f"cognitive queries"
-                    ),
+                    "reason": (f"Body profile '{profile.name}' disallows " f"cognitive queries"),
                     "risk_score": 1.0,
                 }
 

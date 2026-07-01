@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -46,7 +46,7 @@ class MotorFeedbackAdapter:
         self._config = config
         self._bus = event_bus
         self._real_channels: dict[str, float] = {}  # channel → last heartbeat ts
-        self._mujoco_body: Optional[MuJoCoBody] = None  # lazy-loaded
+        self._mujoco_body: MuJoCoBody | None = None  # lazy-loaded
         # Rate limiting: last command time per channel (monotonic)
         self._last_cmd_time: dict[str, float] = {}
         self._rate_limit_interval: float = (
@@ -60,9 +60,9 @@ class MotorFeedbackAdapter:
         self._teach_cancel = False
         self._teach_running = False
         # Continuous physics loop task handle
-        self._physics_task: Optional[asyncio.Task] = None
+        self._physics_task: asyncio.Task | None = None
         # Task curriculum (structured goals — stand, balance, reach, walk)
-        self._curriculum: Optional[TaskCurriculum] = None
+        self._curriculum: TaskCurriculum | None = None
         self._tasks_enabled = config.tasks_enabled
         self._physics_running = False
 
@@ -105,7 +105,7 @@ class MotorFeedbackAdapter:
     def _ensure_mujoco(self) -> MuJoCoBody:
         """Lazy-load MuJoCo body on first physics command."""
         if self._mujoco_body is None:
-            steps = getattr(self._config, 'mujoco_steps_per_command', 200)
+            steps = getattr(self._config, "mujoco_steps_per_command", 200)
             self._mujoco_body = MuJoCoBody(
                 steps_per_command=steps,
                 channel_actuators=self._config.channel_actuators,
@@ -117,7 +117,7 @@ class MotorFeedbackAdapter:
         last_hb = self._real_channels.get(channel)
         if last_hb is None:
             return False
-        timeout = getattr(self._config, 'heartbeat_timeout_s', 10.0)
+        timeout = getattr(self._config, "heartbeat_timeout_s", 10.0)
         return (time.time() - last_hb) < timeout
 
     async def handle_motor_command(
@@ -188,11 +188,14 @@ class MotorFeedbackAdapter:
                 body = self._ensure_mujoco()
                 loop = asyncio.get_running_loop()
                 outcome = await loop.run_in_executor(
-                    None, body.step_command, channel, intensity,
+                    None,
+                    body.step_command,
+                    channel,
+                    intensity,
                 )
 
         # Simulate real-world feedback delay
-        delay_ms = getattr(self._config, 'virtual_delay_ms', 0)
+        delay_ms = getattr(self._config, "virtual_delay_ms", 0)
         if delay_ms > 0:
             await asyncio.sleep(delay_ms / 1000.0)
 
@@ -200,7 +203,9 @@ class MotorFeedbackAdapter:
         await self._bus.publish(f"motor.outcome.{channel}", outcome)
         logger.debug(
             "Virtual motor outcome: %s success=%s confidence=%.2f",
-            channel, outcome.get("success"), outcome.get("confidence", 0),
+            channel,
+            outcome.get("success"),
+            outcome.get("confidence", 0),
         )
 
         # Publish full body state for visualization (MuJoCo physics channels only)
@@ -208,7 +213,9 @@ class MotorFeedbackAdapter:
             await self._publish_body_state(channel, outcome)
 
     async def _publish_body_state(
-        self, channel: str, outcome: dict[str, Any],
+        self,
+        channel: str,
+        outcome: dict[str, Any],
     ) -> None:
         """Publish full body state to NATS for visualization."""
         try:
@@ -251,7 +258,9 @@ class MotorFeedbackAdapter:
             async with self._body_lock:
                 body = self._ensure_mujoco()
                 outcome = await loop.run_in_executor(
-                    None, body.guide_to_pose, joints,
+                    None,
+                    body.guide_to_pose,
+                    joints,
                 )
 
         elif action == "push":
@@ -260,7 +269,10 @@ class MotorFeedbackAdapter:
             async with self._body_lock:
                 body = self._ensure_mujoco()
                 outcome = await loop.run_in_executor(
-                    None, body.apply_force, body_name, tuple(force),
+                    None,
+                    body.apply_force,
+                    body_name,
+                    tuple(force),
                 )
 
         elif action == "reward":
@@ -294,7 +306,9 @@ class MotorFeedbackAdapter:
         await self._bus.publish(f"motor.outcome.{channel}", outcome)
         logger.info(
             "Guidance %s → %s success=%s",
-            action, channel, outcome.get("success"),
+            action,
+            channel,
+            outcome.get("success"),
         )
 
         # Publish body state for viz
@@ -345,7 +359,9 @@ class MotorFeedbackAdapter:
                 async with self._body_lock:
                     body = self._ensure_mujoco()
                     outcome = await loop.run_in_executor(
-                        None, body.guide_to_pose, joints,
+                        None,
+                        body.guide_to_pose,
+                        joints,
                     )
                 channel = outcome.get("channel", "locomotion")
                 outcome["teach_rep"] = i + 1
@@ -355,18 +371,24 @@ class MotorFeedbackAdapter:
                 await self._bus.publish(f"motor.outcome.{channel}", outcome)
 
                 # 3. Publish DA boost event so eligibility traces get reinforced.
-                await self._bus.publish("neuromod.teach.da", {
-                    "channel": channel,
-                    "amount": 1.5,
-                    "source": "teach",
-                })
+                await self._bus.publish(
+                    "neuromod.teach.da",
+                    {
+                        "channel": channel,
+                        "amount": 1.5,
+                        "source": "teach",
+                    },
+                )
 
                 # 4. Publish progress for UI
-                await self._bus.publish("teach.progress", {
-                    "current": i + 1,
-                    "total": repeats,
-                    "channel": channel,
-                })
+                await self._bus.publish(
+                    "teach.progress",
+                    {
+                        "current": i + 1,
+                        "total": repeats,
+                        "channel": channel,
+                    },
+                )
 
                 # 5. Publish body state for visualization
                 if self._mujoco_body is not None:
@@ -432,10 +454,13 @@ class MotorFeedbackAdapter:
                     try:
                         async with self._body_lock:
                             vec = body.get_proprioceptive_vector()
-                        await self._bus.publish("observation.proprioceptive", {
-                            "data": vec.tolist(),
-                            "provenance": "observation.proprioceptive",
-                        })
+                        await self._bus.publish(
+                            "observation.proprioceptive",
+                            {
+                                "data": vec.tolist(),
+                                "provenance": "observation.proprioceptive",
+                            },
+                        )
                     except Exception as e:
                         logger.debug("Failed to emit proprioceptive state: %s", e)
 
@@ -444,20 +469,27 @@ class MotorFeedbackAdapter:
                     try:
                         async with self._body_lock:
                             root_z = float(body._data.body(body._root_body_name).xpos[2])
-                            height_ratio = root_z / body._initial_root_z if body._initial_root_z > 0 else 0.0
+                            height_ratio = (
+                                root_z / body._initial_root_z if body._initial_root_z > 0 else 0.0
+                            )
                             task_name = ""
                             support_active = False
                             if self._curriculum is not None:
                                 task_name = self._curriculum.current_task.name
                                 support_active = self._curriculum.support_active
                             # Only compute PD torques when support is active (expensive)
-                            standing_torques = body.compute_standing_torques() if support_active else {}
-                        await self._bus.publish("body.posture", {
-                            "height_ratio": float(np.clip(height_ratio, 0.0, 1.5)),
-                            "task_name": task_name,
-                            "support_active": support_active,
-                            "standing_torques": standing_torques,
-                        })
+                            standing_torques = (
+                                body.compute_standing_torques() if support_active else {}
+                            )
+                        await self._bus.publish(
+                            "body.posture",
+                            {
+                                "height_ratio": float(np.clip(height_ratio, 0.0, 1.5)),
+                                "task_name": task_name,
+                                "support_active": support_active,
+                                "standing_torques": standing_torques,
+                            },
+                        )
                     except Exception as e:
                         logger.debug("Failed to emit body posture: %s", e)
 
@@ -467,10 +499,13 @@ class MotorFeedbackAdapter:
                             async with self._body_lock:
                                 pain_vec = body.compute_pain_vector(self._config.pain_limit_zone)
                             if pain_vec.max() > 0.01:
-                                await self._bus.publish("observation.pain", {
-                                    "data": pain_vec.tolist(),
-                                    "provenance": "observation.pain",
-                                })
+                                await self._bus.publish(
+                                    "observation.pain",
+                                    {
+                                        "data": pain_vec.tolist(),
+                                        "provenance": "observation.pain",
+                                    },
+                                )
                         except Exception as e:
                             logger.debug("Failed to emit pain signal: %s", e)
 
@@ -481,11 +516,13 @@ class MotorFeedbackAdapter:
                         async with self._body_lock:
                             if self._curriculum is None:
                                 self._curriculum = TaskCurriculum(body)
-                                logger.info("TaskCurriculum started: %s",
-                                            self._curriculum.current_task.name)
+                                logger.info(
+                                    "TaskCurriculum started: %s", self._curriculum.current_task.name
+                                )
                             result = self._curriculum.step()
                             outcome = task_result_to_outcome(
-                                result, self._curriculum.current_task, body)
+                                result, self._curriculum.current_task, body
+                            )
                         await self._bus.publish(f"motor.outcome.{outcome['channel']}", outcome)
                     except Exception as e:
                         logger.debug("Task evaluation error: %s", e)
@@ -499,10 +536,13 @@ class MotorFeedbackAdapter:
                         if frame is not None:
                             # Normalize to [0, 1] float32 list for sensory encoding
                             data = (frame.astype("float32") / 255.0).flatten().tolist()
-                            await self._bus.publish("observation.visual.body", {
-                                "data": data,
-                                "provenance": "sensor.video.body",
-                            })
+                            await self._bus.publish(
+                                "observation.visual.body",
+                                {
+                                    "data": data,
+                                    "provenance": "sensor.video.body",
+                                },
+                            )
                     except Exception as e:
                         logger.debug("Failed to emit camera frame: %s", e)
 
@@ -546,5 +586,6 @@ class MotorFeedbackAdapter:
             actuator_id = data.get("actuator_id", "unknown")
             logger.info(
                 "Real actuator detected for '%s': %s — switching from virtual",
-                channel, actuator_id,
+                channel,
+                actuator_id,
             )

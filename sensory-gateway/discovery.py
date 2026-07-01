@@ -38,17 +38,19 @@ def discover_cameras(max_index: int = 10) -> list[DiscoveredDevice]:
         if cap.isOpened():
             ret, _ = cap.read()
             if ret:
-                cameras.append(DiscoveredDevice(
-                    device_type="camera",
-                    device_id=f"camera:{i}",
-                    name=f"Camera {i} ({cap.getBackendName()})",
-                    metadata={
-                        "index": i,
-                        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                        "backend": cap.getBackendName(),
-                    },
-                ))
+                cameras.append(
+                    DiscoveredDevice(
+                        device_type="camera",
+                        device_id=f"camera:{i}",
+                        name=f"Camera {i} ({cap.getBackendName()})",
+                        metadata={
+                            "index": i,
+                            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                            "backend": cap.getBackendName(),
+                        },
+                    )
+                )
             cap.release()
     return cameras
 
@@ -64,16 +66,18 @@ def discover_microphones() -> list[DiscoveredDevice]:
     mics = []
     for i, dev in enumerate(sd.query_devices()):
         if dev["max_input_channels"] > 0:
-            mics.append(DiscoveredDevice(
-                device_type="mic",
-                device_id=f"mic:{i}",
-                name=dev["name"],
-                metadata={
-                    "index": i,
-                    "channels": dev["max_input_channels"],
-                    "sample_rate": dev["default_samplerate"],
-                },
-            ))
+            mics.append(
+                DiscoveredDevice(
+                    device_type="mic",
+                    device_id=f"mic:{i}",
+                    name=dev["name"],
+                    metadata={
+                        "index": i,
+                        "channels": dev["max_input_channels"],
+                        "sample_rate": dev["default_samplerate"],
+                    },
+                )
+            )
     return mics
 
 
@@ -108,18 +112,20 @@ def discover_serial_devices() -> list[DiscoveredDevice]:
             logger.debug(f"Skipping system serial port: {port.device}")
             continue
 
-        devices.append(DiscoveredDevice(
-            device_type="serial",
-            device_id=f"serial:{port.device}",
-            name=port.description or port.device,
-            metadata={
-                "port": port.device,
-                "vid": port.vid,
-                "pid": port.pid,
-                "serial_number": port.serial_number,
-                "manufacturer": port.manufacturer,
-            },
-        ))
+        devices.append(
+            DiscoveredDevice(
+                device_type="serial",
+                device_id=f"serial:{port.device}",
+                name=port.description or port.device,
+                metadata={
+                    "port": port.device,
+                    "vid": port.vid,
+                    "pid": port.pid,
+                    "serial_number": port.serial_number,
+                    "manufacturer": port.manufacturer,
+                },
+            )
+        )
     return devices
 
 

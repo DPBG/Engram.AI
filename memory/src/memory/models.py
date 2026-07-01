@@ -1,9 +1,9 @@
 """Data models for Memory Service."""
 
-from dataclasses import dataclass, field
-from typing import Any
 import time
 import uuid
+from dataclasses import dataclass, field
+from typing import Any
 
 
 def generate_id() -> str:
@@ -17,6 +17,7 @@ def current_timestamp() -> int:
 @dataclass
 class Episode:
     """An episodic memory entry."""
+
     trace_id: str
     summary: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -29,6 +30,7 @@ class Episode:
 @dataclass
 class MemoryQuery:
     """A memory query request."""
+
     query: str
     limit: int = 10
     min_score: float = 0.5
@@ -37,6 +39,7 @@ class MemoryQuery:
 @dataclass
 class MemoryResult:
     """A memory search result."""
+
     episode_id: str
     score: float
     trace_id: str

@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 from nats.aio.client import Client as NATSClient

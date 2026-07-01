@@ -46,7 +46,7 @@ async def js_nats(nats_url: str):
 @pytest.mark.asyncio
 async def test_safety_stream_exists_after_event_bus_connect(nats_url: str):
     """EventBus.connect() creates the SAFETY_CRITICAL stream covering all critical subjects."""
-    from activelearning.nats_client import EventBus, SAFETY_STREAM_NAME
+    from activelearning.nats_client import SAFETY_STREAM_NAME, EventBus
 
     bus = EventBus(nats_url=nats_url, name="test-stream-setup")
     await bus.connect()

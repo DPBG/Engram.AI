@@ -7,7 +7,14 @@ from typing import Any
 
 import numpy as np
 
-from neuromorphic.config import NeuromorphicConfig, LIFParams, InhibitoryConfig, DendriticCompartmentConfig, DualInhibitionConfig, NMDAConfig
+from neuromorphic.config import (
+    DendriticCompartmentConfig,
+    DualInhibitionConfig,
+    InhibitoryConfig,
+    LIFParams,
+    NeuromorphicConfig,
+    NMDAConfig,
+)
 from neuromorphic.neurons import NeuronPopulation
 
 
@@ -44,7 +51,9 @@ class BrainRegion:
     ):
         self.n = n
         self.population = NeuronPopulation(
-            n, lif_params, rng=rng,
+            n,
+            lif_params,
+            rng=rng,
             inhibitory_config=inhibitory_config,
             dendrite_config=dendrite_config,
             dual_inhibition_config=dual_inhibition_config,
@@ -160,7 +169,14 @@ class SensoryCortex(BrainRegion):
     def __init__(self, config: NeuromorphicConfig, rng: np.random.Generator | None = None):
         n = config.populations.sensory_cortex
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, config.lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            config.lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
         enc = config.encoding
         vis_end = int(n * enc.visual_end)
         aud_end = int(n * enc.auditory_end)
@@ -174,10 +190,7 @@ class SensoryCortex(BrainRegion):
 
     def update_subranges(self, ranges: dict[str, tuple[int, int]]) -> None:
         """Update subranges from dynamic allocator output."""
-        self.sub_ranges = [
-            SubRange(name, start, end)
-            for name, (start, end) in ranges.items()
-        ]
+        self.sub_ranges = [SubRange(name, start, end) for name, (start, end) in ranges.items()]
 
 
 class MotorCortex(BrainRegion):
@@ -191,7 +204,14 @@ class MotorCortex(BrainRegion):
     def __init__(self, config: NeuromorphicConfig, rng: np.random.Generator | None = None):
         n = config.populations.motor_cortex
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, config.lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            config.lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
         dec = config.decoding
         loc_end = int(n * dec.locomotion_end)
         man_end = int(n * dec.manipulation_end)
@@ -224,7 +244,14 @@ class Cerebellum(BrainRegion):
     def __init__(self, config: NeuromorphicConfig, rng: np.random.Generator | None = None):
         n = config.populations.cerebellum
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, config.lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            config.lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
 
 
 class AssociationCortex(BrainRegion):
@@ -239,7 +266,14 @@ class AssociationCortex(BrainRegion):
     def __init__(self, config: NeuromorphicConfig, rng: np.random.Generator | None = None):
         n = config.populations.association_cortex
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, config.lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            config.lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
 
 
 class PredictiveLayer(BrainRegion):
@@ -254,7 +288,14 @@ class PredictiveLayer(BrainRegion):
     def __init__(self, config: NeuromorphicConfig, rng: np.random.Generator | None = None):
         n = config.populations.predictive_layer
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, config.lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            config.lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
         # Track last-step activity for prediction error computation
         self._prev_spikes = np.zeros(n, dtype=bool)
 
@@ -279,7 +320,15 @@ class WorkingMemory(BrainRegion):
         n = config.populations.working_memory
         dend = config.dendrites if config.dendrites.enabled else None
         nmda = config.nmda if config.nmda.enabled else None
-        super().__init__(n, config.working_memory_lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition, nmda_config=nmda)
+        super().__init__(
+            n,
+            config.working_memory_lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+            nmda_config=nmda,
+        )
 
 
 class FeatureLayer(BrainRegion):
@@ -294,7 +343,14 @@ class FeatureLayer(BrainRegion):
     def __init__(self, config: NeuromorphicConfig, rng: np.random.Generator | None = None):
         n = config.populations.feature_layer
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, config.lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            config.lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
 
 
 class ConceptLayer(BrainRegion):
@@ -310,11 +366,21 @@ class ConceptLayer(BrainRegion):
         n = config.populations.concept_layer
         cl = config.concept_layer
         concept_lif = LIFParams(
-            tau=cl.tau, threshold=cl.threshold,
-            reset=-70.0, resting=-65.0, noise_std=0.3,
+            tau=cl.tau,
+            threshold=cl.threshold,
+            reset=-70.0,
+            resting=-65.0,
+            noise_std=0.3,
         )
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, concept_lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            concept_lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
         self._k = min(cl.k_winners, n)  # k cannot exceed population size
 
     def step(self, synaptic_current: np.ndarray, dt: float = 1.0) -> np.ndarray:
@@ -330,7 +396,7 @@ class ConceptLayer(BrainRegion):
             drive = self.population._pre_spike_drive[spike_idx]
             if len(spike_idx) > self._k:
                 # argpartition deterministically picks top-k (handles ties)
-                top_k_local = np.argpartition(drive, -self._k)[-self._k:]
+                top_k_local = np.argpartition(drive, -self._k)[-self._k :]
                 keep = spike_idx[top_k_local]
                 suppress = np.setdiff1d(spike_idx, keep)
                 spikes[suppress] = False
@@ -347,7 +413,9 @@ class ConceptLayer(BrainRegion):
                 # Reset suppressed dendrites to prevent phantom buildup
                 if self.population.v_dendrite is not None:
                     for c in range(self.population.n_compartments):
-                        self.population.v_dendrite[c, suppress] = self.population._dend_cfg.resting[c]
+                        self.population.v_dendrite[c, suppress] = self.population._dend_cfg.resting[
+                            c
+                        ]
                     # Clear activity flags so suppressed neurons don't get STDP credit
                     self.population.compartment_active_at_spike[:, suppress] = False
 
@@ -376,11 +444,21 @@ class PatternSeparator(BrainRegion):
         n = config.populations.pattern_separator
         dg = config.pattern_separator
         dg_lif = LIFParams(
-            tau=dg.tau, threshold=dg.threshold,
-            reset=-70.0, resting=-65.0, noise_std=0.2,
+            tau=dg.tau,
+            threshold=dg.threshold,
+            reset=-70.0,
+            resting=-65.0,
+            noise_std=0.2,
         )
         dend = config.dendrites if config.dendrites.enabled else None
-        super().__init__(n, dg_lif, rng=rng, inhibitory_config=config.inhibitory, dendrite_config=dend, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            dg_lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dendrite_config=dend,
+            dual_inhibition_config=config.dual_inhibition,
+        )
         self._k = min(dg.k_winners, n)
 
     def step(self, synaptic_current: np.ndarray, dt: float = 1.0) -> np.ndarray:
@@ -394,7 +472,7 @@ class PatternSeparator(BrainRegion):
             spike_idx = np.nonzero(spikes)[0]
             drive = self.population._pre_spike_drive[spike_idx]
             if len(spike_idx) > self._k:
-                top_k_local = np.argpartition(drive, -self._k)[-self._k:]
+                top_k_local = np.argpartition(drive, -self._k)[-self._k :]
                 keep = spike_idx[top_k_local]
                 suppress = np.setdiff1d(spike_idx, keep)
                 spikes[suppress] = False
@@ -410,7 +488,9 @@ class PatternSeparator(BrainRegion):
                 # Reset suppressed dendrites
                 if self.population.v_dendrite is not None:
                     for c in range(self.population.n_compartments):
-                        self.population.v_dendrite[c, suppress] = self.population._dend_cfg.resting[c]
+                        self.population.v_dendrite[c, suppress] = self.population._dend_cfg.resting[
+                            c
+                        ]
                     self.population.compartment_active_at_spike[:, suppress] = False
 
         self._external_current[:] = 0.0
@@ -429,20 +509,34 @@ class MetaControllerRegion(BrainRegion):
         n = config.populations.meta_controller
         mc = config.meta_controller
         meta_lif = LIFParams(
-            tau=mc.tau, threshold=-55.0, reset=-70.0,
-            resting=-65.0, noise_std=0.3,
+            tau=mc.tau,
+            threshold=-55.0,
+            reset=-70.0,
+            resting=-65.0,
+            noise_std=0.3,
             sfa_increment=2.0,  # ~7x cortical — primary rate control for meta
             sfa_decay=0.99,
         )
-        super().__init__(n, meta_lif, rng=rng, inhibitory_config=config.inhibitory, dual_inhibition_config=config.dual_inhibition)
+        super().__init__(
+            n,
+            meta_lif,
+            rng=rng,
+            inhibitory_config=config.inhibitory,
+            dual_inhibition_config=config.dual_inhibition,
+        )
 
         # Sub-populations
         pos = 0
-        self._monitor_end = pos + int(n * mc.monitor_frac); pos = self._monitor_end
-        self._da_end = pos + int(n * mc.da_frac); pos = self._da_end
-        self._ach_end = pos + int(n * mc.ach_frac); pos = self._ach_end
-        self._ne_end = pos + int(n * mc.ne_frac); pos = self._ne_end
-        self._serotonin_end = pos + int(n * mc.serotonin_frac); pos = self._serotonin_end
+        self._monitor_end = pos + int(n * mc.monitor_frac)
+        pos = self._monitor_end
+        self._da_end = pos + int(n * mc.da_frac)
+        pos = self._da_end
+        self._ach_end = pos + int(n * mc.ach_frac)
+        pos = self._ach_end
+        self._ne_end = pos + int(n * mc.ne_frac)
+        pos = self._ne_end
+        self._serotonin_end = pos + int(n * mc.serotonin_frac)
+        pos = self._serotonin_end
 
         self.sub_ranges = [
             SubRange("monitor", 0, self._monitor_end),
@@ -497,7 +591,9 @@ class GlobalWorkspace(BrainRegion):
         gw = config.global_workspace
         dend = config.dendrites if config.dendrites.enabled else None
         super().__init__(
-            n, config.lif, rng=rng,
+            n,
+            config.lif,
+            rng=rng,
             inhibitory_config=config.inhibitory,
             dendrite_config=dend,
             dual_inhibition_config=config.dual_inhibition,

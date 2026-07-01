@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from neuromorphic.config import NeuromorphicConfig, DriveConfig
+from neuromorphic.config import DriveConfig, NeuromorphicConfig
 from neuromorphic.regions import Brainstem
 
 logger = logging.getLogger(__name__)
@@ -69,10 +69,18 @@ class HomeostaticDriveSystem:
         # Periodic drive perturbation — natural fluctuation
         self._update_count += 1
         if self._update_count % c.perturbation_interval == 0:
-            self.energy = float(np.clip(self.energy + self._rng.normal(0, c.perturbation_std), 0, 1))
-            self.damage = float(np.clip(self.damage + self._rng.normal(0, c.perturbation_std * 0.5), 0, 1))
-            self.temperature = float(np.clip(self.temperature + self._rng.normal(0, c.perturbation_std), 0, 1))
-            self.fatigue = float(np.clip(self.fatigue + self._rng.normal(0, c.perturbation_std * 0.5), 0, 1))
+            self.energy = float(
+                np.clip(self.energy + self._rng.normal(0, c.perturbation_std), 0, 1)
+            )
+            self.damage = float(
+                np.clip(self.damage + self._rng.normal(0, c.perturbation_std * 0.5), 0, 1)
+            )
+            self.temperature = float(
+                np.clip(self.temperature + self._rng.normal(0, c.perturbation_std), 0, 1)
+            )
+            self.fatigue = float(
+                np.clip(self.fatigue + self._rng.normal(0, c.perturbation_std * 0.5), 0, 1)
+            )
 
     def handle_event(self, event: dict[str, Any]) -> None:
         """Process an external drive event (e.g., feeding, damage)."""

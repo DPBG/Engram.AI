@@ -1,7 +1,8 @@
 """Tests for the Kernel code-proposal evaluator (Phase 1.5 + governance gate)."""
 
-from kernel.evaluator import KernelEvaluator
 from activelearning import KernelDecisionType as DecisionType
+
+from kernel.evaluator import KernelEvaluator
 
 
 def _ev():
@@ -52,11 +53,14 @@ def test_clean_code_allowed():
 
 # ── SAFE_HALT kill switch (Phase 1.9) ────────────────────────────────────────
 
+
 def test_safe_halt_denies_action_proposal():
     ev = _ev()
     ev.halt("emergency")
     assert ev.is_halted is True
-    d = ev.evaluate_action_proposal({"trace_id": "t", "action": {"channel": "head", "intensity": 0.1}})
+    d = ev.evaluate_action_proposal(
+        {"trace_id": "t", "action": {"channel": "head", "intensity": 0.1}}
+    )
     assert d.type == DecisionType.DENY
     assert "SAFE_HALT" in d.reason
 

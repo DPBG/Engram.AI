@@ -23,16 +23,17 @@ import json
 
 import numpy as np
 import pytest
-from scipy.sparse import csr_matrix, random as sparse_random
+from scipy.sparse import csr_matrix
+from scipy.sparse import random as sparse_random
 
-from neuromorphic.config import NeuromorphicConfig, PopulationConfig, DendriticCompartmentConfig
-from neuromorphic.cross_modal_probe import CrossModalProbe, CrossModalMetrics, ProbeInputs
+from neuromorphic.config import DendriticCompartmentConfig, NeuromorphicConfig, PopulationConfig
+from neuromorphic.cross_modal_probe import CrossModalMetrics, CrossModalProbe, ProbeInputs
 from neuromorphic.network import NeuromorphicNetwork
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _small_config() -> NeuromorphicConfig:
     """Build a tiny config for fast cross-modal tests."""
@@ -64,10 +65,12 @@ def _inject_auditory(net: NeuromorphicNetwork, strength: float = 1.0) -> np.ndar
 def _inject_both(net: NeuromorphicNetwork, strength: float = 1.0) -> np.ndarray:
     vis_data = np.random.default_rng(0).random(50).astype(np.float32) * strength
     aud_data = np.random.default_rng(1).random(30).astype(np.float32) * strength
-    return net.inject_multimodal({
-        "sensor.videofile.test": vis_data,
-        "sensor.audiofile.test": aud_data,
-    })
+    return net.inject_multimodal(
+        {
+            "sensor.videofile.test": vis_data,
+            "sensor.audiofile.test": aud_data,
+        }
+    )
 
 
 def _make_probe_inputs(
@@ -81,8 +84,9 @@ def _make_probe_inputs(
 ) -> ProbeInputs:
     """Build a synthetic ProbeInputs for unit tests."""
     rng = np.random.default_rng(42)
-    weights = sparse_random(n_assoc, n_sensory, density=density, format="csr",
-                            dtype=np.float32, random_state=rng)
+    weights = sparse_random(
+        n_assoc, n_sensory, density=density, format="csr", dtype=np.float32, random_state=rng
+    )
     if spikes is None:
         spikes = rng.random(n_assoc) > 0.8
     return ProbeInputs(
@@ -97,6 +101,7 @@ def _make_probe_inputs(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def config():
@@ -116,6 +121,7 @@ def probe():
 # ---------------------------------------------------------------------------
 # Decoupled ProbeInputs API
 # ---------------------------------------------------------------------------
+
 
 class TestProbeInputsDecoupled:
     """Verify probe works with synthetic ProbeInputs, no network needed."""
@@ -166,6 +172,7 @@ class TestProbeInputsDecoupled:
 # Basic probe tests (via network)
 # ---------------------------------------------------------------------------
 
+
 class TestCrossModalProbeBasic:
     def test_probe_returns_metrics(self, network, probe):
         current = _inject_both(network)
@@ -212,6 +219,7 @@ class TestCrossModalProbeBasic:
 # Read-only verification
 # ---------------------------------------------------------------------------
 
+
 class TestProbeIsReadOnly:
     def test_no_weight_changes(self, network, probe):
         current = _inject_both(network)
@@ -240,6 +248,7 @@ class TestProbeIsReadOnly:
 # ---------------------------------------------------------------------------
 # Cross-modal binding development
 # ---------------------------------------------------------------------------
+
 
 class TestCrossModalBinding:
     def test_both_modalities_classified(self, network, probe):
@@ -283,15 +292,20 @@ class TestCrossModalBinding:
         inputs.weights = csr_matrix(w)
         metrics = probe.probe(inputs)
         # If v2a > 0 and a2v = 0, binding_strength should equal v2a
-        if metrics.binding_strength_visual_to_auditory > 0 and metrics.binding_strength_auditory_to_visual == 0.0:
+        if (
+            metrics.binding_strength_visual_to_auditory > 0
+            and metrics.binding_strength_auditory_to_visual == 0.0
+        ):
             assert metrics.binding_strength == pytest.approx(
-                metrics.binding_strength_visual_to_auditory, abs=1e-4,
+                metrics.binding_strength_visual_to_auditory,
+                abs=1e-4,
             )
 
 
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     def test_json_serialisable(self, network, probe):
@@ -310,6 +324,7 @@ class TestEdgeCases:
 
     def test_probe_survives_zero_nnz(self, network, probe):
         from scipy.sparse import csr_matrix as csr
+
         sa = network.synapses["sensory_association"]
         n_post, n_pre = sa.weights.shape
         sa.weights = csr((n_post, n_pre), dtype=np.float32)
@@ -386,6 +401,7 @@ class TestEdgeCases:
 # Probe after state round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestProbeAfterStateRoundTrip:
     def test_probe_after_save_restore(self, config, probe):
         """Probe should work without error after get_state/set_state cycle.
@@ -424,6 +440,7 @@ class TestProbeAfterStateRoundTrip:
 # ---------------------------------------------------------------------------
 # Throttled probe in get_metrics
 # ---------------------------------------------------------------------------
+
 
 class TestThrottledProbe:
     def test_cross_modal_in_get_metrics(self, network):
