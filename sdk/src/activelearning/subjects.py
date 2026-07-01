@@ -15,6 +15,7 @@ class Subjects:
     PROPOSAL_NEW = "proposal.new"
     CODE_PROPOSAL = "code.proposal"
     KERNEL_STATUS = "kernel.status"
+    KERNEL_DECISION_RATES = "kernel.decision_rates"
     DECISION_PREFIX = "decision."
     CODE_DECISION_PREFIX = "code.decision."
 
