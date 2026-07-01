@@ -86,6 +86,7 @@ The neuromorphic encoding pipeline maps provenance strings to brain regions:
 | Provenance | Modality | Brain Region |
 |-----------|----------|-------------|
 | `sensor.camera`, `sensor.video`, `sensor.image` | visual | Sensory cortex 0-60% |
+| `sensor.depth`, `sensor.realsense` | visual | Sensory cortex (co-binds with RGB camera) |
 | `sensor.microphone`, `sensor.audio`, `sensor.voice` | auditory | Sensory cortex 60-100% |
 | `sensor.text`, `observation.text` | auditory | (text as character ordinals) |
 | `sensor.touch`, `sensor.pressure`, `sensor.tactile` | tactile | Sensory cortex (when active) |
@@ -111,6 +112,60 @@ The `data` field can be:
 - **Nested dict** — looks for `features`, `data`, `values`, or `vector` keys
 
 Queue: max 100 observations buffered, silently drops when full (100ms timeout).
+
+## Depth Camera
+
+The `DepthCameraSensor` captures per-pixel depth maps and publishes them alongside the RGB camera stream for cross-modal binding (Invariant 4).
+
+### Backends
+
+| Backend | Class | Dependency |
+|---------|-------|-----------|
+| Intel RealSense D400 series | `RealSenseDriver` | `pip install pyrealsense2` |
+| Generic OpenCV depth camera | `OpenCVDepthDriver` | `opencv-python` (already installed) |
+| Offline / tests | `NullDepthDriver` | none |
+
+### Usage
+
+```python
+# Intel RealSense
+from sensors.depth_camera import DepthCameraSensor, RealSenseDriver
+
+sensor = DepthCameraSensor(
+    driver=RealSenseDriver(serial=""),  # empty = first available device
+    sensor_id="depth.realsense.0",
+    fps=5.0,
+    max_depth_m=5.0,  # clip depth beyond 5 m before normalising
+)
+await sensor.start(bus)
+```
+
+```python
+# Generic OpenCV depth camera (device index 1)
+from sensors.depth_camera import DepthCameraSensor, OpenCVDepthDriver
+
+sensor = DepthCameraSensor(
+    driver=OpenCVDepthDriver(device_index=1, depth_scale=1000.0),
+)
+await sensor.start(bus)
+```
+
+### Output format
+
+Each observation is a flat list of **4096 floats** (64×64, normalised [0, 1]):
+- `0.0` = missing / invalid depth (or closer than sensor minimum)
+- `1.0` = `max_depth_m` metres or beyond (default 5 m)
+
+Published as `observation.depth.<sensor_id>` with provenance `sensor.depth`.
+The encoding pipeline routes `sensor.depth` to the **visual** modality so depth
+activity temporally correlates with RGB camera spikes in the sensory cortex,
+enabling cross-modal binding across depth, visual, and audio streams.
+
+### Time-alignment with RGB camera
+
+Run both `CameraSensor` and `DepthCameraSensor` at the same `fps` (default 5 Hz).
+The STDP-based binding in the association cortex correlates the two streams
+automatically — no explicit synchronisation is required.
 
 ## Writing a New Sensor
 
