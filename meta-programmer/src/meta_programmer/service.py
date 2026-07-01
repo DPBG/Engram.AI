@@ -6,6 +6,9 @@ tests in isolated sandboxes, and deploys after Kernel approval.
 """
 
 import asyncio
+import os
+import time
+from typing import Any
 import json
 import math
 import os
@@ -15,11 +18,12 @@ from activelearning import BaseService, current_timestamp, generate_trace_id
 from activelearning.nats_client import serialize_message
 from nats.aio.msg import Msg
 
+from meta_programmer.agents import MetaProgrammerTeam
 from meta_programmer.approval_consumer import ApprovalConsumer
+from meta_programmer.capability_flags import check_m1_or_deny
+from meta_programmer.safety import deploy_atomically, safe_deploy_path, scan_source
 from meta_programmer.sandbox_manager import SandboxManager
 from meta_programmer.staging import StagingManager
-from meta_programmer.agents import MetaProgrammerTeam
-from meta_programmer.safety import scan_source, safe_deploy_path, deploy_atomically
 
 
 class MetaProgrammerService(BaseService):
@@ -45,13 +49,13 @@ class MetaProgrammerService(BaseService):
         # Components
         self._sandbox_manager = SandboxManager()
         self._staging_manager = StagingManager(self.staging_root)
-        self._team: Optional[MetaProgrammerTeam] = None
-        self._approval_consumer: Optional[ApprovalConsumer] = None
+        self._team: MetaProgrammerTeam | None = None
+        self._approval_consumer: ApprovalConsumer | None = None
 
         # A deferred (human-review) proposal that no one answers is failed
         # closed after this TTL (Phase 1.9), rather than lingering forever.
         self.defer_ttl_ms = int(os.environ.get("DEFER_TTL_MS", "300000"))  # 5 min
-        self._sweep_task: Optional[asyncio.Task] = None
+        self._sweep_task: asyncio.Task | None = None
 
         # Post-deploy health probe timeout (E1.9.2); 0 disables the probe.
         # Reject nan/inf/negative — any of these would silently disable or
@@ -66,6 +70,7 @@ class MetaProgrammerService(BaseService):
 
         # Metrics
         self._gaps_processed = 0
+        self._gaps_m1_blocked = 0  # gaps refused by the M1 prerequisite gate
         self._code_generated = 0
         self._tests_passed = 0
         self._tests_failed = 0
@@ -141,9 +146,13 @@ class MetaProgrammerService(BaseService):
         expired = self._staging_manager.expired_reviews(now_ms, self.defer_ttl_ms)
         for trace_id in expired:
             self.logger.warning(f"DEFER expired (no human approval) — denying: {trace_id}")
-            self._staging_manager.stage_rejected(trace_id, "DEFER expired — no human approval (fail-closed)")
+            self._staging_manager.stage_rejected(
+                trace_id, "DEFER expired — no human approval (fail-closed)"
+            )
             self._reviews_expired += 1
-            await self._publish_gap_result(trace_id, False, "DEFER expired — no human approval (fail-closed)")
+            await self._publish_gap_result(
+                trace_id, False, "DEFER expired — no human approval (fail-closed)"
+            )
         return len(expired)
 
     async def _handle_knowledge_gap(self, data: dict[str, Any]) -> None:
@@ -158,8 +167,16 @@ class MetaProgrammerService(BaseService):
         5. If tests pass: deploy
         6. If DENY/DEFER: notify and halt
         """
+        # M1 prerequisite gate — runs before try so a check failure cannot be
+        # silently caught and down-graded to a soft error (CLAUDE.md §3: fail-closed).
+        trace_id = data.get("trace_id", "")
+        m1_ok, m1_reason = check_m1_or_deny()
+        if not m1_ok:
+            self._gaps_m1_blocked += 1
+            self.logger.warning("Blocking knowledge.gap %s: %s", trace_id, m1_reason)
+            await self._publish_gap_result(trace_id, False, m1_reason, fail_closed=True)
+            return
         try:
-            trace_id = data.get("trace_id", "")
             description = data.get("description", "")
             context = data.get("context", {})
 
@@ -246,7 +263,9 @@ class MetaProgrammerService(BaseService):
             # Run tests in sandbox
             test_result = await self._sandbox_manager.run_tests(
                 code_path=staged_path,
-                test_path=os.path.join(os.path.dirname(staged_path), "tests.py") if test_content else None,
+                test_path=(
+                    os.path.join(os.path.dirname(staged_path), "tests.py") if test_content else None
+                ),
             )
 
             # Fail closed: if containment itself could not run (no Docker daemon,
@@ -276,26 +295,34 @@ class MetaProgrammerService(BaseService):
                 # If this was a device discovery gap, notify the gateway
                 # so it can hot-load the new plugin.
                 if context.get("source") == "gateway_device_discovery":
-                    await self.event_bus.publish("device.driver.ready", {
-                        "trace_id": trace_id,
-                        "target_path": target_path,
-                        "device_id": context.get("device_id", ""),
-                        "plugin_type": context.get("plugin_type", "sensor"),
-                        "init_kwargs": context.get("metadata", {}),
-                    })
+                    await self.event_bus.publish(
+                        "device.driver.ready",
+                        {
+                            "trace_id": trace_id,
+                            "target_path": target_path,
+                            "device_id": context.get("device_id", ""),
+                            "plugin_type": context.get("plugin_type", "sensor"),
+                            "init_kwargs": context.get("metadata", {}),
+                        },
+                    )
 
-                await self._publish_gap_result(trace_id, True, "Code generated, tested, and deployed")
+                await self._publish_gap_result(
+                    trace_id, True, "Code generated, tested, and deployed"
+                )
 
             else:
                 self.logger.error(f"Tests failed: {test_result['error']}")
                 self._tests_failed += 1
-                self._staging_manager.stage_rejected(trace_id, f"Tests failed: {test_result['error']}")
-                await self._publish_gap_result(trace_id, False, f"Tests failed: {test_result['error']}")
+                self._staging_manager.stage_rejected(
+                    trace_id, f"Tests failed: {test_result['error']}"
+                )
+                await self._publish_gap_result(
+                    trace_id, False, f"Tests failed: {test_result['error']}"
+                )
 
         except Exception as e:
             self.logger.error(f"Error handling knowledge gap: {e}", exc_info=True)
-            if 'trace_id' in locals():
-                await self._publish_gap_result(trace_id, False, str(e))
+            await self._publish_gap_result(trace_id, False, str(e))
 
     async def _request_kernel_approval(
         self,
@@ -342,7 +369,7 @@ class MetaProgrammerService(BaseService):
                 trace_id, timeout=timeout, code=code,
             )
             return decision
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.error(f"Timeout waiting for decision: {trace_id}")
             return {"type": "DENY", "reason": "Decision timeout"}
 
@@ -394,6 +421,8 @@ class MetaProgrammerService(BaseService):
             self.logger.info(f"Deployed code to: {target_path}")
 
             # Log deployment
+            import uuid
+
             await self.database.insert(
                 "deployments",
                 {
@@ -442,6 +471,7 @@ class MetaProgrammerService(BaseService):
                 "status": "running",
                 "metrics": {
                     "gaps_processed": self._gaps_processed,
+                    "gaps_m1_blocked": self._gaps_m1_blocked,
                     "code_generated": self._code_generated,
                     "tests_passed": self._tests_passed + (ac.tests_passed if ac else 0),
                     "tests_failed": self._tests_failed + (ac.tests_failed if ac else 0),

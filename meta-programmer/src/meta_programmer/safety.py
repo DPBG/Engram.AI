@@ -23,14 +23,13 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Optional
 
 # Roots a generated artifact is allowed to be written into.
 DEFAULT_ALLOWLIST = ("/data/plugins", "/data/tasks", "/data/adapters", "/data/staging")
 
 # Modules that are dangerous to import/call. value=None → any attribute is flagged;
 # value=set → only those attributes are flagged.
-_DANGEROUS_MODULES: dict[str, Optional[set[str]]] = {
+_DANGEROUS_MODULES: dict[str, set[str] | None] = {
     "subprocess": None,
     "socket": None,
     "ctypes": None,
@@ -38,29 +37,56 @@ _DANGEROUS_MODULES: dict[str, Optional[set[str]]] = {
     "marshal": None,
     "importlib": None,
     "pty": None,
-    "os": {"system", "popen", "execv", "execve", "execvp", "execvpe", "spawnl",
-           "spawnv", "spawnve", "remove", "unlink", "rmdir", "fork"},
+    "os": {
+        "system",
+        "popen",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
+        "spawnl",
+        "spawnv",
+        "spawnve",
+        "remove",
+        "unlink",
+        "rmdir",
+        "fork",
+    },
     "shutil": {"rmtree"},
 }
 # Builtins that execute arbitrary code / strings.
 _DANGEROUS_BUILTINS = {"eval", "exec", "compile", "__import__"}
 _REFLECTION_BUILTINS = {"getattr", "setattr", "delattr"}
 # Dunder attributes used for sandbox escapes.
-_DUNDER_ATTRS = {"__globals__", "__builtins__", "__subclasses__", "__bases__",
-                 "__mro__", "__code__", "__class__", "__dict__", "__loader__"}
+_DUNDER_ATTRS = {
+    "__globals__",
+    "__builtins__",
+    "__subclasses__",
+    "__bases__",
+    "__mro__",
+    "__code__",
+    "__class__",
+    "__dict__",
+    "__loader__",
+}
 # Substrings that mean the code touches the safety/meta machinery itself.
-_SELF_REF = ("kernel", "safety_supervisor", "safety-supervisor",
-             "meta_programmer", "meta-programmer")
+_SELF_REF = (
+    "kernel",
+    "safety_supervisor",
+    "safety-supervisor",
+    "meta_programmer",
+    "meta-programmer",
+)
 
 
 @dataclass(frozen=True)
 class Finding:
-    severity: str   # "high" | "medium"
+    severity: str  # "high" | "medium"
     rule: str
     detail: str
 
 
-def _allowlist_roots(allowlist: Optional[list[str]] = None) -> list[str]:
+def _allowlist_roots(allowlist: list[str] | None = None) -> list[str]:
     if allowlist:
         roots = list(allowlist)
     else:
@@ -69,7 +95,7 @@ def _allowlist_roots(allowlist: Optional[list[str]] = None) -> list[str]:
     return [os.path.realpath(r) for r in roots]
 
 
-def safe_deploy_path(target_path: str, allowlist: Optional[list[str]] = None) -> tuple[bool, str]:
+def safe_deploy_path(target_path: str, allowlist: list[str] | None = None) -> tuple[bool, str]:
     """Validate a deploy target path.
 
     Returns ``(ok, resolved_path_or_reason)``. The path is accepted only if,
@@ -126,10 +152,14 @@ def scan_source(code: str) -> list[Finding]:
                                             f"{dangerous_local_names[fn.id]}()"))
                 elif fn.id in _REFLECTION_BUILTINS:
                     for arg in node.args:
-                        if (isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-                                and arg.value.startswith("__")):
-                            findings.append(Finding("high", "dynamic_attr",
-                                                    f"{fn.id}(..., {arg.value!r})"))
+                        if (
+                            isinstance(arg, ast.Constant)
+                            and isinstance(arg.value, str)
+                            and arg.value.startswith("__")
+                        ):
+                            findings.append(
+                                Finding("high", "dynamic_attr", f"{fn.id}(..., {arg.value!r})")
+                            )
             elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
                 mod, attr = fn.value.id, fn.attr
                 allowed = _DANGEROUS_MODULES.get(mod, "MISS")
@@ -224,7 +254,7 @@ def deploy_atomically(target_path: str, code: str, validate_syntax: bool = True,
     this only governs the write itself.
     """
     existed = os.path.exists(target_path)
-    prior: Optional[bytes] = None
+    prior: bytes | None = None
     if existed:
         try:
             with open(target_path, "rb") as f:

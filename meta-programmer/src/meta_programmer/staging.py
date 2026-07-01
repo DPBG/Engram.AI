@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from typing import Optional
 
 from activelearning import current_timestamp
@@ -64,7 +65,7 @@ class StagingManager:
         trace_id: str,
         target_path: str,
         code: str,
-        tests: Optional[str] = None,
+        tests: str | None = None,
     ) -> str:
         """
         Stage code in pending directory.
@@ -142,7 +143,7 @@ class StagingManager:
             # Update metadata
             metadata_path = os.path.join(dest_dir, "metadata.json")
             if os.path.exists(metadata_path):
-                with open(metadata_path, "r") as f:
+                with open(metadata_path) as f:
                     metadata = json.load(f)
                 metadata["stage"] = "rejected"
                 metadata["rejection_reason"] = reason
@@ -169,7 +170,7 @@ class StagingManager:
             # Update metadata
             metadata_path = os.path.join(dest, "metadata.json")
             if os.path.exists(metadata_path):
-                with open(metadata_path, "r") as f:
+                with open(metadata_path) as f:
                     metadata = json.load(f)
                 metadata["stage"] = stage_name
                 with open(metadata_path, "w") as f:
@@ -189,7 +190,7 @@ class StagingManager:
             metadata_path = os.path.join(self.human_review_dir, trace_id, "metadata.json")
             if os.path.exists(metadata_path):
                 try:
-                    with open(metadata_path, "r") as f:
+                    with open(metadata_path) as f:
                         items.append(json.load(f))
                 except (OSError, json.JSONDecodeError):
                     # A trace whose metadata can't be read is failed closed by
@@ -213,7 +214,7 @@ class StagingManager:
         """Move code from human_review to testing after human approval."""
         self._move_stage(trace_id, self.human_review_dir, self.testing_dir, "testing")
 
-    def get_metadata(self, trace_id: str) -> Optional[dict]:
+    def get_metadata(self, trace_id: str) -> dict | None:
         """Get metadata for a trace_id (searches all stages)."""
         for stage_dir in [
             self.pending_dir,
@@ -224,6 +225,6 @@ class StagingManager:
         ]:
             metadata_path = os.path.join(stage_dir, trace_id, "metadata.json")
             if os.path.exists(metadata_path):
-                with open(metadata_path, "r") as f:
+                with open(metadata_path) as f:
                     return json.load(f)
         return None

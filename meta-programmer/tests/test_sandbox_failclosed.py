@@ -18,20 +18,20 @@ import types
 # ── fake `docker` SDK ────────────────────────────────────────────────────────
 
 
-class _ImageNotFound(Exception):
+class _ImageNotFoundError(Exception):
     pass
 
 
-class _DockerException(Exception):
+class _DockerError(Exception):
     pass
 
 
 def _install_fake_docker() -> types.ModuleType:
     docker = types.ModuleType("docker")
     errors = types.ModuleType("docker.errors")
-    errors.ImageNotFound = _ImageNotFound
-    errors.DockerException = _DockerException
-    errors.APIError = _DockerException
+    errors.ImageNotFound = _ImageNotFoundError
+    errors.DockerException = _DockerError
+    errors.APIError = _DockerError
     models = types.ModuleType("docker.models")
     containers = types.ModuleType("docker.models.containers")
 
@@ -82,7 +82,7 @@ class _FakeImages:
 
     def get(self, _image):
         if not self._found:
-            raise _ImageNotFound("no such image")
+            raise _ImageNotFoundError("no such image")
         return object()
 
 
@@ -107,7 +107,7 @@ class _FakeContainers:
 
     def run(self, **_kwargs):
         if self._spawn_error:
-            raise _DockerException("daemon refused spawn")
+            raise _DockerError("daemon refused spawn")
         return _FakeContainer(self._status_code)
 
 
@@ -119,7 +119,7 @@ class _FakeDockerClient:
 
     def ping(self):
         if not self._ping_ok:
-            raise _DockerException("daemon unreachable")
+            raise _DockerError("daemon unreachable")
         return True
 
 
@@ -238,6 +238,7 @@ def _build_service():
     svc = MetaProgrammerService.__new__(MetaProgrammerService)
     svc.logger = _Logger()
     svc._gaps_processed = 0
+    svc._gaps_m1_blocked = 0
     svc._code_generated = 0
     svc._tests_passed = 0
     svc._tests_failed = 0
@@ -250,7 +251,9 @@ def _build_service():
     return svc
 
 
-def test_unavailable_sandbox_blocks_deploy():
+def test_unavailable_sandbox_blocks_deploy(monkeypatch):
+    monkeypatch.setenv("ENGRAM_DECISION_BUS_SIGNING_ENABLED", "1")
+    monkeypatch.setenv("ENGRAM_SANDBOX_FAIL_CLOSED_ENABLED", "1")
     svc = _build_service()
 
     deployed = []

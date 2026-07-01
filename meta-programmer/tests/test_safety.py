@@ -7,9 +7,7 @@ import tempfile
 
 # Load safety.py directly (pure stdlib) so the test doesn't import the
 # meta_programmer package __init__, which pulls in the `docker` SDK.
-_SAFETY_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "meta_programmer", "safety.py"
-)
+_SAFETY_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "meta_programmer", "safety.py")
 _spec = importlib.util.spec_from_file_location("mp_safety", _SAFETY_PATH)
 _safety = importlib.util.module_from_spec(_spec)
 sys.modules["mp_safety"] = _safety  # needed so @dataclass can resolve annotations
@@ -21,6 +19,7 @@ deploy_atomically = _safety.deploy_atomically
 
 
 # ── full-source AST taint scan (1.5) ─────────────────────────────────────────
+
 
 def test_clean_code_passes():
     assert scan_source("def add(a, b):\n    return a + b\n") == []
@@ -95,6 +94,7 @@ def test_benign_os_path_is_not_high_severity():
 
 # ── deploy-path allowlist + traversal/symlink protection (1.4) ────────────────
 
+
 def test_path_inside_allowlist_accepted():
     with tempfile.TemporaryDirectory() as d:
         allowed = os.path.join(d, "plugins")
@@ -127,6 +127,7 @@ def test_empty_path_rejected():
 
 
 # ── atomic deploy with rollback (1.9) ─────────────────────────────────────────
+
 
 def test_deploy_new_valid_file():
     with tempfile.TemporaryDirectory() as d:
