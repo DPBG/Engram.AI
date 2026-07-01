@@ -20,19 +20,19 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-# Skip the whole module gracefully when numba is absent
-numba = pytest.importorskip("numba", reason="numba not installed — compiled kernel tests skipped")
-
-from neuromorphic.compiled_kernels import (  # noqa: E402
+import neuromorphic.compiled_kernels as _ck_mod
+from neuromorphic.compiled_kernels import (
     COMPILED_STDP_ENABLED,
     neuromod_decay_full,
     neuromod_decay_sparse,
     stdp_delta,
 )
 
-pytestmark = pytest.mark.skipif(
+# Applied at class level to tests that require the Numba path to be active.
+# The NumPy-fallback tests (TestNumPyFallbackKernels) carry no such mark.
+_COMPILED_ONLY = pytest.mark.skipif(
     not COMPILED_STDP_ENABLED,
-    reason="NEURO_COMPILED_STDP=0 — compiled kernels disabled, skipping equivalence tests",
+    reason="Numba not installed or NEURO_COMPILED_STDP=0 — compiled kernel tests skipped",
 )
 
 _RNG = np.random.default_rng(0)
@@ -41,6 +41,7 @@ _RNG = np.random.default_rng(0)
 # ── stdp_delta equivalence ─────────────────────────────────────────────────
 
 
+@_COMPILED_ONLY
 class TestCompiledStdpDelta:
     """Compiled stdp_delta output must match NumPy to float32 tolerance."""
 
@@ -103,6 +104,7 @@ class TestCompiledStdpDelta:
 # ── neuromod_decay_sparse equivalence ─────────────────────────────────────
 
 
+@_COMPILED_ONLY
 class TestCompiledNeuromodDecaySparse:
     """Compiled neuromod_decay_sparse must match NumPy to float32 tolerance."""
 
@@ -191,6 +193,7 @@ class TestCompiledNeuromodDecaySparse:
 # ── neuromod_decay_full equivalence ───────────────────────────────────────
 
 
+@_COMPILED_ONLY
 class TestCompiledNeuromodDecayFull:
     """Compiled neuromod_decay_full must match NumPy to float32 tolerance."""
 
@@ -248,6 +251,7 @@ class TestCompiledNeuromodDecayFull:
 # ── End-to-end SynapseGroup integration ───────────────────────────────────
 
 
+@_COMPILED_ONLY
 class TestEndToEndCompiledEquivalence:
     """SynapseGroup.apply_neuromodulation_and_decay compiled == NumPy.
 
@@ -281,8 +285,6 @@ class TestEndToEndCompiledEquivalence:
         Runs the batched compiled path and the per-step NumPy path on
         identical initial state, then asserts weight-change agreement.
         """
-        import neuromorphic.synapses as syn_mod
-
         sg_c = self._make_sg()
         sg_np = self._make_sg()
 
@@ -295,13 +297,12 @@ class TestEndToEndCompiledEquivalence:
         sg_c.apply_neuromodulation_and_decay(0.5, interval=interval)
         dw_compiled = sg_c.weights.data - w_before
 
-        # ── NumPy path (per-step) ── force by disabling compiled flag in the module
-        monkeypatch.setattr(syn_mod, "COMPILED_STDP_ENABLED", False)
+        # ── NumPy path (per-step) ── patch compiled_kernels so dispatch falls back
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
         w_before = sg_np.weights.data.copy()
         for _ in range(interval):
             sg_np.apply_neuromodulation_and_decay(0.5, interval=1)
         dw_numpy = sg_np.weights.data - w_before
-        monkeypatch.setattr(syn_mod, "COMPILED_STDP_ENABLED", True)
 
         np.testing.assert_allclose(
             dw_compiled,
@@ -316,7 +317,6 @@ class TestEndToEndCompiledEquivalence:
 
     def test_stdp_update_compiled_matches_numpy(self, monkeypatch):
         """STDP delta from compiled kernel matches NumPy for non-BCM synapse groups."""
-        import neuromorphic.synapses as syn_mod
         from neuromorphic.config import EligibilityTraceConfig
         from neuromorphic.synapses import SynapseGroup
 
@@ -337,11 +337,10 @@ class TestEndToEndCompiledEquivalence:
         sg_c.update_weights_stdp(pre_sp, post_sp, pre_t, post_t, current_time=3.0)
         elig_compiled = sg_c.eligibility.copy()
 
-        monkeypatch.setattr(syn_mod, "COMPILED_STDP_ENABLED", False)
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
         sg_np = make()
         sg_np.update_weights_stdp(pre_sp, post_sp, pre_t, post_t, current_time=3.0)
         elig_numpy = sg_np.eligibility.copy()
-        monkeypatch.setattr(syn_mod, "COMPILED_STDP_ENABLED", True)
 
         np.testing.assert_allclose(
             elig_compiled,
@@ -350,3 +349,58 @@ class TestEndToEndCompiledEquivalence:
             atol=1e-7,
             err_msg="STDP eligibility trace mismatch: compiled vs NumPy",
         )
+
+
+# ── NumPy fallback coverage ────────────────────────────────────────────────
+# These tests carry no skip mark — they run regardless of Numba availability
+# and explicitly force the NumPy path by patching compiled_kernels directly.
+
+
+class TestNumPyFallbackKernels:
+    """Public API of compiled_kernels.py exercises its NumPy fallback correctly.
+
+    Patches _ck_mod.COMPILED_STDP_ENABLED = False so the dispatch inside each
+    public function takes the NumPy branch regardless of Numba presence.
+    """
+
+    def test_stdp_delta_fallback_sign_conventions(self, monkeypatch):
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
+        dt = np.array([-10.0, 0.0, 10.0], dtype=np.float32)
+        dw = stdp_delta(dt, 0.012, 20.0, 0.010, 20.0)
+        assert dw[0] < 0.0, "LTD should be negative"
+        assert dw[1] >= 0.0, "dt=0 should be non-negative (LTP boundary)"
+        assert dw[2] > 0.0, "LTP should be positive"
+
+    def test_stdp_delta_fallback_values(self, monkeypatch):
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
+        dt = np.array([10.0], dtype=np.float32)
+        dw = stdp_delta(dt, 0.012, 20.0, 0.010, 20.0)
+        expected = np.float32(0.012) * np.exp(np.float32(-10.0 / 20.0))
+        np.testing.assert_allclose(dw[0], expected, rtol=1e-5)
+
+    def test_neuromod_decay_sparse_fallback(self, monkeypatch):
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
+        elig = np.array([0.05, -0.03, 0.0], dtype=np.float32)
+        data = np.array([0.5, 0.6, 0.7], dtype=np.float32)
+        idx = np.array([0, 1], dtype=np.int32)
+        alive = neuromod_decay_sparse(
+            elig, data, idx, 1.0, 1.0, np.float32(0.999),
+            np.float32(0.01), np.float32(1.0), np.float32(1e-6),
+        )
+        assert alive.dtype == bool
+        assert len(alive) == 2
+        # large traces survive decay
+        assert alive[0] and alive[1]
+        # weights should have shifted
+        assert data[0] != 0.5
+
+    def test_neuromod_decay_full_fallback(self, monkeypatch):
+        monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
+        elig = np.array([0.05, -0.03], dtype=np.float32)
+        data = np.array([0.5, 0.6], dtype=np.float32)
+        data_before = data.copy()
+        neuromod_decay_full(elig, data, 1.0, 1.0, np.float32(0.999),
+                            np.float32(0.01), np.float32(1.0))
+        assert not np.array_equal(data, data_before), "weights must change"
+        assert data.min() >= 0.01 - 1e-6
+        assert data.max() <= 1.0 + 1e-6
