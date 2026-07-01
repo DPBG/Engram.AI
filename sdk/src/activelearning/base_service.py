@@ -90,6 +90,7 @@ class BaseService:
             self.event_bus = EventBus(
                 nats_url=self.config.nats_url,
                 name=self.service_name,
+                nats_creds=self.config.nats_creds,
             )
             await self.event_bus.connect()
             self.logger.info("Connected to NATS")

@@ -9,10 +9,10 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
-import time
-import uuid
 
 import networkx as nx
+
+from activelearning import current_timestamp, generate_trace_id
 
 if TYPE_CHECKING:
     from beliefs.profiles import BodyProfile
@@ -50,8 +50,8 @@ class BeliefNode:
     confidence: float = 1.0
     source: str = "unknown"
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: int = field(default_factory=lambda: int(time.time() * 1000))
-    updated_at: int = field(default_factory=lambda: int(time.time() * 1000))
+    created_at: int = field(default_factory=current_timestamp)
+    updated_at: int = field(default_factory=current_timestamp)
 
 
 @dataclass
@@ -63,7 +63,7 @@ class BeliefEdge:
     target_id: str
     strength: float = 1.0
     evidence: Optional[str] = None
-    created_at: int = field(default_factory=lambda: int(time.time() * 1000))
+    created_at: int = field(default_factory=current_timestamp)
 
 
 @dataclass
@@ -112,7 +112,7 @@ class BeliefGraph:
             Node ID
         """
         if not node.id:
-            node.id = str(uuid.uuid4())
+            node.id = generate_trace_id()
 
         # Enforce the VALUE floor at the single chokepoint every write goes
         # through (NATS add_node, DB load, seeding). NetworkX add_node overwrites
@@ -151,7 +151,7 @@ class BeliefGraph:
             Edge ID
         """
         if not edge.id:
-            edge.id = str(uuid.uuid4())
+            edge.id = generate_trace_id()
 
         if edge.source_id not in self._graph:
             raise ValueError(f"Source node not found: {edge.source_id}")
@@ -234,7 +234,7 @@ class BeliefGraph:
 
         # Update node
         self._graph.nodes[node_id]["confidence"] = new_confidence
-        self._graph.nodes[node_id]["updated_at"] = int(time.time() * 1000)
+        self._graph.nodes[node_id]["updated_at"] = current_timestamp()
 
         # Record update
         update = BeliefUpdate(

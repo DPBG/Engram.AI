@@ -8,11 +8,12 @@ Integrates:
 """
 
 import asyncio
-import uuid
 from typing import Optional
 
-from activelearning import BaseService, get_embedding_service
+from activelearning import BaseService, generate_trace_id, get_embedding_service
+from activelearning.nats_client import serialize_message
 from activelearning.subjects import Subjects
+from nats.aio.msg import Msg
 
 from coordinator.sensor_manager import SensorManager
 from coordinator.learning_controller import LearningController
@@ -33,12 +34,13 @@ class CoordinatorService(BaseService):
 
         self.tasks_root = self.config.tasks_root
         self.qdrant_url = self.config.qdrant_url
-        self.ollama_url = self.config.ollama_url
 
         # Components
         self._sensor_manager: Optional[SensorManager] = None
         self._learning_controller: Optional[LearningController] = None
         self._task_coordinator: Optional[TaskCoordinator] = None
+        # One shared embedding client per service, injected into the task
+        # coordinator and closed on shutdown.
         self._embedding_service = get_embedding_service()
 
     async def _setup(self) -> None:
@@ -58,10 +60,10 @@ class CoordinatorService(BaseService):
         self._task_coordinator = TaskCoordinator(
             nats_client=self.event_bus._nc,
             qdrant_url=self.qdrant_url,
-            ollama_url=self.ollama_url,
             tasks_root=self.tasks_root,
             embedding_service=self._embedding_service,
         )
+        await self._task_coordinator.setup()
 
         # Track devices already forwarded to meta-programmer (prevent flooding)
         self._pending_device_gaps: set[str] = set()
@@ -71,13 +73,17 @@ class CoordinatorService(BaseService):
         await self.event_bus.subscribe("demo.start", self._handle_demo_start)
         await self.event_bus.subscribe("demo.observation", self._handle_observation)
         await self.event_bus.subscribe("demo.finish", self._handle_demo_finish)
-        await self.event_bus.subscribe(Subjects.COORDINATOR_STATUS, self._handle_status)
+        await self.event_bus.subscribe(
+            Subjects.COORDINATOR_STATUS, self._handle_status, is_request_handler=True,
+        )
         await self.event_bus.subscribe("device.unknown", self._handle_unknown_device)
 
         self.logger.info("Coordinator setup completed")
 
     async def _cleanup(self) -> None:
         """Cleanup service-specific resources."""
+        if self._task_coordinator:
+            await self._task_coordinator.close()
         await self._embedding_service.close()
 
     async def _handle_task_request(self, data: dict) -> None:
@@ -160,7 +166,16 @@ class CoordinatorService(BaseService):
                 })
 
         except Exception as e:
+            # Surface failures (e.g. the embedding service being down) to the
+            # requester instead of leaving the request unanswered.
             self.logger.error(f"Error handling task request: {e}", exc_info=True)
+            await self.event_bus.publish(Subjects.TASK_RESULT, {
+                "success": False,
+                "error": str(e),
+                # Echo the query so consumers can correlate the failure (no
+                # task_id/trace_id exists yet when find_task itself fails).
+                "query": query,
+            })
 
     async def _request_execution_approval(
         self,
@@ -173,7 +188,7 @@ class CoordinatorService(BaseService):
         reply. A timeout (or any error) yields a synthetic DENY so the caller
         declines to execute.
         """
-        trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
         proposal = build_execution_proposal(trace_id, task_id, parameters)
         try:
             await self.event_bus.publish(Subjects.PROPOSAL_NEW, proposal)
@@ -294,26 +309,22 @@ class CoordinatorService(BaseService):
             # Allow re-discovery if device is unplugged and re-plugged.
             self._pending_device_gaps.discard(device_id)
 
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status request."""
-        try:
-            status = {
-                "status": "running",
-                "sensors": {
-                    "available": self._sensor_manager.get_sensor_ids(),
-                    "active": [s.sensor_id for s in self._sensor_manager.get_active_sensors()],
-                    "learning_mode": self._sensor_manager.get_learning_mode(),
-                },
-                "learning": {
-                    "active": self._learning_controller.is_learning(),
-                    "phase": self._learning_controller.get_current_phase().value,
-                },
-            }
-
-            await self.event_bus.publish("coordinator.status.result", status)
-
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = {
+            "status": "running",
+            "sensors": {
+                "available": self._sensor_manager.get_sensor_ids(),
+                "active": [s.sensor_id for s in self._sensor_manager.get_active_sensors()],
+                "learning_mode": self._sensor_manager.get_learning_mode(),
+            },
+            "learning": {
+                "active": self._learning_controller.is_learning(),
+                "phase": self._learning_controller.get_current_phase().value,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
 
 async def main() -> None:

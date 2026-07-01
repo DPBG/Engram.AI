@@ -43,6 +43,30 @@ def test_subprocess_call_flagged():
     assert is_dangerous("import subprocess\nsubprocess.run(['ls'])")
 
 
+def test_from_import_sink_call_flagged():
+    # `from os import system; system(...)` is exactly as dangerous as
+    # `os.system(...)` and must not bypass the attribute-form call check.
+    assert is_dangerous("from os import system\nsystem('rm -rf /')")
+    assert is_dangerous("from subprocess import run\nrun(['ls'])")
+    assert is_dangerous("from os import popen\npopen('id')")
+
+
+def test_from_import_sink_aliased_call_flagged():
+    assert is_dangerous("from os import system as s\ns('rm -rf /')")
+    assert is_dangerous("from subprocess import Popen as P\nP(['ls'])")
+
+
+def test_star_import_of_dangerous_module_flagged():
+    assert is_dangerous("from os import *\nsystem('id')")
+    assert is_dangerous("from subprocess import *")
+
+
+def test_from_import_benign_name_not_flagged_until_called():
+    # `from os import getcwd` is a benign sink-free name; importing it (medium at
+    # most) must not be high-severity on its own.
+    assert is_dangerous("from os import getcwd\np = getcwd()") is False
+
+
 def test_socket_import_flagged():
     assert is_dangerous("import socket\ns = socket.socket()")
 

@@ -22,9 +22,12 @@ class Subjects:
     # Policy
     POLICY_LOAD_PROFILE = "policy.load_profile"
     POLICY_RESTRICT = "policy.restrict"
+    POLICY_RESTRICT_REQUEST = "policy.restrict.request"
     POLICY_ROLLBACK = "policy.rollback"
     POLICY_UPDATE = "policy.update"
     COGNITIVE_RESPONSE_VALIDATE = "cognitive.response.validate"
+    COGNITIVE_EXECUTE = "cognitive.execute"
+    COGNITIVE_QUERY = "cognitive.query"
 
     # Safety
     SAFETY_ANALYZE_ACTION = "safety.analyze.action"
@@ -66,6 +69,9 @@ class Subjects:
 
     # Meta-programmer / learning
     KNOWLEDGE_GAP = "knowledge.gap"
+
+    # Kernel watchdog (E1.9.3)
+    KERNEL_HEARTBEAT = "kernel.heartbeat"
 
 
 def decision_subject(trace_id: str) -> str:

@@ -65,19 +65,22 @@ def _import_submodule(package_name: str, module_name: str):
     return mod
 
 
+# beliefs.graph and kernel.evaluator both import names from activelearning, so
+# expose activelearning.core first. Import it directly to avoid the full
+# activelearning __init__ that pulls in aiohttp.
+_al_core = _import_submodule("activelearning", "core")
+sys.modules.setdefault("activelearning", types.ModuleType("activelearning"))
+# Patch the names those modules need from activelearning
+_al_ns = sys.modules["activelearning"]
+_al_ns.KernelDecisionType = _al_core.KernelDecisionType
+_al_ns.RiskAnalysis = _al_core.RiskAnalysis
+_al_ns.current_timestamp = _al_core.current_timestamp
+_al_ns.generate_trace_id = _al_core.generate_trace_id
+
 # Pre-import the two modules we need, bypassing __init__.py
 _beliefs_graph = _import_submodule("beliefs", "graph")
 BeliefGraph = _beliefs_graph.BeliefGraph
 NodeType = _beliefs_graph.NodeType
-
-# For kernel.evaluator we also need activelearning.core (KernelDecisionType, RiskAnalysis).
-# Import it directly to avoid the full activelearning __init__ that pulls in aiohttp.
-_al_core = _import_submodule("activelearning", "core")
-sys.modules.setdefault("activelearning", types.ModuleType("activelearning"))
-# Patch the minimal names kernel.evaluator needs from activelearning
-_al_ns = sys.modules["activelearning"]
-_al_ns.KernelDecisionType = _al_core.KernelDecisionType
-_al_ns.RiskAnalysis = _al_core.RiskAnalysis
 
 _kernel_evaluator = _import_submodule("kernel", "evaluator")
 KernelEvaluator = _kernel_evaluator.KernelEvaluator
