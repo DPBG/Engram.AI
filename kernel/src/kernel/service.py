@@ -241,20 +241,6 @@ class KernelService(BaseService):
             await self.event_bus.publish(
                 Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason}
             )
-            await self.event_bus.publish(
-                Subjects.POLICY_RESTRICT,
-                {
-                    "motor_limits": {
-                        ch: {"max_intensity": 0.0}
-                        for ch in ("locomotion", "manipulation", "head", "speech")
-                    },
-                    "reason": f"SAFE_HALT: {reason}",
-                    "operator_id": operator,
-                },
-            )
-            await self.event_bus.publish(
-                Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason}
-            )
             restrict_data = {
                 "motor_limits": {
                     ch: {"max_intensity": 0.0}
