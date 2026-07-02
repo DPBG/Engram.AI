@@ -409,7 +409,6 @@ class EventBus:
                 data = validate_payload(subject, data, wire_model)
                 await handler(data)
                 await msg.ack()
-                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
             except MessageValidationError as e:
                 logger.error("Poisoning unprocessable message on %s: %s", subject, e)
                 await self._route_to_poison(subject, msg, f"validation_error: {e}")

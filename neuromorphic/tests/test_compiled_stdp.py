@@ -54,10 +54,14 @@ class TestCompiledStdpDelta:
         dw = np.empty(len(dt), dtype=np.float32)
         ltp = dt >= 0.0
         if ltp.any():
-            dw[ltp] = np.float32(self._A_PLUS) * np.exp(-dt[ltp] / self._TAU_PLUS).astype(np.float32)
+            dw[ltp] = np.float32(self._A_PLUS) * np.exp(-dt[ltp] / self._TAU_PLUS).astype(
+                np.float32
+            )
         ltd = ~ltp
         if ltd.any():
-            dw[ltd] = np.float32(-self._A_MINUS) * np.exp(dt[ltd] / self._TAU_MINUS).astype(np.float32)
+            dw[ltd] = np.float32(-self._A_MINUS) * np.exp(dt[ltd] / self._TAU_MINUS).astype(
+                np.float32
+            )
         return dw
 
     @pytest.mark.parametrize("n", [1, 100, 10_000])
@@ -137,7 +141,7 @@ class TestCompiledNeuromodDecaySparse:
         if mask is not None:
             dw *= mask[idx]
         data[idx] = np.clip(data[idx] + dw, self._W_MIN, self._W_MAX)
-        decay_total = np.float32(d_per_step ** interval)
+        decay_total = np.float32(d_per_step**interval)
         elig_slice *= decay_total
         elig[idx] = elig_slice
         return np.abs(elig_slice) > self._PRUNE_THR
@@ -153,16 +157,34 @@ class TestCompiledNeuromodDecaySparse:
 
         alive_ref = self._numpy_ref(elig_np, data_np, idx, modulator, interval, d)
         alive_c = neuromod_decay_sparse(
-            elig_c, data_c, idx, modulator, interval, d,
-            self._W_MIN, self._W_MAX, self._PRUNE_THR,
+            elig_c,
+            data_c,
+            idx,
+            modulator,
+            interval,
+            d,
+            self._W_MIN,
+            self._W_MAX,
+            self._PRUNE_THR,
         )
 
-        np.testing.assert_allclose(data_c[idx], data_np[idx], rtol=1e-5, atol=1e-7,
-                                   err_msg=f"weight mismatch (no mask, interval={interval})")
-        np.testing.assert_allclose(elig_c[idx], elig_np[idx], rtol=1e-5, atol=1e-7,
-                                   err_msg=f"eligibility mismatch (no mask, interval={interval})")
-        np.testing.assert_array_equal(alive_c, alive_ref,
-                                      err_msg=f"alive mask mismatch (interval={interval})")
+        np.testing.assert_allclose(
+            data_c[idx],
+            data_np[idx],
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg=f"weight mismatch (no mask, interval={interval})",
+        )
+        np.testing.assert_allclose(
+            elig_c[idx],
+            elig_np[idx],
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg=f"eligibility mismatch (no mask, interval={interval})",
+        )
+        np.testing.assert_array_equal(
+            alive_c, alive_ref, err_msg=f"alive mask mismatch (interval={interval})"
+        )
 
     @pytest.mark.parametrize("interval", [1, 3])
     def test_with_mask(self, interval):
@@ -176,24 +198,49 @@ class TestCompiledNeuromodDecaySparse:
 
         self._numpy_ref(elig_np, data_np, idx, modulator, interval, d, mask=mask)
         neuromod_decay_sparse(
-            elig_c, data_c, idx, modulator, interval, d,
-            self._W_MIN, self._W_MAX, self._PRUNE_THR, plasticity_mask=mask,
+            elig_c,
+            data_c,
+            idx,
+            modulator,
+            interval,
+            d,
+            self._W_MIN,
+            self._W_MAX,
+            self._PRUNE_THR,
+            plasticity_mask=mask,
         )
 
-        np.testing.assert_allclose(data_c[idx], data_np[idx], rtol=1e-5, atol=1e-7,
-                                   err_msg=f"weight mismatch (masked, interval={interval})")
-        np.testing.assert_allclose(elig_c[idx], elig_np[idx], rtol=1e-5, atol=1e-7,
-                                   err_msg=f"eligibility mismatch (masked, interval={interval})")
+        np.testing.assert_allclose(
+            data_c[idx],
+            data_np[idx],
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg=f"weight mismatch (masked, interval={interval})",
+        )
+        np.testing.assert_allclose(
+            elig_c[idx],
+            elig_np[idx],
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg=f"eligibility mismatch (masked, interval={interval})",
+        )
 
     def test_weight_clipping_enforced(self):
         """Compiled kernel must honour w_min / w_max the same as NumPy clip."""
-        elig = np.full(100, 1.0, dtype=np.float32)   # large traces → big dw
+        elig = np.full(100, 1.0, dtype=np.float32)  # large traces → big dw
         data = np.full(100, 0.95, dtype=np.float32)  # weights near w_max
         idx = np.arange(100, dtype=np.int32)
         # After update data would exceed w_max=1.0 without clipping
         neuromod_decay_sparse(
-            elig.copy(), data, idx, 5.0, 1, 0.999,
-            np.float32(0.01), np.float32(1.0), np.float32(1e-6),
+            elig.copy(),
+            data,
+            idx,
+            5.0,
+            1,
+            0.999,
+            np.float32(0.01),
+            np.float32(1.0),
+            np.float32(1e-6),
         )
         assert data.max() <= 1.0 + 1e-6, "w_max violated by compiled kernel"
         assert data.min() >= 0.01 - 1e-6, "w_min violated by compiled kernel"
@@ -230,12 +277,24 @@ class TestCompiledNeuromodDecayFull:
         data_np[:] = np.clip(data_np + dw, self._W_MIN, self._W_MAX)
         elig_np *= decay
 
-        neuromod_decay_full(elig_c, data_c, modulator, interval_gain, decay, self._W_MIN, self._W_MAX)
+        neuromod_decay_full(
+            elig_c, data_c, modulator, interval_gain, decay, self._W_MIN, self._W_MAX
+        )
 
-        np.testing.assert_allclose(data_c, data_np, rtol=1e-5, atol=1e-7,
-                                   err_msg=f"full-array weight mismatch (interval={interval})")
-        np.testing.assert_allclose(elig_c, elig_np, rtol=1e-5, atol=1e-7,
-                                   err_msg=f"full-array eligibility mismatch (interval={interval})")
+        np.testing.assert_allclose(
+            data_c,
+            data_np,
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg=f"full-array weight mismatch (interval={interval})",
+        )
+        np.testing.assert_allclose(
+            elig_c,
+            elig_np,
+            rtol=1e-5,
+            atol=1e-7,
+            err_msg=f"full-array eligibility mismatch (interval={interval})",
+        )
 
     def test_with_mask(self):
         mask = np.random.default_rng(5).uniform(0.01, 1.0, self._NNZ).astype(np.float32)
@@ -250,8 +309,16 @@ class TestCompiledNeuromodDecayFull:
         data_np[:] = np.clip(data_np + dw, self._W_MIN, self._W_MAX)
         elig_np *= decay
 
-        neuromod_decay_full(elig_c, data_c, modulator, interval_gain, decay,
-                            self._W_MIN, self._W_MAX, plasticity_mask=mask)
+        neuromod_decay_full(
+            elig_c,
+            data_c,
+            modulator,
+            interval_gain,
+            decay,
+            self._W_MIN,
+            self._W_MAX,
+            plasticity_mask=mask,
+        )
 
         np.testing.assert_allclose(data_c, data_np, rtol=1e-5, atol=1e-7)
         np.testing.assert_allclose(elig_c, elig_np, rtol=1e-5, atol=1e-7)
@@ -331,8 +398,12 @@ class TestEndToEndCompiledEquivalence:
 
         def make():
             sg = SynapseGroup(
-                n_pre=50, n_post=50, sparsity=0.2, init_weight=0.5,
-                plastic=True, rng=np.random.default_rng(3),
+                n_pre=50,
+                n_post=50,
+                sparsity=0.2,
+                init_weight=0.5,
+                plastic=True,
+                rng=np.random.default_rng(3),
                 eligibility_config=EligibilityTraceConfig(),
             )
             return sg
@@ -393,8 +464,15 @@ class TestNumPyFallbackKernels:
         data = np.array([0.5, 0.6, 0.7], dtype=np.float32)
         idx = np.array([0, 1], dtype=np.int32)
         alive = neuromod_decay_sparse(
-            elig, data, idx, 1.0, 1, np.float32(0.999),
-            np.float32(0.01), np.float32(1.0), np.float32(1e-6),
+            elig,
+            data,
+            idx,
+            1.0,
+            1,
+            np.float32(0.999),
+            np.float32(0.01),
+            np.float32(1.0),
+            np.float32(1e-6),
         )
         assert alive.dtype == bool
         assert len(alive) == 2
@@ -408,8 +486,9 @@ class TestNumPyFallbackKernels:
         elig = np.array([0.05, -0.03], dtype=np.float32)
         data = np.array([0.5, 0.6], dtype=np.float32)
         data_before = data.copy()
-        neuromod_decay_full(elig, data, 1.0, 1.0, np.float32(0.999),
-                            np.float32(0.01), np.float32(1.0))
+        neuromod_decay_full(
+            elig, data, 1.0, 1.0, np.float32(0.999), np.float32(0.01), np.float32(1.0)
+        )
         assert not np.array_equal(data, data_before), "weights must change"
         assert data.min() >= 0.01 - 1e-6
         assert data.max() <= 1.0 + 1e-6
@@ -424,25 +503,39 @@ class TestNumPyFallbackKernels:
         # Both calls receive independent copies of elig so neither mutates the
         # other's baseline (neuromod_decay_sparse writes back eligibility[idx]).
         neuromod_decay_sparse(
-            elig_orig.copy(), data_no_mask, idx, 1.0, 1, np.float32(0.999),
-            np.float32(0.01), np.float32(1.0), np.float32(1e-6),
+            elig_orig.copy(),
+            data_no_mask,
+            idx,
+            1.0,
+            1,
+            np.float32(0.999),
+            np.float32(0.01),
+            np.float32(1.0),
+            np.float32(1e-6),
         )
         neuromod_decay_sparse(
-            elig_orig.copy(), data, idx, 1.0, 1, np.float32(0.999),
-            np.float32(0.01), np.float32(1.0), np.float32(1e-6),
+            elig_orig.copy(),
+            data,
+            idx,
+            1.0,
+            1,
+            np.float32(0.999),
+            np.float32(0.01),
+            np.float32(1.0),
+            np.float32(1e-6),
             plasticity_mask=mask,
         )
         # mask=2.0 on idx[0] should amplify the weight update; 0.5 attenuates idx[1]
         delta_no_mask_0 = data_no_mask[0] - 0.5
         delta_masked_0 = data[0] - 0.5
-        assert abs(delta_masked_0) > abs(delta_no_mask_0) - 1e-7, (
-            "mask=2.0 must amplify the weight change on idx[0]"
-        )
+        assert (
+            abs(delta_masked_0) > abs(delta_no_mask_0) - 1e-7
+        ), "mask=2.0 must amplify the weight change on idx[0]"
         delta_no_mask_1 = data_no_mask[1] - 0.6
         delta_masked_1 = data[1] - 0.6
-        assert abs(delta_masked_1) < abs(delta_no_mask_1) + 1e-7, (
-            "mask=0.5 must attenuate the weight change on idx[1]"
-        )
+        assert (
+            abs(delta_masked_1) < abs(delta_no_mask_1) + 1e-7
+        ), "mask=0.5 must attenuate the weight change on idx[1]"
         # idx[2] is not in active set — must be untouched
         assert data[2] == 0.7
 
@@ -453,24 +546,42 @@ class TestNumPyFallbackKernels:
         data_zero_mask = data.copy()
         mask_zero = np.zeros(2, dtype=np.float32)
         neuromod_decay_full(
-            elig.copy(), data_zero_mask, 1.0, 1.0, np.float32(0.999),
-            np.float32(0.01), np.float32(1.0), plasticity_mask=mask_zero,
+            elig.copy(),
+            data_zero_mask,
+            1.0,
+            1.0,
+            np.float32(0.999),
+            np.float32(0.01),
+            np.float32(1.0),
+            plasticity_mask=mask_zero,
         )
         # zero mask means dw is zeroed → weights stay at their initial values
         np.testing.assert_array_equal(
-            data_zero_mask, np.array([0.5, 0.6], dtype=np.float32),
+            data_zero_mask,
+            np.array([0.5, 0.6], dtype=np.float32),
             err_msg="zero plasticity_mask must produce no weight change",
         )
         data_full_mask = data.copy()
         mask_double = np.full(2, 2.0, dtype=np.float32)
         neuromod_decay_full(
-            elig.copy(), data_full_mask, 1.0, 1.0, np.float32(0.999),
-            np.float32(0.01), np.float32(1.0), plasticity_mask=mask_double,
+            elig.copy(),
+            data_full_mask,
+            1.0,
+            1.0,
+            np.float32(0.999),
+            np.float32(0.01),
+            np.float32(1.0),
+            plasticity_mask=mask_double,
         )
         data_no_mask = data.copy()
         neuromod_decay_full(
-            elig.copy(), data_no_mask, 1.0, 1.0, np.float32(0.999),
-            np.float32(0.01), np.float32(1.0),
+            elig.copy(),
+            data_no_mask,
+            1.0,
+            1.0,
+            np.float32(0.999),
+            np.float32(0.01),
+            np.float32(1.0),
         )
         np.testing.assert_allclose(
             np.abs(data_full_mask - np.array([0.5, 0.6], dtype=np.float32)),

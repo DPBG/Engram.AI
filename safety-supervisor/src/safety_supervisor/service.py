@@ -51,7 +51,9 @@ class SafetySupervisorService(BaseService):
 
         # Subscribe to status requests (request-reply)
         await self.event_bus.subscribe(
-            Subjects.SAFETY_STATUS, self._handle_status, is_request_handler=True,
+            Subjects.SAFETY_STATUS,
+            self._handle_status,
+            is_request_handler=True,
         )
 
     async def _cleanup(self) -> None:

@@ -27,6 +27,7 @@ def _camera():
 
 def _depth_camera():
     from sensors.depth_camera import DepthCameraSensor
+
     return DepthCameraSensor
 
 
@@ -56,6 +57,7 @@ def _audio_file():
 
 def _imu():
     from sensors.imu import IMUSensor
+
     return IMUSensor
 
 

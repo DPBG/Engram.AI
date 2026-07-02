@@ -93,6 +93,7 @@ def test_resume_restores_normal_evaluation():
 # job's dependency set. The evaluator only touches .name, .is_channel_allowed()
 # and .get_motor_limit(), so this stub fully covers the interface under test.
 
+
 @dataclass
 class _Limit:
     max_intensity: float = 1.0

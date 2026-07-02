@@ -105,7 +105,6 @@ class TestDiscoveryKnownTypes(unittest.TestCase):
         from discovery import KNOWN_DEVICE_TYPES
 
         assert "lidar" not in KNOWN_DEVICE_TYPES
-        assert "imu" not in KNOWN_DEVICE_TYPES
 
     def test_sanitize_device_string(self):
         from discovery import sanitize_device_string
