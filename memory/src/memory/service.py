@@ -232,6 +232,9 @@ class MemoryService(BaseService):
         Returns:
             List of matching memories
         """
+        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+            raise TypeError("tags must be a list of strings")
+
         if not tags:
             return []
 

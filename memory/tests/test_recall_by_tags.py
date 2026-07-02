@@ -93,3 +93,17 @@ async def test_recall_by_tags_rejects_sql_injection(tag_db):
 async def test_recall_by_tags_empty_list_returns_empty(tag_db):
     service = await _make_service(tag_db)
     assert await service.recall_by_tags([]) == []
+
+
+@pytest.mark.asyncio
+async def test_recall_by_tags_rejects_string_payload(tag_db):
+    service = await _make_service(tag_db)
+    with pytest.raises(TypeError, match="tags must be a list of strings"):
+        await service.recall_by_tags("safe")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_recall_by_tags_rejects_non_string_elements(tag_db):
+    service = await _make_service(tag_db)
+    with pytest.raises(TypeError, match="tags must be a list of strings"):
+        await service.recall_by_tags(["safe", 1])  # type: ignore[list-item]
