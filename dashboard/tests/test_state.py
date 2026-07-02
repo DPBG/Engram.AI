@@ -26,6 +26,7 @@ class _FakeWS:
 
 # ── ConnectionManager ──────────────────────────────────────────────────────
 
+
 def test_broadcast_reaches_all_live_clients():
     cm = ConnectionManager()
     a, b = _FakeWS(), _FakeWS()
@@ -58,6 +59,7 @@ def test_broadcast_noop_when_empty():
 
 # ── chat history ───────────────────────────────────────────────────────────
 
+
 def test_append_chat_trims_to_max():
     state = DashboardState()
     for i in range(MAX_CHAT_HISTORY + 25):
@@ -70,6 +72,7 @@ def test_append_chat_trims_to_max():
 
 # ── concept-probe results ──────────────────────────────────────────────────
 
+
 def test_add_probe_result_caps():
     state = DashboardState()
     for i in range(MAX_PROBE_RESULTS + 10):
@@ -79,6 +82,7 @@ def test_add_probe_result_caps():
 
 
 # ── video sessions ─────────────────────────────────────────────────────────
+
 
 def test_record_video_session_filters_transient_markers():
     state = DashboardState()

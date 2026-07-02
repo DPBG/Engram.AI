@@ -18,7 +18,7 @@ Requires: ``pip install mujoco`` (~24 MB, CPU-only, headless).
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -209,17 +209,35 @@ _HUMANOID_MJCF = """\
 # so any body type (quadruped, arm, drone) can override without touching brain code.
 CHANNEL_ACTUATORS: dict[str, list[str]] = {
     "locomotion": [
-        "waist_yaw_m", "waist_roll_m", "waist_pitch_m",
-        "r_hip_yaw_m", "r_hip_roll_m", "r_hip_pitch_m",
-        "r_knee_m", "r_ankle_pitch_m", "r_ankle_roll_m",
-        "l_hip_yaw_m", "l_hip_roll_m", "l_hip_pitch_m",
-        "l_knee_m", "l_ankle_pitch_m", "l_ankle_roll_m",
+        "waist_yaw_m",
+        "waist_roll_m",
+        "waist_pitch_m",
+        "r_hip_yaw_m",
+        "r_hip_roll_m",
+        "r_hip_pitch_m",
+        "r_knee_m",
+        "r_ankle_pitch_m",
+        "r_ankle_roll_m",
+        "l_hip_yaw_m",
+        "l_hip_roll_m",
+        "l_hip_pitch_m",
+        "l_knee_m",
+        "l_ankle_pitch_m",
+        "l_ankle_roll_m",
     ],
     "manipulation": [
-        "r_shoulder_pitch_m", "r_shoulder_roll_m", "r_shoulder_yaw_m",
-        "r_elbow_m", "r_wrist_pitch_m", "r_wrist_yaw_m",
-        "l_shoulder_pitch_m", "l_shoulder_roll_m", "l_shoulder_yaw_m",
-        "l_elbow_m", "l_wrist_pitch_m", "l_wrist_yaw_m",
+        "r_shoulder_pitch_m",
+        "r_shoulder_roll_m",
+        "r_shoulder_yaw_m",
+        "r_elbow_m",
+        "r_wrist_pitch_m",
+        "r_wrist_yaw_m",
+        "l_shoulder_pitch_m",
+        "l_shoulder_roll_m",
+        "l_shoulder_yaw_m",
+        "l_elbow_m",
+        "l_wrist_pitch_m",
+        "l_wrist_yaw_m",
     ],
     "head": ["neck_pitch_m", "neck_yaw_m"],
 }
@@ -243,9 +261,9 @@ class MuJoCoBody:
 
     def __init__(
         self,
-        model_xml: Optional[str] = None,
+        model_xml: str | None = None,
         steps_per_command: int = 500,
-        channel_actuators: Optional[dict[str, list[str]]] = None,
+        channel_actuators: dict[str, list[str]] | None = None,
     ):
         try:
             import mujoco
@@ -314,15 +332,15 @@ class MuJoCoBody:
 
         # Step once to settle the body, then record initial root body height
         self._mujoco.mj_step(self._model, self._data)
-        self._initial_root_z = float(
-            self._data.body(self._root_body_name).xpos[2]
-        )
+        self._initial_root_z = float(self._data.body(self._root_body_name).xpos[2])
         if self._initial_root_z <= 0.0:
             self._initial_root_z = 1.2  # fallback to nominal height
 
         logger.info(
             "MuJoCoBody initialized: %d joints, %d actuators, %d bodies, dt=%.3fs",
-            self._model.njnt, self._model.nu, self._model.nbody,
+            self._model.njnt,
+            self._model.nu,
+            self._model.nbody,
             self._model.opt.timestep,
         )
 
@@ -396,7 +414,11 @@ class MuJoCoBody:
 
         # Evaluate success
         success, confidence, error_mag = self._evaluate_outcome(
-            channel, pre_torso_z, post_torso_z, pre_joint_pos, post_joint_pos,
+            channel,
+            pre_torso_z,
+            post_torso_z,
+            pre_joint_pos,
+            post_joint_pos,
         )
 
         # Build proprioceptive state: joint positions + velocities for this channel
@@ -414,11 +436,13 @@ class MuJoCoBody:
         """Return complete body state for monitoring and visualization."""
         bodies = []
         for i in range(self._model.nbody):
-            bodies.append({
-                "name": self._model.body(i).name,
-                "xpos": self._data.body(i).xpos.tolist(),
-                "xquat": self._data.body(i).xquat.tolist(),
-            })
+            bodies.append(
+                {
+                    "name": self._model.body(i).name,
+                    "xpos": self._data.body(i).xpos.tolist(),
+                    "xquat": self._data.body(i).xquat.tolist(),
+                }
+            )
         return {
             "torso_height": float(self._data.body(self._root_body_name).xpos[2]),
             "torso_pos": self._data.body(self._root_body_name).xpos.tolist(),
@@ -442,23 +466,27 @@ class MuJoCoBody:
             body_name = self._model.body(body_id).name if body_id >= 0 else "world"
             geom_type = int(g.type)  # 0=plane, 2=sphere, 3=ellipsoid, 5=capsule, 6=box
             type_names = {0: "plane", 2: "sphere", 3: "ellipsoid", 5: "capsule", 6: "box"}
-            geoms.append({
-                "body": body_name,
-                "type": type_names.get(geom_type, f"unknown_{geom_type}"),
-                "size": g.size.tolist(),
-                "rgba": g.rgba.tolist(),
-            })
+            geoms.append(
+                {
+                    "body": body_name,
+                    "type": type_names.get(geom_type, f"unknown_{geom_type}"),
+                    "size": g.size.tolist(),
+                    "rgba": g.rgba.tolist(),
+                }
+            )
         return geoms
 
     # ── Guided teaching (human-in-the-loop) ───────────────────────
 
     @property
-    def JOINT_CHANNEL(self) -> dict[str, str]:
+    def JOINT_CHANNEL(self) -> dict[str, str]:  # noqa: N802
         """Joint name -> channel mapping (built dynamically from channel_actuators)."""
         return self._joint_channel
 
     def guide_to_pose(
-        self, joint_angles: dict[str, float], settle_steps: int = 100,
+        self,
+        joint_angles: dict[str, float],
+        settle_steps: int = 100,
     ) -> dict[str, Any]:
         """Kinematically guide body to a target pose.
 
@@ -483,10 +511,13 @@ class MuJoCoBody:
                 continue
             jnt_id = self._model.joint(joint_name).id
             jnt_range = self._model.jnt_range[jnt_id]
-            angle_rad = float(np.clip(
-                np.radians(angle) if abs(angle) > np.pi else angle,
-                jnt_range[0], jnt_range[1],
-            ))
+            angle_rad = float(
+                np.clip(
+                    np.radians(angle) if abs(angle) > np.pi else angle,
+                    jnt_range[0],
+                    jnt_range[1],
+                )
+            )
             target_rad[joint_name] = angle_rad
             # Only count non-zero angles for channel routing
             if abs(angle) > 0.5:
@@ -498,8 +529,8 @@ class MuJoCoBody:
         # (freejoint qpos: x,y,z, qw,qx,qy,qz)
         try:
             root_adr = self._model.jnt_qposadr[self._model.joint("root").id]
-            self._data.qpos[root_adr:root_adr + 3] = [0.0, 0.0, self._initial_root_z]
-            self._data.qpos[root_adr + 3:root_adr + 7] = [1, 0, 0, 0]    # upright quat
+            self._data.qpos[root_adr : root_adr + 3] = [0.0, 0.0, self._initial_root_z]
+            self._data.qpos[root_adr + 3 : root_adr + 7] = [1, 0, 0, 0]  # upright quat
         except Exception:
             pass  # no freejoint (fixed-base robot)
 
@@ -523,9 +554,7 @@ class MuJoCoBody:
         for _ in range(settle_steps):
             # Hold pelvis upright: re-pin root position each step
             try:
-                self._data.qpos[root_adr + 2] = max(
-                    self._data.qpos[root_adr + 2], _min_height
-                )
+                self._data.qpos[root_adr + 2] = max(self._data.qpos[root_adr + 2], _min_height)
                 self._data.qvel[0:6] = 0.0  # zero root velocities
             except Exception:
                 pass  # no freejoint
@@ -540,9 +569,11 @@ class MuJoCoBody:
                 qpos_adr = self._model.jnt_qposadr[jnt_id]
                 current = self._data.qpos[qpos_adr]
                 error = target - current
-                ctrl = np.clip(kp * error,
-                               self._model.actuator_ctrlrange[act_idx][0],
-                               self._model.actuator_ctrlrange[act_idx][1])
+                ctrl = np.clip(
+                    kp * error,
+                    self._model.actuator_ctrlrange[act_idx][0],
+                    self._model.actuator_ctrlrange[act_idx][1],
+                )
                 self._data.ctrl[act_idx] = ctrl
 
             self._mujoco.mj_step(self._model, self._data)
@@ -628,8 +659,12 @@ class MuJoCoBody:
             root_z = float(root_pos[2])
             error = self._initial_root_z - root_z
             support = max(0.0, gravity_comp + kp * error - kd * float(root_vel[5]))
-            self._data.xfrc_applied[root_id, 0] = -kp_h * float(root_pos[0]) - kd_h * float(root_vel[3])
-            self._data.xfrc_applied[root_id, 1] = -kp_h * float(root_pos[1]) - kd_h * float(root_vel[4])
+            self._data.xfrc_applied[root_id, 0] = -kp_h * float(root_pos[0]) - kd_h * float(
+                root_vel[3]
+            )
+            self._data.xfrc_applied[root_id, 1] = -kp_h * float(root_pos[1]) - kd_h * float(
+                root_vel[4]
+            )
             self._data.xfrc_applied[root_id, 2] = support
             self._mujoco.mj_step(self._model, self._data)
 
@@ -658,16 +693,18 @@ class MuJoCoBody:
             jnt_id = self._model.joint(jname).id
             qpos_adr = self._model.jnt_qposadr[jnt_id]
             jnt_range = self._model.jnt_range[jnt_id]
-            joints.append({
-                "name": jname,
-                "channel": channel,
-                "angle_rad": float(self._data.qpos[qpos_adr]),
-                "range_rad": [float(jnt_range[0]), float(jnt_range[1])],
-                "range_deg": [
-                    int(round(float(np.degrees(jnt_range[0])))),
-                    int(round(float(np.degrees(jnt_range[1])))),
-                ],
-            })
+            joints.append(
+                {
+                    "name": jname,
+                    "channel": channel,
+                    "angle_rad": float(self._data.qpos[qpos_adr]),
+                    "range_rad": [float(jnt_range[0]), float(jnt_range[1])],
+                    "range_deg": [
+                        int(round(float(np.degrees(jnt_range[0])))),
+                        int(round(float(np.degrees(jnt_range[1])))),
+                    ],
+                }
+            )
         return joints
 
     def is_fallen(self) -> bool:
@@ -689,7 +726,7 @@ class MuJoCoBody:
         #   up_z = 1 - 2*(x^2 + y^2)  (equivalent to rotation matrix R[2][2])
         # up_z = 1.0 means upright, 0.0 means 90-deg tilt, -1.0 means inverted.
         quat = self._data.body(self._root_body_name).xquat
-        w, x, y, z = float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])
+        _w, x, y, _z = float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])
         up_z = 1.0 - 2.0 * (x * x + y * y)
         # Fallen if tilted more than ~60 degrees (up_z < 0.5 = cos(60))
         if up_z < 0.5:
@@ -730,7 +767,9 @@ class MuJoCoBody:
                 self._data.ctrl[idx] = intensity * max_torque
 
     def set_control_vector(
-        self, channel: str, actuator_intensities: dict[str, float],
+        self,
+        channel: str,
+        actuator_intensities: dict[str, float],
     ) -> None:
         """Set per-actuator controls from population vector decoding.
 
@@ -778,7 +817,7 @@ class MuJoCoBody:
         for _ in range(n):
             self._mujoco.mj_step(self._model, self._data)
 
-    def render_frame(self, width: int = 64, height: int = 64) -> Optional[np.ndarray]:
+    def render_frame(self, width: int = 64, height: int = 64) -> np.ndarray | None:
         """Render a camera frame from the 'track' camera.
 
         Returns 64x64 grayscale uint8 array, or None if rendering fails.
@@ -921,8 +960,10 @@ class MuJoCoBody:
         right_force = float(np.clip(right_force * 100.0, 0.0, 1.0))
 
         vec = np.array(
-            positions + velocities + root_quat + [height_norm, contacts,
-            com_x, com_y, ang_x, ang_y, ang_z, left_force, right_force],
+            positions
+            + velocities
+            + root_quat
+            + [height_norm, contacts, com_x, com_y, ang_x, ang_y, ang_z, left_force, right_force],
             dtype=np.float32,
         )
         return vec

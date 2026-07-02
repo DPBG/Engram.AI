@@ -1,16 +1,13 @@
 """Tests for the Neural Watchdog safety system."""
 
-import numpy as np
 import pytest
 
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.watchdog import (
+    AlertLevel,
     NeuralWatchdog,
     WatchdogConfig,
-    AlertLevel,
-    WatchdogAlert,
-    WatchdogStatus,
 )
 
 
@@ -44,7 +41,7 @@ class TestWatchdogBasics:
         assert status.level == AlertLevel.NOMINAL
 
     def test_skip_duplicate_step(self, watchdog, network):
-        s1 = watchdog.check(network, step_count=100)
+        _s1 = watchdog.check(network, step_count=100)
         s2 = watchdog.check(network, step_count=100)
         # Second check returns NOMINAL (skipped)
         assert s2.level == AlertLevel.NOMINAL

@@ -27,13 +27,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import is_dataclass
 from typing import Any
 
 import numpy as np
-
-from dataclasses import fields as dataclass_fields, is_dataclass
-
-from activelearning.nats_client import EventBus, serialize_message
+from activelearning.nats_client import EventBus
 
 logger = logging.getLogger("sensory-gateway.aggregator")
 
@@ -93,7 +91,7 @@ def compute_temporal_audio_frame(chunks: list[list[float]]) -> dict[str, Any]:
         delta_mfcc = np.zeros(arr.shape[1], dtype=np.float32)
 
     # Energy contour — RMS of each chunk's MFCC (proxy for loudness)
-    energy = np.sqrt((arr ** 2).mean(axis=1))  # (N,)
+    energy = np.sqrt((arr**2).mean(axis=1))  # (N,)
 
     return {
         "type": "temporal_audio_frame",
@@ -412,16 +410,12 @@ class AggregatingEventBus(EventBus):
                 # If _nc is None, a prior reconnect failed and left no connection.
                 # Retry reconnection instead of silently skipping forever.
                 if self._nc is None:
-                    await self._try_force_reconnect(
-                        "heartbeat: _nc is None, retrying reconnection"
-                    )
+                    await self._try_force_reconnect("heartbeat: _nc is None, retrying reconnection")
                     continue
                 try:
-                    await asyncio.wait_for(
-                        self._nc.flush(), timeout=self._heartbeat_timeout
-                    )
+                    await asyncio.wait_for(self._nc.flush(), timeout=self._heartbeat_timeout)
                     self._consecutive_heartbeat_failures = 0
-                except (asyncio.TimeoutError, Exception) as e:
+                except (TimeoutError, Exception) as e:
                     self._consecutive_heartbeat_failures += 1
                     logger.warning(
                         f"Heartbeat failed ({self._consecutive_heartbeat_failures}x): {e}"

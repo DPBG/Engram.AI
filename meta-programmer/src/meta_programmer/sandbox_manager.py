@@ -7,7 +7,6 @@ Spawns isolated containers with resource limits for safe code execution.
 import asyncio
 import logging
 import os
-from typing import Optional
 
 import docker
 from docker.models.containers import Container
@@ -68,7 +67,7 @@ class SandboxManager:
     async def run_tests(
         self,
         code_path: str,
-        test_path: Optional[str] = None,
+        test_path: str | None = None,
     ) -> dict:
         """
         Run tests in an isolated sandbox container.
@@ -132,17 +131,17 @@ class SandboxManager:
                     image=self.sandbox_image,
                     command=command,
                     volumes=volumes,
-                    network_disabled=True,            # No network access
-                    read_only=True,                   # Read-only root filesystem
-                    cap_drop=["ALL"],                 # Drop all Linux capabilities
+                    network_disabled=True,  # No network access
+                    read_only=True,  # Read-only root filesystem
+                    cap_drop=["ALL"],  # Drop all Linux capabilities
                     security_opt=["no-new-privileges"],  # Block privilege escalation
                     mem_limit=self.memory_limit,
                     memswap_limit=self.memory_limit,  # disable swap (same as --memory-swap = --memory)
                     cpu_quota=self.cpu_quota,
                     pids_limit=self.max_pids,
                     detach=True,
-                    remove=True,                      # Auto-destroy after completion
-                    tmpfs={"/tmp": "size=50M"},       # Writable /tmp only
+                    remove=True,  # Auto-destroy after completion
+                    tmpfs={"/tmp": "size=50M"},  # Writable /tmp only
                 )
             except docker.errors.DockerException as e:
                 logger.error("Sandbox spawn failed: %s", e)
@@ -169,13 +168,13 @@ class SandboxManager:
                     "error": None if exit_code == 0 else f"Tests failed with exit code {exit_code}",
                 }
 
-            except asyncio.TimeoutError:
+            except TimeoutError:  # asyncio.TimeoutError is TimeoutError on Python 3.11+
                 # Containment worked (and we kill the container); the code under
                 # test hung. That's a test failure, not sandbox unavailability.
                 logger.error(f"Sandbox timeout after {self.timeout}s")
                 try:
                     container.kill()
-                except:
+                except Exception:
                     pass
                 return {
                     "success": False,
@@ -185,12 +184,9 @@ class SandboxManager:
                 }
 
         except Exception as e:
+            # Unknown failure — we cannot confirm containment ran, so fail closed.
             logger.error(f"Sandbox error: {e}", exc_info=True)
-            return {
-                "success": False,
-                "output": "",
-                "error": str(e),
-            }
+            return self._unavailable(f"Unexpected sandbox error: {e}.")
 
     async def _wait_for_container(self, container: Container) -> dict:
         """Wait for container to complete."""
@@ -199,16 +195,17 @@ class SandboxManager:
 
     def cleanup_old_containers(self) -> None:
         """Clean up any stale sandbox containers (shouldn't happen with auto-remove)."""
+        if self.docker_client is None:
+            return
         try:
             containers = self.docker_client.containers.list(
-                all=True,
-                filters={"ancestor": self.sandbox_image}
+                all=True, filters={"ancestor": self.sandbox_image}
             )
             for container in containers:
                 logger.warning(f"Cleaning up stale sandbox: {container.id}")
                 try:
                     container.remove(force=True)
-                except:
+                except Exception:
                     pass
         except Exception as e:
             logger.error(f"Error cleaning up containers: {e}")

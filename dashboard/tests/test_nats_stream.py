@@ -47,6 +47,7 @@ def _manager():
 
 # ── status flags ───────────────────────────────────────────────────────────
 
+
 def test_status_defaults_disconnected():
     mgr, _, _ = _manager()
     assert mgr.connected is False
@@ -54,6 +55,7 @@ def test_status_defaults_disconnected():
 
 
 # ── publishing ─────────────────────────────────────────────────────────────
+
 
 def test_try_publish_not_connected():
     mgr, _, _ = _manager()
@@ -93,11 +95,13 @@ def test_publish_text_observation_sends_provenance_frame():
     subject, data = mgr.nc.published[0]
     assert subject == "observation.text"
     assert json.loads(data.decode()) == {
-        "provenance": "observation.text", "data": "a ball is round",
+        "provenance": "observation.text",
+        "data": "a ball is round",
     }
 
 
 # ── subscription callbacks ─────────────────────────────────────────────────
+
 
 def test_handle_neuro_metrics_updates_state_and_broadcasts():
     mgr, state, ws = _manager()
@@ -110,26 +114,33 @@ def test_handle_neuro_metrics_updates_state_and_broadcasts():
 
 def test_handle_heartbeat_records_service_status():
     mgr, state, ws = _manager()
-    asyncio.run(mgr._handle_heartbeat(_FakeMsg("heartbeat.kernel", {"service": "kernel", "uptime": 5})))
+    asyncio.run(
+        mgr._handle_heartbeat(_FakeMsg("heartbeat.kernel", {"service": "kernel", "uptime": 5}))
+    )
     assert state.service_status["kernel"]["status"] == "running"
     assert ws.sent[-1]["type"] == "service_status"
 
 
 def test_handle_video_training_status_stores_real_session():
     mgr, state, ws = _manager()
-    asyncio.run(mgr._handle_video_training_status(
-        _FakeMsg("video.training.status", {"session_id": "vid1", "status": "running"})
-    ))
+    asyncio.run(
+        mgr._handle_video_training_status(
+            _FakeMsg("video.training.status", {"session_id": "vid1", "status": "running"})
+        )
+    )
     assert "vid1" in state.video_sessions
     assert ws.sent[-1]["type"] == "video_training_update"
 
 
 def test_handle_safe_halt_status_caches_and_broadcasts():
     from dashboard import safe_halt
+
     mgr, state, ws = _manager()
-    asyncio.run(mgr._handle_safe_halt_status(
-        _FakeMsg("safety.halt.status", {"halted": True, "reason": "kernel"})
-    ))
+    asyncio.run(
+        mgr._handle_safe_halt_status(
+            _FakeMsg("safety.halt.status", {"halted": True, "reason": "kernel"})
+        )
+    )
     assert safe_halt.get_halt_state() == {"halted": True, "reason": "kernel"}
     assert ws.sent[-1] == {"type": "safe_halt_status", "data": {"halted": True, "reason": "kernel"}}
     assert "safety.halt.status" in DEDICATED_SUBJECTS

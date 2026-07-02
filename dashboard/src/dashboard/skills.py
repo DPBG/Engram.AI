@@ -143,12 +143,14 @@ class SkillRegistry:
         n = skill["calls"]
         skill["avg_ms"] = round(old_avg + (duration_ms - old_avg) / n, 1)
 
-        self._execution_log.append({
-            "skill_id": skill_id,
-            "timestamp": now,
-            "duration_ms": round(duration_ms, 1),
-            "success": success,
-        })
+        self._execution_log.append(
+            {
+                "skill_id": skill_id,
+                "timestamp": now,
+                "duration_ms": round(duration_ms, 1),
+                "success": success,
+            }
+        )
 
     def get_all(self) -> list[dict]:
         return list(self._skills.values())

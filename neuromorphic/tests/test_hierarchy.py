@@ -3,21 +3,35 @@
 import numpy as np
 import pytest
 
-from neuromorphic.config import NeuromorphicConfig, PopulationConfig, ConceptLayerConfig, FeatureLayerConfig, MetaControllerConfig
-from neuromorphic.regions import (
-    FeatureLayer, ConceptLayer, MetaControllerRegion, create_all_regions,
+from neuromorphic.config import (
+    ConceptLayerConfig,
+    NeuromorphicConfig,
+    PopulationConfig,
 )
 from neuromorphic.network import NeuromorphicNetwork
+from neuromorphic.regions import (
+    ConceptLayer,
+    FeatureLayer,
+    MetaControllerRegion,
+    create_all_regions,
+)
 
 
 def _hierarchical_config():
     """Config with all new regions enabled."""
     return NeuromorphicConfig(
         populations=PopulationConfig(
-            brainstem=20, reflex_arc=20, sensory_cortex=100,
-            motor_cortex=50, cerebellum=50, association_cortex=100,
-            predictive_layer=50, working_memory=20,
-            feature_layer=80, concept_layer=100, meta_controller=60,
+            brainstem=20,
+            reflex_arc=20,
+            sensory_cortex=100,
+            motor_cortex=50,
+            cerebellum=50,
+            association_cortex=100,
+            predictive_layer=50,
+            working_memory=20,
+            feature_layer=80,
+            concept_layer=100,
+            meta_controller=60,
         ),
         concept_layer=ConceptLayerConfig(n_neurons=100, k_winners=5),
     )
@@ -131,9 +145,14 @@ class TestCreateAllRegionsHierarchical:
     def test_base_config_8_regions(self):
         config = NeuromorphicConfig(
             populations=PopulationConfig(
-                brainstem=20, reflex_arc=20, sensory_cortex=100,
-                motor_cortex=50, cerebellum=50, association_cortex=100,
-                predictive_layer=50, working_memory=20,
+                brainstem=20,
+                reflex_arc=20,
+                sensory_cortex=100,
+                motor_cortex=50,
+                cerebellum=50,
+                association_cortex=100,
+                predictive_layer=50,
+                working_memory=20,
             )
         )
         regions = create_all_regions(config)

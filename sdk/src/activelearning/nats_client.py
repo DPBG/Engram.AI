@@ -12,18 +12,19 @@ import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import nats
 from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
+from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
-from pydantic import BaseModel
 
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
+    WireModel,
     schema_for_subject,
     validate_payload,
 )
@@ -80,7 +81,7 @@ def serialize_message(data: Any) -> bytes:
 
 def deserialize_message(data: bytes) -> dict[str, Any]:
     """Deserialize bytes to a message payload."""
-    return json.loads(data.decode("utf-8"))
+    return cast(dict[str, Any], json.loads(data.decode("utf-8")))
 
 
 class EventBus:
@@ -129,7 +130,7 @@ class EventBus:
         self.nats_creds: str | None = nats_creds or os.environ.get("NATS_CREDS") or None
         self._nc: NATSClient | None = None
         self._js: JetStreamContext | None = None
-        self._subscriptions: dict[str, nats.aio.subscription.Subscription] = {}
+        self._subscriptions: dict[str, NATSSubscription] = {}
         self._handlers: dict[str, MessageHandler] = {}
         self._request_handlers: set[str] = set()
         self._js_durables: dict[str, str] = {}  # subject -> durable consumer name
@@ -155,7 +156,9 @@ class EventBus:
         if self.nats_creds:
             if os.path.isfile(self.nats_creds):
                 connect_kwargs["user_credentials"] = self.nats_creds
-                logger.info("Connecting to NATS at %s with credentials %s", self.nats_url, self.nats_creds)
+                logger.info(
+                    "Connecting to NATS at %s with credentials %s", self.nats_url, self.nats_creds
+                )
             else:
                 # Credentials configured but file absent — dev fallback, never
                 # crash so local runs work before gen-creds.sh has been run.
@@ -223,7 +226,7 @@ class EventBus:
         subject: str,
         data: Any,
         *,
-        message_model: type[BaseModel] | None = None,
+        message_model: type[WireModel] | None = None,
     ) -> None:
         """
         Publish a message to a subject.
@@ -239,13 +242,14 @@ class EventBus:
         """
         await self._ensure_connected()
         if isinstance(data, dict):
-            data = validate_payload(subject, data, message_model)  # type: ignore[arg-type]
+            data = validate_payload(subject, data, message_model)
         payload = serialize_message(data)
         if self._is_safety_critical(subject):
             assert self._js is not None
             ack = await self._js.publish(subject, payload)
             logger.debug("JS-published to %s (seq=%d): %d bytes", subject, ack.seq, len(payload))
         else:
+            assert self._nc is not None
             await self._nc.publish(subject, payload)
             logger.debug("Published to %s: %d bytes", subject, len(payload))
 
@@ -257,7 +261,7 @@ class EventBus:
         pending_msgs_limit: int = 65536,
         pending_bytes_limit: int = 128 * 1024 * 1024,
         is_request_handler: bool = False,
-        message_model: type[BaseModel] | None = None,
+        message_model: type[WireModel] | None = None,
     ) -> None:
         """
         Subscribe to a subject with a message handler.
@@ -288,20 +292,24 @@ class EventBus:
                         subject,
                         f"expected JSON object, got {type(data).__name__}",
                     )
-                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
+                data = validate_payload(subject, data, wire_model)
                 if is_request_handler:
-                    await handler(data, msg)
+                    await handler(data, msg)  # type: ignore[call-arg]
                 else:
                     await handler(data)
             except MessageValidationError as e:
                 logger.error(str(e))
                 if is_request_handler and msg.reply:
                     try:
-                        await msg.respond(serialize_message({
-                            "error": "validation_failed",
-                            "detail": e.detail,
-                            "type": "error",
-                        }))
+                        await msg.respond(
+                            serialize_message(
+                                {
+                                    "error": "validation_failed",
+                                    "detail": e.detail,
+                                    "type": "error",
+                                }
+                            )
+                        )
                     except Exception:
                         pass
             except Exception as e:
@@ -310,13 +318,18 @@ class EventBus:
                 # caller doesn't hang until timeout.
                 if is_request_handler and msg.reply:
                     try:
-                        await msg.respond(serialize_message({
-                            "error": str(e),
-                            "type": "error",
-                        }))
+                        await msg.respond(
+                            serialize_message(
+                                {
+                                    "error": str(e),
+                                    "type": "error",
+                                }
+                            )
+                        )
                     except Exception:
                         pass  # best-effort error reply
 
+        assert self._nc is not None
         sub = await self._nc.subscribe(
             subject,
             cb=message_callback,
@@ -337,7 +350,7 @@ class EventBus:
         subject: str,
         handler: MessageHandler,
         durable: str,
-        message_model: type[BaseModel] | None = None,
+        message_model: type[WireModel] | None = None,
         *,
         ack_wait: float = DEFAULT_ACK_WAIT_SECONDS,
         max_deliver: int = DEFAULT_MAX_DELIVER,
@@ -393,7 +406,9 @@ class EventBus:
                         subject,
                         f"expected JSON object, got {type(data).__name__}",
                     )
-                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
+                data = validate_payload(subject, data, wire_model)
+                await handler(data)
+                await msg.ack()
             except MessageValidationError as e:
                 logger.error("Poisoning unprocessable message on %s: %s", subject, e)
                 await self._route_to_poison(subject, msg, f"validation_error: {e}")
@@ -410,7 +425,10 @@ class EventBus:
                     # stops redelivering (never an infinite loop, never dropped).
                     logger.error(
                         "Poisoning %s after %d/%d deliveries: %s",
-                        subject, delivered, max_deliver, e,
+                        subject,
+                        delivered,
+                        max_deliver,
+                        e,
                     )
                     await self._route_to_poison(
                         subject, msg, f"max_deliver_exhausted({delivered}): {e}"
@@ -419,7 +437,10 @@ class EventBus:
                 else:
                     logger.warning(
                         "Handler failed on %s (delivery %d/%d), will redeliver: %s",
-                        subject, delivered, max_deliver, e,
+                        subject,
+                        delivered,
+                        max_deliver,
+                        e,
                     )
                     await msg.nak()
 
@@ -429,7 +450,11 @@ class EventBus:
             max_deliver=max_deliver,
             # When backoff is set the server derives ack-wait from backoff[0];
             # passing both can be rejected, so set only one.
-            **({"backoff": [float(b) for b in backoff]} if backoff else {"ack_wait": float(ack_wait)}),
+            **(
+                {"backoff": [float(b) for b in backoff]}
+                if backoff
+                else {"ack_wait": float(ack_wait)}
+            ),
         )
         sub = await self._js.subscribe(
             subject,
@@ -512,6 +537,7 @@ class EventBus:
             asyncio.TimeoutError: If no response within timeout
         """
         await self._ensure_connected()
+        assert self._nc is not None
         payload = serialize_message(data)
         response = await self._nc.request(subject, payload, timeout=timeout)
         return deserialize_message(response.data)
@@ -635,7 +661,9 @@ class EventBus:
             try:
                 if subject in saved_js:
                     await self.js_subscribe(
-                        subject, handler, durable=saved_js[subject],
+                        subject,
+                        handler,
+                        durable=saved_js[subject],
                         poison_handler=saved_poison.get(subject),
                     )
                 else:

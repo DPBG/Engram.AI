@@ -114,10 +114,7 @@ def _verify_checksum(archive: Path, asset: str) -> None:
 def _download_binary() -> Path:
     """Download and extract the nats-server binary into NATS_DIR."""
     asset, kind = _platform_asset()
-    url = (
-        "https://github.com/nats-io/nats-server/releases/download/"
-        f"{NATS_VERSION}/{asset}"
-    )
+    url = "https://github.com/nats-io/nats-server/releases/download/" f"{NATS_VERSION}/{asset}"
     NATS_DIR.mkdir(parents=True, exist_ok=True)
     archive = NATS_DIR / asset
 
@@ -133,7 +130,9 @@ def _download_binary() -> Path:
             last_exc = exc
             logger.warning(
                 "nats-server download attempt %d/%d failed: %s",
-                attempt, _DOWNLOAD_RETRIES, exc,
+                attempt,
+                _DOWNLOAD_RETRIES,
+                exc,
             )
             if attempt < _DOWNLOAD_RETRIES:
                 time.sleep(2 * attempt)
@@ -205,9 +204,7 @@ def start(log_file: Path | None = None) -> subprocess.Popen | None:
     Returns the Popen handle, or None if an external NATS is reused.
     """
     if port_open("127.0.0.1", CLIENT_PORT):
-        logger.info(
-            "NATS already listening on port %d — reusing it.", CLIENT_PORT
-        )
+        logger.info("NATS already listening on port %d — reusing it.", CLIENT_PORT)
         return None
 
     binary = ensure_binary()
@@ -226,9 +223,12 @@ def start(log_file: Path | None = None) -> subprocess.Popen | None:
         cmd = [
             str(binary),
             "--jetstream",
-            "--store_dir", str(NATS_DATA),
-            "-m", str(MONITOR_PORT),
-            "-p", str(CLIENT_PORT),
+            "--store_dir",
+            str(NATS_DATA),
+            "-m",
+            str(MONITOR_PORT),
+            "-p",
+            str(CLIENT_PORT),
         ]
 
     logger.info("Starting NATS: %s", " ".join(cmd))

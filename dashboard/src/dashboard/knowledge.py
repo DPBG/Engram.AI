@@ -27,10 +27,10 @@ class KnowledgeBase:
     def __init__(self):
         self._entries: deque = deque(maxlen=1000)
         self._source_counts = {
-            "teleoperation": 0,   # Chat interactions
-            "observation": 0,     # System observations, NATS messages
-            "deployment": 0,      # Self-generated from monitoring
-            "simulation": 0,      # Synthetic / test data
+            "teleoperation": 0,  # Chat interactions
+            "observation": 0,  # System observations, NATS messages
+            "deployment": 0,  # Self-generated from monitoring
+            "simulation": 0,  # Synthetic / test data
         }
         self._total_interactions = 0
 
@@ -69,7 +69,8 @@ class KnowledgeBase:
         now = time.time()
         one_hour_ago = now - 3600
         recent = sum(
-            1 for e in self._entries
+            1
+            for e in self._entries
             if datetime.fromisoformat(e["timestamp"]).timestamp() > one_hour_ago
         )
         return round(recent, 1)

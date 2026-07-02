@@ -35,9 +35,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from scipy import sparse
 import aiosqlite
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +46,12 @@ _FORK_BGSAVE = hasattr(os, "fork")
 # Keys saved/loaded from the network_aux JSON blob.
 # Defined once to avoid divergence between sync and async save paths.
 _AUX_KEYS = (
-    "sensory_allocator", "sensory_buffer",
-    "cached_myel_fraction", "feature_stdp_peak",
-    "speech_decoder", "cognitive_decoder",
+    "sensory_allocator",
+    "sensory_buffer",
+    "cached_myel_fraction",
+    "feature_stdp_peak",
+    "speech_decoder",
+    "cognitive_decoder",
     "watchdog",
 )
 
@@ -139,6 +141,7 @@ def _snapshot_state_for_thread(state: dict[str, Any]) -> dict[str, Any]:
 #  Child-process save (runs after fork — NO asyncio, NO parent fds)  #
 # ------------------------------------------------------------------ #
 
+
 def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
     """Write state to disk from a background writer (fork child or thread).
 
@@ -187,14 +190,14 @@ def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
         db.execute("BEGIN IMMEDIATE")
 
         db.execute(
-            "INSERT OR REPLACE INTO network_meta (id, step_count, updated_at) "
-            "VALUES (1, ?, ?)", (step, now),
+            "INSERT OR REPLACE INTO network_meta (id, step_count, updated_at) " "VALUES (1, ?, ?)",
+            (step, now),
         )
 
         drives = state.get("drives", {})
         db.execute(
-            "INSERT OR REPLACE INTO drive_state (id, state, updated_at) "
-            "VALUES (1, ?, ?)", (json.dumps(drives), now),
+            "INSERT OR REPLACE INTO drive_state (id, state, updated_at) " "VALUES (1, ?, ?)",
+            (json.dumps(drives), now),
         )
 
         for region_name, rstate in state.get("regions", {}).items():
@@ -202,14 +205,16 @@ def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
             np.savez_compressed(buf, **rstate)
             db.execute(
                 "INSERT OR REPLACE INTO neuron_state (region, state, updated_at) "
-                "VALUES (?, ?, ?)", (region_name, buf.getvalue(), now),
+                "VALUES (?, ?, ?)",
+                (region_name, buf.getvalue(), now),
             )
 
         neuromod = state.get("neuromodulation", {})
         if neuromod:
             db.execute(
                 "INSERT OR REPLACE INTO neuromodulation_state (id, state, updated_at) "
-                "VALUES (1, ?, ?)", (json.dumps(neuromod), now),
+                "VALUES (1, ?, ?)",
+                (json.dumps(neuromod), now),
             )
 
         # Save AuditorySTM state (tiny JSON — ~2 KB)
@@ -217,7 +222,8 @@ def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
         if auditory_stm:
             db.execute(
                 "INSERT OR REPLACE INTO auditory_stm_state (id, state, updated_at) "
-                "VALUES (1, ?, ?)", (json.dumps(auditory_stm), now),
+                "VALUES (1, ?, ?)",
+                (json.dumps(auditory_stm), now),
             )
 
         # Save auxiliary state (small but critical for deterministic restart).
@@ -228,8 +234,8 @@ def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
                 aux[key] = val
         if aux:
             db.execute(
-                "INSERT OR REPLACE INTO network_aux (id, state, updated_at) "
-                "VALUES (1, ?, ?)", (json.dumps(aux), now),
+                "INSERT OR REPLACE INTO network_aux (id, state, updated_at) " "VALUES (1, ?, ?)",
+                (json.dumps(aux), now),
             )
 
         for syn_name, sstate in state.get("synapses", {}).items():
@@ -259,6 +265,7 @@ def _child_save(db_path: str, syn_dir: str, state: dict[str, Any]) -> None:
 # ------------------------------------------------------------------ #
 #  Main persistence class                                            #
 # ------------------------------------------------------------------ #
+
 
 class NeuromorphicPersistence:
     """Saves and loads neuromorphic network state to/from SQLite + disk.
@@ -314,7 +321,9 @@ class NeuromorphicPersistence:
                 # Child finished — reap it
                 self._bg_child_pid = 0
                 if os.WIFEXITED(status) and os.WEXITSTATUS(status) != 0:
-                    logger.error(f"Background save child exited with status {os.WEXITSTATUS(status)}")
+                    logger.error(
+                        f"Background save child exited with status {os.WEXITSTATUS(status)}"
+                    )
                 elif os.WIFSIGNALED(status):
                     logger.error(f"Background save child killed by signal {os.WTERMSIG(status)}")
                 return False
@@ -426,9 +435,7 @@ class NeuromorphicPersistence:
             daemon=True,
         )
         self._bg_thread.start()
-        logger.info(
-            f"Background save started (thread, step={state.get('step_count', '?')})"
-        )
+        logger.info(f"Background save started (thread, step={state.get('step_count', '?')})")
         return True
 
     # ------------------------------------------------------------------ #
@@ -448,9 +455,7 @@ class NeuromorphicPersistence:
         loop = asyncio.get_running_loop()
         syn_futures = []
         for syn_name, sstate in state.get("synapses", {}).items():
-            fut = loop.run_in_executor(
-                None, self._save_synapse_arrays, syn_name, sstate
-            )
+            fut = loop.run_in_executor(None, self._save_synapse_arrays, syn_name, sstate)
             syn_futures.append((syn_name, sstate, fut))
 
         # Save small data to SQLite while synapses write
@@ -459,13 +464,14 @@ class NeuromorphicPersistence:
 
             await self._db.execute(
                 "INSERT OR REPLACE INTO network_meta (id, step_count, updated_at) "
-                "VALUES (1, ?, ?)", (step, now),
+                "VALUES (1, ?, ?)",
+                (step, now),
             )
 
             drives = state.get("drives", {})
             await self._db.execute(
-                "INSERT OR REPLACE INTO drive_state (id, state, updated_at) "
-                "VALUES (1, ?, ?)", (json.dumps(drives), now),
+                "INSERT OR REPLACE INTO drive_state (id, state, updated_at) " "VALUES (1, ?, ?)",
+                (json.dumps(drives), now),
             )
 
             for region_name, rstate in state.get("regions", {}).items():
@@ -473,21 +479,24 @@ class NeuromorphicPersistence:
                 np.savez_compressed(buf, **rstate)
                 await self._db.execute(
                     "INSERT OR REPLACE INTO neuron_state (region, state, updated_at) "
-                    "VALUES (?, ?, ?)", (region_name, buf.getvalue(), now),
+                    "VALUES (?, ?, ?)",
+                    (region_name, buf.getvalue(), now),
                 )
 
             neuromod = state.get("neuromodulation", {})
             if neuromod:
                 await self._db.execute(
                     "INSERT OR REPLACE INTO neuromodulation_state (id, state, updated_at) "
-                    "VALUES (1, ?, ?)", (json.dumps(neuromod), now),
+                    "VALUES (1, ?, ?)",
+                    (json.dumps(neuromod), now),
                 )
 
             auditory_stm = state.get("auditory_stm")
             if auditory_stm:
                 await self._db.execute(
                     "INSERT OR REPLACE INTO auditory_stm_state (id, state, updated_at) "
-                    "VALUES (1, ?, ?)", (json.dumps(auditory_stm), now),
+                    "VALUES (1, ?, ?)",
+                    (json.dumps(auditory_stm), now),
                 )
 
             # Save auxiliary state (small but critical for deterministic restart).
@@ -499,7 +508,8 @@ class NeuromorphicPersistence:
             if aux:
                 await self._db.execute(
                     "INSERT OR REPLACE INTO network_aux (id, state, updated_at) "
-                    "VALUES (1, ?, ?)", (json.dumps(aux), now),
+                    "VALUES (1, ?, ?)",
+                    (json.dumps(aux), now),
                 )
 
             for syn_name, sstate, fut in syn_futures:
@@ -570,7 +580,9 @@ class NeuromorphicPersistence:
 
         # Load synapse states from disk
         state["synapses"] = {}
-        async with self._db.execute("SELECT name, shape_rows, shape_cols FROM synapse_meta") as cursor:
+        async with self._db.execute(
+            "SELECT name, shape_rows, shape_cols FROM synapse_meta"
+        ) as cursor:
             async for row in cursor:
                 name, nrows, ncols = row
                 sstate: dict[str, Any] = {"shape": (nrows, ncols)}
@@ -590,7 +602,9 @@ class NeuromorphicPersistence:
 
         # Load neuromodulation state
         try:
-            async with self._db.execute("SELECT state FROM neuromodulation_state WHERE id=1") as cursor:
+            async with self._db.execute(
+                "SELECT state FROM neuromodulation_state WHERE id=1"
+            ) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     state["neuromodulation"] = json.loads(row[0])
@@ -599,7 +613,9 @@ class NeuromorphicPersistence:
 
         # Load auditory STM state
         try:
-            async with self._db.execute("SELECT state FROM auditory_stm_state WHERE id=1") as cursor:
+            async with self._db.execute(
+                "SELECT state FROM auditory_stm_state WHERE id=1"
+            ) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     state["auditory_stm"] = json.loads(row[0])

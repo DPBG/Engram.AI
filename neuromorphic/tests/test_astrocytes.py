@@ -1,10 +1,9 @@
 """Tests for astrocyte-gated plasticity (CIP-22)."""
 
 import numpy as np
-import pytest
 
-from neuromorphic.config import AstrocyteConfig
 from neuromorphic.astrocytes import AstrocyteNetwork
+from neuromorphic.config import AstrocyteConfig
 
 
 class TestAstrocyteNetwork:
@@ -68,7 +67,8 @@ class TestAstrocyteNetwork:
     def test_plasticity_gate_never_below_minimum(self):
         """Plasticity gate should never go below plasticity_gate_min."""
         astro = self._make_astrocytes(
-            plasticity_gate_min=0.1, metabolic_threshold=0.1,
+            plasticity_gate_min=0.1,
+            metabolic_threshold=0.1,
         )
         # Extreme activity
         rates = {"sensory_cortex": 1.0, "association_cortex": 1.0, "motor_cortex": 1.0}
@@ -119,8 +119,12 @@ class TestAstrocyteNetwork:
 
     def test_sigmoid_slope_controls_sharpness(self):
         """Higher sigmoid slope should create sharper transition."""
-        astro_sharp = self._make_astrocytes(sigmoid_slope=20.0, metabolic_threshold=0.3, tau_calcium=100.0)
-        astro_gentle = self._make_astrocytes(sigmoid_slope=2.0, metabolic_threshold=0.3, tau_calcium=100.0)
+        astro_sharp = self._make_astrocytes(
+            sigmoid_slope=20.0, metabolic_threshold=0.3, tau_calcium=100.0
+        )
+        astro_gentle = self._make_astrocytes(
+            sigmoid_slope=2.0, metabolic_threshold=0.3, tau_calcium=100.0
+        )
         rates = {"sensory_cortex": 0.5, "association_cortex": 0.0, "motor_cortex": 0.0}
         for _ in range(300):
             astro_sharp.step(rates)
@@ -129,9 +133,9 @@ class TestAstrocyteNetwork:
         g_sharp = astro_sharp.get_plasticity_gate("sensory_cortex")
         g_gentle = astro_gentle.get_plasticity_gate("sensory_cortex")
         # Both should gate, but sharp should gate MORE
-        assert g_sharp < g_gentle, (
-            f"Sharp slope should gate more: sharp={g_sharp}, gentle={g_gentle}"
-        )
+        assert (
+            g_sharp < g_gentle
+        ), f"Sharp slope should gate more: sharp={g_sharp}, gentle={g_gentle}"
 
     def test_slow_timescale(self):
         """Astrocyte dynamics should operate on seconds timescale, not milliseconds."""
@@ -158,9 +162,14 @@ class TestAstrocyteNetworkIntegration:
 
         cfg = NeuromorphicConfig(
             populations=PopulationConfig(
-                sensory_cortex=50, motor_cortex=50, brainstem=20,
-                association_cortex=50, predictive_layer=30,
-                working_memory=30, cerebellum=20, reflex_arc=10,
+                sensory_cortex=50,
+                motor_cortex=50,
+                brainstem=20,
+                association_cortex=50,
+                predictive_layer=30,
+                working_memory=30,
+                cerebellum=20,
+                reflex_arc=10,
             ),
             astrocyte=AstrocyteConfig(enabled=True, tau_calcium=50.0),
         )

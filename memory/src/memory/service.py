@@ -8,14 +8,12 @@ and experiences with vector embeddings for semantic retrieval.
 import asyncio
 import json
 from dataclasses import asdict
-from typing import Any, Optional
-
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from activelearning import BaseService, get_embedding_service
 from activelearning.embeddings import is_zero_vector
 from activelearning.subjects import Subjects
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from memory.models import Episode, MemoryQuery, MemoryResult
 
@@ -34,7 +32,7 @@ class MemoryService(BaseService):
 
     def __init__(self):
         super().__init__("memory", use_database=True, use_event_bus=True)
-        self._qdrant: Optional[AsyncQdrantClient] = None
+        self._qdrant: AsyncQdrantClient | None = None
         self._embedding_service = get_embedding_service()
 
     async def _setup(self) -> None:
@@ -277,7 +275,7 @@ class MemoryService(BaseService):
         """Handle memory store requests."""
         try:
             episode = Episode(**data)
-            episode_id = await self.store_episode(episode)
+            await self.store_episode(episode)
             # EventBus handles serialization automatically
         except Exception as e:
             self.logger.error(f"Error storing memory: {e}")
@@ -286,7 +284,7 @@ class MemoryService(BaseService):
         """Handle memory query requests."""
         try:
             query = MemoryQuery(**data)
-            results = await self.recall_by_similarity(
+            await self.recall_by_similarity(
                 query.query,
                 limit=query.limit,
                 min_score=query.min_score,

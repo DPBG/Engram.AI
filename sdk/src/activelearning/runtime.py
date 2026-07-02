@@ -10,10 +10,11 @@ import logging
 import os
 import signal
 import sys
+from typing import Any
 
-from activelearning.nats_client import EventBus
-from activelearning.embeddings import EmbeddingService
 from activelearning.database import Database
+from activelearning.embeddings import EmbeddingService
+from activelearning.nats_client import EventBus
 
 # Configure logging
 logging.basicConfig(
@@ -31,7 +32,7 @@ class SDKRuntime:
     shared resources to other components.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.bus: EventBus = EventBus()
         self.embeddings: EmbeddingService = EmbeddingService()
         self.db: Database = Database()
@@ -60,10 +61,13 @@ class SDKRuntime:
         await self.bus.subscribe("system.health", self._handle_health_check)
 
         # Publish startup event
-        await self.bus.publish("system.health", {
-            "component": "sdk",
-            "status": "running",
-        })
+        await self.bus.publish(
+            "system.health",
+            {
+                "component": "sdk",
+                "status": "running",
+            },
+        )
 
         logger.info("SDK Runtime started successfully")
 
@@ -72,10 +76,13 @@ class SDKRuntime:
         logger.info("Stopping SDK Runtime...")
 
         # Publish shutdown event
-        await self.bus.publish("system.health", {
-            "component": "sdk",
-            "status": "stopping",
-        })
+        await self.bus.publish(
+            "system.health",
+            {
+                "component": "sdk",
+                "status": "stopping",
+            },
+        )
 
         # Close connections
         await self.bus.close()
@@ -93,19 +100,22 @@ class SDKRuntime:
 
         await self.stop()
 
-    async def _handle_shutdown(self, data: dict) -> None:
+    async def _handle_shutdown(self, data: dict[str, Any]) -> None:
         """Handle system shutdown event."""
         logger.info(f"Received shutdown event: {data}")
         self._shutdown_event.set()
 
-    async def _handle_health_check(self, data: dict) -> None:
+    async def _handle_health_check(self, data: dict[str, Any]) -> None:
         """Handle health check events."""
         if data.get("request") == "ping":
-            await self.bus.publish("system.health", {
-                "component": "sdk",
-                "status": "running",
-                "response": "pong",
-            })
+            await self.bus.publish(
+                "system.health",
+                {
+                    "component": "sdk",
+                    "status": "running",
+                    "response": "pong",
+                },
+            )
 
     def shutdown(self) -> None:
         """Signal the runtime to shut down."""
@@ -132,7 +142,7 @@ async def main() -> None:
     # Setup signal handlers
     loop = asyncio.get_event_loop()
 
-    def signal_handler():
+    def signal_handler() -> None:
         logger.info("Received shutdown signal")
         runtime.shutdown()
 

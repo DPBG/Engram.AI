@@ -158,6 +158,7 @@ class QueueStateManager:
         if not state:
             return []
         return [
-            s for s in state.get("sessions", [])
+            s
+            for s in state.get("sessions", [])
             if s.get("status") in ("queued", "running", "pending", "starting")
         ]

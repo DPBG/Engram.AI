@@ -10,7 +10,6 @@ Covers:
 
 import asyncio
 import os
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -18,7 +17,7 @@ import pytest
 
 from neuromorphic.config import MotorFeedbackConfig, NeuromorphicConfig
 from neuromorphic.encoding import DynamicSensoryAllocator
-from neuromorphic.mujoco_body import MuJoCoBody, CHANNEL_ACTUATORS, STOCHASTIC_CHANNELS
+from neuromorphic.mujoco_body import CHANNEL_ACTUATORS, STOCHASTIC_CHANNELS, MuJoCoBody
 
 _has_mujoco = pytest.importorskip("mujoco", reason="MuJoCo not installed")
 
@@ -123,9 +122,9 @@ class TestMuJoCoBody:
         for channel, actuators in CHANNEL_ACTUATORS.items():
             result = self.body.step_command(channel, 0.5)
             expected_dims = len(actuators) * 2  # pos + vel per actuator
-            assert len(result["proprioceptive_state"]) == expected_dims, (
-                f"{channel}: expected {expected_dims}, got {len(result['proprioceptive_state'])}"
-            )
+            assert (
+                len(result["proprioceptive_state"]) == expected_dims
+            ), f"{channel}: expected {expected_dims}, got {len(result['proprioceptive_state'])}"
 
     def test_get_full_state(self):
         """Full state contains all expected fields."""
@@ -146,18 +145,38 @@ class TestMuJoCoBody:
     def test_all_29_joints_exist(self):
         """All 29 DOF joints and actuators exist in the model."""
         from neuromorphic.mujoco_body import MuJoCoBody
+
         body = MuJoCoBody(steps_per_command=50)
         expected_joints = [
-            "waist_yaw", "waist_roll", "waist_pitch",
-            "neck_pitch", "neck_yaw",
-            "r_shoulder_pitch", "r_shoulder_roll", "r_shoulder_yaw",
-            "r_elbow", "r_wrist_pitch", "r_wrist_yaw",
-            "l_shoulder_pitch", "l_shoulder_roll", "l_shoulder_yaw",
-            "l_elbow", "l_wrist_pitch", "l_wrist_yaw",
-            "r_hip_yaw", "r_hip_roll", "r_hip_pitch",
-            "r_knee", "r_ankle_pitch", "r_ankle_roll",
-            "l_hip_yaw", "l_hip_roll", "l_hip_pitch",
-            "l_knee", "l_ankle_pitch", "l_ankle_roll",
+            "waist_yaw",
+            "waist_roll",
+            "waist_pitch",
+            "neck_pitch",
+            "neck_yaw",
+            "r_shoulder_pitch",
+            "r_shoulder_roll",
+            "r_shoulder_yaw",
+            "r_elbow",
+            "r_wrist_pitch",
+            "r_wrist_yaw",
+            "l_shoulder_pitch",
+            "l_shoulder_roll",
+            "l_shoulder_yaw",
+            "l_elbow",
+            "l_wrist_pitch",
+            "l_wrist_yaw",
+            "r_hip_yaw",
+            "r_hip_roll",
+            "r_hip_pitch",
+            "r_knee",
+            "r_ankle_pitch",
+            "r_ankle_roll",
+            "l_hip_yaw",
+            "l_hip_roll",
+            "l_hip_pitch",
+            "l_knee",
+            "l_ankle_pitch",
+            "l_ankle_roll",
         ]
         for jname in expected_joints:
             assert body._model.joint(jname).id >= 0, f"Joint {jname} missing"
@@ -165,11 +184,13 @@ class TestMuJoCoBody:
 
     def test_guide_to_pose_wave(self):
         """Guide to a wave pose using shoulder roll."""
-        result = self.body.guide_to_pose({
-            "r_shoulder_roll": 120,
-            "r_shoulder_pitch": 0,
-            "r_elbow": 40,
-        })
+        result = self.body.guide_to_pose(
+            {
+                "r_shoulder_roll": 120,
+                "r_shoulder_pitch": 0,
+                "r_elbow": 40,
+            }
+        )
         assert result["success"] is True
         assert result["guided"] is True
         assert result["channel"] == "manipulation"
@@ -177,16 +198,35 @@ class TestMuJoCoBody:
     def test_guide_to_pose_all_joints(self):
         """Guide specifying all 29 joints doesn't error."""
         all_joints = {
-            "waist_yaw": 0, "waist_roll": 0, "waist_pitch": 0,
-            "neck_pitch": 0, "neck_yaw": 0,
-            "r_shoulder_pitch": 0, "r_shoulder_roll": 0, "r_shoulder_yaw": 0,
-            "r_elbow": 0, "r_wrist_pitch": 0, "r_wrist_yaw": 0,
-            "l_shoulder_pitch": 0, "l_shoulder_roll": 0, "l_shoulder_yaw": 0,
-            "l_elbow": 0, "l_wrist_pitch": 0, "l_wrist_yaw": 0,
-            "r_hip_yaw": 0, "r_hip_roll": 0, "r_hip_pitch": 0,
-            "r_knee": 0, "r_ankle_pitch": 0, "r_ankle_roll": 0,
-            "l_hip_yaw": 0, "l_hip_roll": 0, "l_hip_pitch": 0,
-            "l_knee": 0, "l_ankle_pitch": 0, "l_ankle_roll": 0,
+            "waist_yaw": 0,
+            "waist_roll": 0,
+            "waist_pitch": 0,
+            "neck_pitch": 0,
+            "neck_yaw": 0,
+            "r_shoulder_pitch": 0,
+            "r_shoulder_roll": 0,
+            "r_shoulder_yaw": 0,
+            "r_elbow": 0,
+            "r_wrist_pitch": 0,
+            "r_wrist_yaw": 0,
+            "l_shoulder_pitch": 0,
+            "l_shoulder_roll": 0,
+            "l_shoulder_yaw": 0,
+            "l_elbow": 0,
+            "l_wrist_pitch": 0,
+            "l_wrist_yaw": 0,
+            "r_hip_yaw": 0,
+            "r_hip_roll": 0,
+            "r_hip_pitch": 0,
+            "r_knee": 0,
+            "r_ankle_pitch": 0,
+            "r_ankle_roll": 0,
+            "l_hip_yaw": 0,
+            "l_hip_roll": 0,
+            "l_hip_pitch": 0,
+            "l_knee": 0,
+            "l_ankle_pitch": 0,
+            "l_ankle_roll": 0,
         }
         result = self.body.guide_to_pose(all_joints)
         assert result["success"] is True
@@ -200,6 +240,7 @@ class TestMotorFeedbackAdapter:
 
     def setup_method(self):
         from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
+
         self.config = MotorFeedbackConfig(
             enabled=True,
             motor_rstdp_enabled=False,
@@ -250,10 +291,12 @@ class TestMotorFeedbackAdapter:
     async def test_real_actuator_routing(self):
         """With active heartbeat, command routes to real actuator."""
         # Simulate heartbeat
-        await self.adapter._handle_heartbeat({
-            "channel": "manipulation",
-            "actuator_id": "right_arm_v1",
-        })
+        await self.adapter._handle_heartbeat(
+            {
+                "channel": "manipulation",
+                "actuator_id": "right_arm_v1",
+            }
+        )
         assert self.adapter.is_real("manipulation")
 
         await self.adapter.handle_motor_command("manipulation", 0.6, "trace-3")
@@ -269,10 +312,12 @@ class TestMotorFeedbackAdapter:
     async def test_heartbeat_timeout(self):
         """Channel reverts to virtual after heartbeat timeout."""
         self.config.heartbeat_timeout_s = 0.1
-        await self.adapter._handle_heartbeat({
-            "channel": "head",
-            "actuator_id": "neck_v1",
-        })
+        await self.adapter._handle_heartbeat(
+            {
+                "channel": "head",
+                "actuator_id": "neck_v1",
+            }
+        )
         assert self.adapter.is_real("head")
 
         # Wait for timeout
@@ -282,10 +327,12 @@ class TestMotorFeedbackAdapter:
     @pytest.mark.asyncio
     async def test_mixed_channels(self):
         """Some channels real, others virtual simultaneously."""
-        await self.adapter._handle_heartbeat({
-            "channel": "manipulation",
-            "actuator_id": "arm_v1",
-        })
+        await self.adapter._handle_heartbeat(
+            {
+                "channel": "manipulation",
+                "actuator_id": "arm_v1",
+            }
+        )
 
         assert self.adapter.is_real("manipulation")
         assert not self.adapter.is_real("locomotion")
@@ -299,11 +346,13 @@ class TestMotorFeedbackAdapter:
     @pytest.mark.asyncio
     async def test_teach_action(self):
         """Teach action runs guide_to_pose + publishes outcome + DA boost + progress."""
-        await self.adapter._handle_guidance({
-            "action": "teach",
-            "joints": {"r_shoulder_roll": 90, "r_elbow": 30},
-            "repeats": 2,
-        })
+        await self.adapter._handle_guidance(
+            {
+                "action": "teach",
+                "joints": {"r_shoulder_roll": 90, "r_elbow": 30},
+                "repeats": 2,
+            }
+        )
         # 2 reps: each publishes motor.outcome + neuromod.teach.da + teach.progress + body.state
         # = 4 calls per rep * 2 reps = 8
         subjects = [c[0][0] for c in self.bus.publish.call_args_list]
@@ -316,14 +365,15 @@ class TestMotorFeedbackAdapter:
     @pytest.mark.asyncio
     async def test_teach_caps_repeats(self):
         """Teach caps repeats at 20."""
-        await self.adapter._handle_guidance({
-            "action": "teach",
-            "joints": {"r_hip_pitch": 10},
-            "repeats": 100,
-        })
+        await self.adapter._handle_guidance(
+            {
+                "action": "teach",
+                "joints": {"r_hip_pitch": 10},
+                "repeats": 100,
+            }
+        )
         progress_calls = [
-            c[0][1] for c in self.bus.publish.call_args_list
-            if c[0][0] == "teach.progress"
+            c[0][1] for c in self.bus.publish.call_args_list if c[0][0] == "teach.progress"
         ]
         assert len(progress_calls) == 20
         assert progress_calls[-1]["total"] == 20
@@ -338,7 +388,10 @@ class TestSensoryAllocatorFreeze:
     def _make_allocator(self, n_sensory=1000):
         config = MagicMock()
         config.encoding.modality_weights = {
-            "visual": 3.0, "auditory": 2.0, "tactile": 1.0, "proprioceptive": 1.0,
+            "visual": 3.0,
+            "auditory": 2.0,
+            "tactile": 1.0,
+            "proprioceptive": 1.0,
         }
         config.encoding.inactivity_timeout = 500
         config.populations.sensory_cortex = n_sensory
@@ -464,20 +517,26 @@ class TestMotorRstdpSeparation:
         assert cfg.enabled is True
         assert cfg.motor_rstdp_enabled is True
 
-    @patch.dict("os.environ", {
-        "NEURO_MOTOR_FEEDBACK": "1",
-        "NEURO_MOTOR_RSTDP": "0",
-    })
+    @patch.dict(
+        "os.environ",
+        {
+            "NEURO_MOTOR_FEEDBACK": "1",
+            "NEURO_MOTOR_RSTDP": "0",
+        },
+    )
     def test_env_var_separation(self):
         """Env vars control feedback and R-STDP independently."""
         cfg = NeuromorphicConfig.from_env()
         assert cfg.motor_feedback.enabled is True
         assert cfg.motor_feedback.motor_rstdp_enabled is False
 
-    @patch.dict("os.environ", {
-        "NEURO_MOTOR_FEEDBACK": "1",
-        "NEURO_MOTOR_RSTDP": "1",
-    })
+    @patch.dict(
+        "os.environ",
+        {
+            "NEURO_MOTOR_FEEDBACK": "1",
+            "NEURO_MOTOR_RSTDP": "1",
+        },
+    )
     def test_env_var_both_enabled(self):
         """Both env vars set to 1."""
         cfg = NeuromorphicConfig.from_env()
@@ -499,13 +558,16 @@ class TestMotorRstdpSeparation:
         assert cfg.mujoco_proprio_hz == 5.0
         assert cfg.mujoco_viz_hz == 10.0
 
-    @patch.dict("os.environ", {
-        "NEURO_MOTOR_FEEDBACK": "1",
-        "NEURO_MUJOCO_CONTINUOUS": "1",
-        "NEURO_MUJOCO_PHYSICS_HZ": "100",
-        "NEURO_MUJOCO_PROPRIO_HZ": "10",
-        "NEURO_MUJOCO_VIZ_HZ": "20",
-    })
+    @patch.dict(
+        "os.environ",
+        {
+            "NEURO_MOTOR_FEEDBACK": "1",
+            "NEURO_MUJOCO_CONTINUOUS": "1",
+            "NEURO_MUJOCO_PHYSICS_HZ": "100",
+            "NEURO_MUJOCO_PROPRIO_HZ": "10",
+            "NEURO_MUJOCO_VIZ_HZ": "20",
+        },
+    )
     def test_continuous_env_vars(self):
         """Continuous physics env vars are parsed correctly."""
         cfg = NeuromorphicConfig.from_env()
@@ -575,8 +637,8 @@ class TestMuJoCoBodyContinuous:
         vec = self.body.get_proprioceptive_vector()
         n = len(self.body._joint_channel)
         # Positions and velocities normalized to [-1, 1]
-        assert np.all(vec[:n * 2] >= -1.01)  # N pos + N vel
-        assert np.all(vec[:n * 2] <= 1.01)
+        assert np.all(vec[: n * 2] >= -1.01)  # N pos + N vel
+        assert np.all(vec[: n * 2] <= 1.01)
         # Height normalized is non-negative
         assert vec[n * 2 + 4] >= 0.0  # height_norm (after quat)
         # Contacts scaled
@@ -597,6 +659,7 @@ class TestMotorFeedbackAdapterContinuous:
 
     def setup_method(self):
         from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
+
         self.config = MotorFeedbackConfig(
             enabled=True,
             mujoco_continuous=True,
