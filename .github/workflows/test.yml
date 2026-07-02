@@ -46,6 +46,31 @@ jobs:
           ENGRAM_SKIP_MUJOCO_LOOP: "1"
         run: uv run --extra dev python -m pytest tests/ -v -p no:anchorpy --ignore=tests/test_cognitive_bridge_lifecycle.py
 
+  benchmark-regression:
+    name: Neuromorphic benchmark regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fast small-network profile (~1 min). Runs on all PRs; touches neuromorphic/ most often.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Run benchmark CI performance gate
+        working-directory: neuromorphic
+        env:
+          ENGRAM_SKIP_MUJOCO_LOOP: "1"
+        run: uv run --extra dev python scripts/benchmark_ci_gate.py
+
+      - name: Run benchmark gate unit tests
+        working-directory: neuromorphic
+        run: uv run --extra dev python -m pytest tests/test_benchmark_ci_gate.py -v -p no:anchorpy
+
   sdk:
     name: SDK test suite
     runs-on: ubuntu-latest

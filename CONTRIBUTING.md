@@ -189,12 +189,44 @@ cd neuromorphic && uv run --extra dev python -m pytest tests/ -v -p no:anchorpy
 On every pull request to `dev` (and `main`), the **`Tests`** workflow runs:
 
 - the **neuromorphic** test suite on **Python 3.11 and 3.12**,
+- a **benchmark regression gate** (`neuromorphic/scripts/benchmark_ci_gate.py`) on a small
+  fixed-size network — fails if step timing regresses more than **25%** vs.
+  `neuromorphic/benchmarks/ci_performance_baseline.json` (see
+  [Performance regression gate](#performance-regression-gate)),
 - the **SDK** test suite on **Python 3.11 and 3.12**,
 - a **blocking lint gate** (`ruff --select E9,F63,F7,F82` — catches real bugs like
   undefined names), and
 - **advisory** full-`ruff`, `black --check`, and `mypy` checks.
 
 Your PR can be merged once the blocking jobs are green.
+
+### Performance regression gate
+
+PRs run `neuromorphic/scripts/benchmark_ci_gate.py`, which invokes
+`scripts/benchmark.py` on a **small fixed-size network** (not the ~1M-neuron
+production scale). Results are compared to the committed baseline at
+`neuromorphic/benchmarks/ci_performance_baseline.json`.
+
+| Metric | Baseline field | Failure when |
+|--------|----------------|--------------|
+| Simulation throughput | `speed_steps_per_sec` | Drops more than **25%** below baseline |
+| Mean step time | `speed_mean_step_ms` | Exceeds baseline by more than **25%** |
+| Learning throughput | `learning_steps_per_sec` | Drops more than **25%** below baseline |
+
+To reproduce locally:
+
+```bash
+cd neuromorphic && uv run --extra dev python scripts/benchmark_ci_gate.py
+```
+
+To capture fresh metrics after an intentional performance change (maintainers only):
+
+```bash
+cd neuromorphic && uv run --extra dev python scripts/benchmark_ci_gate.py --update-baseline
+```
+
+Update `ci_performance_baseline.json` in a separate commit after reviewing the
+new numbers — do not widen the threshold to make a regression pass silently.
 
 ## Code Standards
 
