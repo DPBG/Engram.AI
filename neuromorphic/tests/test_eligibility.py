@@ -94,6 +94,50 @@ class TestEligibilityTraces:
         sg2.set_state(state)
         np.testing.assert_allclose(sg2.eligibility[:5], 0.42, atol=1e-6)
 
+    @pytest.mark.parametrize("interval", [1, 3, 10])
+    @pytest.mark.parametrize("sparse_path", [True, False])
+    def test_interval_batching_equals_every_step(self, interval, sparse_path):
+        """Invariant 1: a batched apply_neuromodulation_and_decay(interval=N)
+        must be mathematically equivalent to N every-step (interval=1) calls.
+
+        Regression for the missing geometric-sum gain: without it the batched
+        weight change was ~1/N of the every-step result (2.997x too small at the
+        default interval=3, decay=0.999).
+        """
+        modulator = 0.5  # constant over the interval (== its own average)
+
+        def make():
+            sg = self._make_synapse()
+            sg.eligibility[:] = 0.01  # identical seed trace, well below w_max
+            if sparse_path:
+                sg._elig_active = np.arange(sg.nnz, dtype=np.int32)
+            else:
+                sg._elig_active = None  # exercise the full-array branch
+            return sg
+
+        # Ground truth: apply every single step for `interval` steps.
+        every = make()
+        w0 = every.weights.data.copy()
+        for _ in range(interval):
+            every.apply_neuromodulation_and_decay(modulator, interval=1)
+        truth_dw = every.weights.data - w0
+
+        # Batched: one call covering the whole interval.
+        batched = make()
+        batched.apply_neuromodulation_and_decay(modulator, interval=interval)
+        batched_dw = batched.weights.data - w0
+
+        # Weight change matches every-step (the bug made batched ~1/N of this)...
+        np.testing.assert_allclose(batched_dw, truth_dw, rtol=1e-4, atol=1e-7)
+        # ...and the final eligibility trace matches too.
+        np.testing.assert_allclose(
+            batched.eligibility, every.eligibility, rtol=1e-4, atol=1e-7
+        )
+        # Sanity: for interval>1 the update is non-trivial (guards against a
+        # degenerate all-zero "match").
+        if interval > 1:
+            assert np.abs(truth_dw).sum() > 0.0
+
 
 class TestBCMMetaplasticity:
     """Test BCM per-neuron modification threshold."""

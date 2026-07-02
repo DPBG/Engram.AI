@@ -200,6 +200,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `code.decision.>` | **kernel only** | meta, waiters | Per-trace code decisions. JetStream. |
 | `kernel.status` | dashboard (request) | kernel | Request/reply status. |
 | `kernel.status.response` | kernel | dashboard | Reply payload. |
+| `kernel.heartbeat` | kernel | kernel-watchdog, dashboard | Liveness pulse published by the Kernel on a fixed interval (E1.9.3). Absence triggers SAFE_HALT via the kernel-loss watchdog. |
 
 ### Policy (Kernel-owned; see §3)
 
@@ -217,6 +218,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `cognitive.response.validate` | neuro | kernel | Brain asks Kernel to validate an LLM response. |
 | `cognitive.response.validated` | **kernel only** | neuro | Kernel's attestation. |
 | `cognitive.response.rejected` | kernel | neuro, dashboard | |
+| `cognitive.query` | neuro | cognitive-bridge | Legacy direct query; superseded by `proposal.new` → `cognitive.execute`. |
 
 ### Safety
 

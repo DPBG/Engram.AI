@@ -28,6 +28,7 @@ from activelearning.embeddings import (
     embed_text,
     get_embedding_service,
 )
+from activelearning.llm import LLMClient, LLMConfig, LLMError
 from activelearning.messages import (
     SUBJECT_SCHEMAS,
     MessageValidationError,
@@ -36,6 +37,7 @@ from activelearning.messages import (
 )
 from activelearning.nats_client import EventBus, get_event_bus
 from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuator, register_sensor
+from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
 from activelearning.signing import (
     DECISION_KEY_ENV,
     sign_decision,
@@ -77,6 +79,14 @@ __all__ = [
     "get_embedding_service",
     "embed_text",
     "embed_batch",
+    # Vector store
+    "QdrantStore",
+    "QdrantHit",
+    "QdrantPoint",
+    # LLM (text generation / chat)
+    "LLMClient",
+    "LLMConfig",
+    "LLMError",
     # Configuration
     "ServiceConfig",
     # Base service

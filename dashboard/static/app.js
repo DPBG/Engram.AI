@@ -18,6 +18,7 @@ class ActiveLearningAI {
         this.videoQueueState = null; // { queue, active, completed, queue_length }
         this.approvalTimers = {}; // trace_id -> timeoutId
         this.approvalsSent = new Set(); // trace_ids already responded to
+        this.isHalted = false;
 
         this.init();
     }
@@ -31,6 +32,7 @@ class ActiveLearningAI {
         setInterval(() => this.fetchSystemInfo(), 30000);
         setInterval(() => this.fetchFlywheel(), 20000);
         setInterval(() => this.fetchNeuro(), 5000);
+        setInterval(() => this.fetchKernelDecisionRates(), 60000);
         setInterval(() => this._checkGatewayStale(), 5000);
         setInterval(() => this.fetchVideoSessions(), 10000);
     }
@@ -137,6 +139,11 @@ class ActiveLearningAI {
                     this.renderVideoQueue();
                 }
                 this.updateTopStats(msg.data);
+                if (msg.data.halt_state) this.updateHaltUI(msg.data.halt_state);
+                if (msg.data.kernel_decision_rates) this.renderKernelDecisionRates(msg.data.kernel_decision_rates);
+                break;
+            case 'safe_halt_status':
+                this.updateHaltUI(msg.data);
                 break;
             case 'gateway_update':
                 this.renderGateway(msg.data);
@@ -190,6 +197,9 @@ class ActiveLearningAI {
             case 'visual_body_frame':
                 this.updateBodySelfView(msg.data);
                 break;
+            case 'kernel_decision_rates':
+                this.renderKernelDecisionRates(msg.data);
+                break;
         }
     }
 
@@ -240,6 +250,7 @@ class ActiveLearningAI {
             this.fetchNeuro(),
             this.fetchGateway(),
             this.fetchVideoSessions(),
+            this.fetchKernelDecisionRates(),
         ]);
     }
 
@@ -273,6 +284,13 @@ class ActiveLearningAI {
             this.renderFlywheel(d);
             this.updateStatChip('stat-knowledge', d.total_knowledge_entries || 0);
         } catch (e) { console.warn('flywheel:', e); }
+    }
+
+    async fetchKernelDecisionRates() {
+        try {
+            const d = await (await fetch('/api/kernel/decision-rates')).json();
+            this.renderKernelDecisionRates(d);
+        } catch (e) { console.warn('kernel decision rates:', e); }
     }
 
     async fetchInsights() {
@@ -701,6 +719,38 @@ class ActiveLearningAI {
         return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
     }
 
+    // ─── Render: Kernel Decision Rates (governance signal, issue #143) ─
+
+    renderKernelDecisionRates(d) {
+        if (!d || !d.all_time) return; // no Kernel publish received yet
+
+        // Prefer the recent window once it has data; fall back to all-time
+        // early on so the panel isn't empty for the first window_hours.
+        const bucket = (d.window && d.window.total > 0) ? d.window : d.all_time;
+        const usingWindow = bucket === d.window;
+        const rates = bucket.rates || {};
+
+        const setBar = (key, upperKey) => {
+            const pct = Math.round((rates[upperKey] || 0) * 100);
+            document.getElementById(`kr-${key}-bar`).style.width = `${pct}%`;
+            document.getElementById(`kr-${key}-val`).textContent = `${pct}%`;
+        };
+        setBar('allow', 'ALLOW');
+        setBar('transform', 'TRANSFORM');
+        setBar('deny', 'DENY');
+        setBar('defer', 'DEFER');
+
+        document.getElementById('kernel-rates-meta').textContent = bucket.total > 0
+            ? `${bucket.total} decisions (${usingWindow ? `last ${d.window_hours}h` : 'all-time'})`
+            : 'No Kernel decisions logged yet';
+
+        const mp = d.by_source && d.by_source['meta-programmer'];
+        const mpBucket = mp ? ((mp.window && mp.window.total > 0) ? mp.window : mp.all_time) : null;
+        document.getElementById('kr-mp-summary').textContent = (mpBucket && mpBucket.total > 0)
+            ? `${Math.round((mpBucket.rates.ALLOW || 0) * 100)}% allow, ${Math.round((mpBucket.rates.DENY || 0) * 100)}% deny (n=${mpBucket.total})`
+            : 'no data yet';
+    }
+
     // ─── Render: Insights ────────────────────────────────────────────
 
     renderInsights(insights) {
@@ -923,6 +973,58 @@ class ActiveLearningAI {
                 data: { trace_id: traceId, channel: channel, approved: approved },
             }));
         }
+    }
+
+    // ─── SAFE_HALT Controls ──────────────────────────────────────────
+
+    updateHaltUI(state) {
+        const halted = !!state.halted;
+        this.isHalted = halted;
+
+        const dot = document.getElementById('halt-dot');
+        const text = document.getElementById('halt-status-text');
+        const reason = document.getElementById('halt-reason');
+        const panel = document.getElementById('halt-panel');
+        const btnHalt = document.getElementById('btn-halt');
+        const btnResume = document.getElementById('btn-resume');
+
+        if (!dot) return;
+
+        dot.className = 'halt-dot' + (halted ? ' halted' : '');
+        text.className = 'halt-status-text' + (halted ? ' halted' : '');
+        text.textContent = halted ? 'HALTED' : 'Operational';
+        panel.className = 'panel halt-panel' + (halted ? ' halted' : '');
+
+        const msg = state.reason || '';
+        if (halted && msg) {
+            reason.textContent = msg;
+            reason.style.display = 'block';
+        } else {
+            reason.style.display = 'none';
+        }
+
+        btnHalt.disabled = halted;
+        btnResume.disabled = !halted;
+    }
+
+    sendSafeHalt() {
+        if (this.isHalted) return;
+        const ok = confirm('Send EMERGENCY STOP (SAFE_HALT) to the Kernel?\n\nThis will deny ALL proposals until manually resumed.');
+        if (!ok) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({
+            type: 'safe_halt',
+            data: { reason: 'operator SAFE_HALT via dashboard', operator_id: 'dashboard' },
+        }));
+    }
+
+    sendSafeResume() {
+        if (!this.isHalted) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        this.ws.send(JSON.stringify({
+            type: 'safe_resume',
+            data: { operator_id: 'dashboard' },
+        }));
     }
 
     showNeuralReaction(data) {
@@ -1288,7 +1390,7 @@ class ActiveLearningAI {
 
 // ─── Boot ─────────────────────────────────────────────────────────
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => new ActiveLearningAI());
+    document.addEventListener('DOMContentLoaded', () => { window._ai = new ActiveLearningAI(); });
 } else {
-    new ActiveLearningAI();
+    window._ai = new ActiveLearningAI();
 }

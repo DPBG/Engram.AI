@@ -65,6 +65,11 @@ class MotorFeedbackAdapter:
         self._curriculum: Optional[TaskCurriculum] = None
         self._tasks_enabled = config.tasks_enabled
         self._physics_running = False
+        # ActuatorPlugin registry: channel → plugin.  When a plugin is
+        # registered and is_real() is True for that channel, handle_motor_command
+        # dispatches via plugin.execute() instead of publishing to motor.execute.{channel}.
+        self._actuator_plugins: dict[str, Any] = {}  # ActuatorPlugin, lazy-imported
+        self._started = False
 
     async def start(self) -> None:
         """Subscribe to actuator heartbeats and guidance commands."""
@@ -85,6 +90,13 @@ class MotorFeedbackAdapter:
                 "population_vector=True requires mujoco_continuous=True for per-joint "
                 "control. Non-continuous step_command uses uniform torque."
             )
+        for ch, plugin in self._actuator_plugins.items():
+            try:
+                await plugin.start(self._bus)
+                logger.info("Started pre-registered ActuatorPlugin for channel '%s'", ch)
+            except Exception as exc:
+                logger.error("Failed to start ActuatorPlugin for channel '%s': %s", ch, exc)
+        self._started = True
         logger.info("MotorFeedbackAdapter started — listening for actuator heartbeats + guidance")
 
     async def stop(self) -> None:
@@ -101,6 +113,12 @@ class MotorFeedbackAdapter:
             await self._bus.unsubscribe(_HEARTBEAT_SUBJECT)
         except Exception:
             pass  # best-effort on shutdown
+        self._started = False
+        for ch, plugin in self._actuator_plugins.items():
+            try:
+                await plugin.stop()
+            except Exception as exc:
+                logger.debug("Error stopping ActuatorPlugin for channel '%s': %s", ch, exc)
 
     def _ensure_mujoco(self) -> MuJoCoBody:
         """Lazy-load MuJoCo body on first physics command."""
@@ -111,6 +129,37 @@ class MotorFeedbackAdapter:
                 channel_actuators=self._config.channel_actuators,
             )
         return self._mujoco_body
+
+    def register_plugin(self, channel: str, plugin: Any) -> None:
+        """Register an ActuatorPlugin for a motor channel.
+
+        When a plugin is registered for a channel and ``is_real(channel)`` is
+        True, ``handle_motor_command()`` dispatches directly through
+        ``plugin.execute()`` instead of publishing to ``motor.execute.{channel}``.
+        The NATS fallback is preserved for channels without a registered plugin.
+
+        Args:
+            channel: Motor channel name (e.g. ``"manipulation"``).
+            plugin:  The ActuatorPlugin instance to use for that channel.
+        """
+        self._actuator_plugins[channel] = plugin
+        logger.info(
+            "ActuatorPlugin registered for channel '%s': %s", channel, plugin.actuator_id
+        )
+        if self._started:
+            asyncio.create_task(self._launch_plugin(channel, plugin))
+
+    async def _launch_plugin(self, channel: str, plugin: Any) -> None:
+        """Start a plugin registered after the adapter was already started."""
+        try:
+            await plugin.start(self._bus)
+            logger.info(
+                "Started ActuatorPlugin for channel '%s' (registered post-start)", channel,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to start ActuatorPlugin for channel '%s': %s", channel, exc,
+            )
 
     def is_real(self, channel: str) -> bool:
         """Check if channel has a live real actuator (heartbeat within timeout)."""
@@ -150,17 +199,39 @@ class MotorFeedbackAdapter:
             self._last_cmd_time[channel] = now
 
         if self.is_real(channel):
-            # Forward to real hardware — the real actuator will publish
-            # motor.outcome.{channel} after execution.
-            msg: dict[str, Any] = {
-                "channel": channel,
-                "intensity": intensity,
-                "trace_id": trace_id,
-            }
-            if actuator_intensities:
-                msg["actuator_intensities"] = actuator_intensities
-            await self._bus.publish(f"motor.execute.{channel}", msg)
-            logger.debug("Motor command forwarded to real actuator: %s", channel)
+            plugin = self._actuator_plugins.get(channel)
+            if plugin is not None:
+                # Dispatch directly through the ActuatorPlugin interface.
+                # Lazy import so the module loads without the activelearning SDK.
+                from activelearning.core import ActionProposal, generate_trace_id  # noqa: PLC0415
+                action: dict[str, Any] = {"channel": channel, "intensity": intensity}
+                if actuator_intensities:
+                    action["actuator_intensities"] = actuator_intensities
+                proposal: ActionProposal = ActionProposal(
+                    trace_id=trace_id or generate_trace_id(),
+                    provenance=f"motor.{channel}",
+                    action=action,
+                )
+                outcome_obj = await plugin.execute(proposal)
+                motor_outcome: dict[str, Any] = {
+                    "channel": channel,
+                    "success": outcome_obj.success,
+                    "confidence": 0.9 if outcome_obj.success else 0.1,
+                    "proprioceptive_state": [],
+                    "error_magnitude": 0.0 if outcome_obj.success else 1.0,
+                }
+                await self._bus.publish(f"motor.outcome.{channel}", motor_outcome)
+            else:
+                # Fallback: publish to NATS for an external hardware process.
+                msg: dict[str, Any] = {
+                    "channel": channel,
+                    "intensity": intensity,
+                    "trace_id": trace_id,
+                }
+                if actuator_intensities:
+                    msg["actuator_intensities"] = actuator_intensities
+                await self._bus.publish(f"motor.execute.{channel}", msg)
+            logger.debug("Motor command routed to real actuator: %s", channel)
             return
 
         # Virtual body simulation
