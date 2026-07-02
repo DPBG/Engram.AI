@@ -68,8 +68,10 @@ class MetricsMonitor:
                     meminfo = f.read()
                 total = avail = 0
                 for line in meminfo.split("\n"):
-                    if line.startswith("MemTotal:"): total = int(line.split()[1])
-                    elif line.startswith("MemAvailable:"): avail = int(line.split()[1])
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1])
+                    elif line.startswith("MemAvailable:"):
+                        avail = int(line.split()[1])
                 if total > 0:
                     pct = ((total - avail) / total) * 100
                     if pct > 90:

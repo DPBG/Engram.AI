@@ -13,18 +13,11 @@ Body-profile integration:
 
 import logging
 import re
-import time
-import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 from activelearning import KernelDecisionType as DecisionType
-from activelearning import RiskAnalysis
-from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
-
 from activelearning import (
-    KernelDecisionType as DecisionType,
     RiskAnalysis,
     current_timestamp,
     generate_trace_id,
@@ -45,10 +38,8 @@ class KernelDecision:
     reason: str | None = None
     transformations: list[dict[str, Any]] | None = None
     risk_score: float = 0.0
-    issued_at: int = field(default_factory=lambda: int(time.time() * 1000))
-    expires_at: int | None = None
     issued_at: int = field(default_factory=current_timestamp)
-    expires_at: Optional[int] = None
+    expires_at: int | None = None
 
 
 # Protected paths that cannot be modified
@@ -464,8 +455,6 @@ class KernelEvaluator:
         action: dict[str, Any],
         flags: list[str],
     ) -> dict[str, Any] | None:
-        """Check action against body-profile capability markers and motor limits.
-    ) -> Optional[dict[str, Any]]:
         """Body-profile *hard denials* — capability markers only.
 
         These are unconditional DENYs (a disabled channel/capability) and are
@@ -522,7 +511,7 @@ class KernelEvaluator:
         self,
         action: dict[str, Any],
         flags: list[str],
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Body-profile motor-limit clamp — a TRANSFORM, applied *after* the
         risk thresholds.
 

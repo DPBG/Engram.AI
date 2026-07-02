@@ -126,10 +126,6 @@ def discover_serial_devices() -> list[DiscoveredDevice]:
             logger.debug(f"Skipping system serial port: {port.device}")
             continue
 
-        devices.append(
-            DiscoveredDevice(
-                device_type="serial",
-                device_id=f"serial:{port.device}",
         # Classify as "imu" when the description matches known IMU keywords,
         # so the gateway can instantiate IMUSensor instead of SerialSensor.
         desc_lower = (port.description or "").lower()

@@ -58,7 +58,7 @@ async def _run_until_halt(
     task = asyncio.create_task(wdog.run(publish_halt=_publish))
     try:
         await asyncio.wait_for(halt_seen.wait(), timeout=safety_timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass  # safety net exceeded — test assertions will fail with useful message
     finally:
         task.cancel()
@@ -77,7 +77,7 @@ async def _run_for(
 
     try:
         await asyncio.wait_for(wdog.run(publish_halt=_publish), timeout=duration)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
 
@@ -171,7 +171,7 @@ def test_no_halt_while_heartbeats_live():
                 asyncio.gather(_beat(), wdog.run(publish_halt=_publish)),
                 timeout=2.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
     asyncio.run(_inner())

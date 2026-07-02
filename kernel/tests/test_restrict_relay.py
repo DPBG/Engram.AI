@@ -12,9 +12,7 @@ import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from activelearning.subjects import Subjects
-
 
 # ---------------------------------------------------------------------------
 # Fixture: stub beliefs.profiles per-test so sys.modules is clean after each run.

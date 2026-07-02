@@ -257,7 +257,6 @@ class LearningController:
         metadata = {
             "task_name": task_name,
             "description": task_data["description"],
-            "learned_at": int(__import__("time").time() * 1000),
             "learned_at": current_timestamp(),
             "observation_count": len(self._observation_buffer),
             "sensor_fusion": task_data["sensor_fusion"],

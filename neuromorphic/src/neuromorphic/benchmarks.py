@@ -348,7 +348,7 @@ class ConceptSeparabilityBenchmark:
     - separation_ratio      mean_inter / (mean_intra + 1e-8)
     """
 
-    def __init__(self, net: "NeuromorphicNetwork") -> None:
+    def __init__(self, net: NeuromorphicNetwork) -> None:
         self._net = net
 
     def run(
@@ -455,9 +455,7 @@ class ConceptSeparabilityBenchmark:
         # Leave-one-out nearest-centroid linear probe (no sklearn, unbiased)
         # Pre-compute class sums so each LOO centroid is O(1) to derive
         n_features = mat_unit.shape[1]
-        class_idx = np.array(
-            [int(np.where(unique_labels == lbl)[0][0]) for lbl in labels_arr]
-        )
+        class_idx = np.array([int(np.where(unique_labels == lbl)[0][0]) for lbl in labels_arr])
         class_sums = np.zeros((n_classes, n_features), dtype=np.float64)
         class_counts = np.zeros(n_classes, dtype=np.int64)
         for ci, vec in zip(class_idx, mat_unit):
@@ -484,10 +482,7 @@ class ConceptSeparabilityBenchmark:
             [mat[labels_arr == lbl].mean(axis=0) for lbl in unique_labels],
             dtype=np.float32,
         )
-        top_neurons = [
-            np.argsort(row)[-5:][::-1].tolist()
-            for row in raw_centroids
-        ]
+        top_neurons = [np.argsort(row)[-5:][::-1].tolist() for row in raw_centroids]
 
         return {
             "silhouette_score": silhouette,

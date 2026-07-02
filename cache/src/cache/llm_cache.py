@@ -6,9 +6,7 @@ Uses vector similarity to find cached responses for similar prompts.
 
 import hashlib
 import logging
-import time
 from typing import Any
-from typing import Any, Dict, Optional
 
 from activelearning import (
     EmbeddingService,

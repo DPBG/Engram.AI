@@ -9,9 +9,9 @@ import pytest
 from neuromorphic.benchmarks import (
     AssociationStrengthBenchmark,
     BenchmarkSuite,
+    ConceptSeparabilityBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
-    ConceptSeparabilityBenchmark,
     NoveltyDetectionBenchmark,
     _to_native,
     generate_test_patterns,
@@ -219,10 +219,15 @@ class TestConceptSeparabilityBenchmark:
         result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
         assert "error" not in result
         for key in (
-            "silhouette_score", "linear_probe_accuracy",
-            "mean_intra_class_distance", "mean_inter_class_distance",
-            "separation_ratio", "n_patterns", "n_samples",
-            "concept_neurons", "top_neurons_per_pattern",
+            "silhouette_score",
+            "linear_probe_accuracy",
+            "mean_intra_class_distance",
+            "mean_inter_class_distance",
+            "separation_ratio",
+            "n_patterns",
+            "n_samples",
+            "concept_neurons",
+            "top_neurons_per_pattern",
         ):
             assert key in result, f"missing key: {key}"
 

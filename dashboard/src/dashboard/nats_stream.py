@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import time
-from typing import Optional
 
 from dashboard.safe_halt import update_halt_state
 from dashboard.state import DashboardState
@@ -68,7 +67,7 @@ class NatsStreamManager:
         """Publish a JSON payload to ``subject`` (raises if not connected)."""
         await self.nc.publish(subject, json.dumps(payload).encode())
 
-    async def try_publish(self, subject: str, payload: dict) -> Optional[dict]:
+    async def try_publish(self, subject: str, payload: dict) -> dict | None:
         """Publish JSON, returning ``None`` on success or an error dict on failure.
 
         The error dict matches the dashboard's existing response shape, so route

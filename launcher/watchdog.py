@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 log = logging.getLogger(__name__)
 

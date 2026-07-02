@@ -7,13 +7,14 @@ import logging
 import numpy as np
 from scipy import sparse
 
-import logging
-
 from neuromorphic.compiled_kernels import (
-    COMPILED_STDP_ENABLED,
-    stdp_delta as _compiled_stdp_delta,
-    neuromod_decay_sparse as _compiled_neuromod_decay_sparse,
     neuromod_decay_full as _compiled_neuromod_decay_full,
+)
+from neuromorphic.compiled_kernels import (
+    neuromod_decay_sparse as _compiled_neuromod_decay_sparse,
+)
+from neuromorphic.compiled_kernels import (
+    stdp_delta as _compiled_stdp_delta,
 )
 from neuromorphic.config import (
     BCMConfig,
@@ -435,22 +436,6 @@ class SynapseGroup:
 
         # BCM scaling: modulate A_plus AND A_minus per postsynaptic neuron
         bcm_scale = self._get_bcm_scaling()
-        if bcm_scale is not None and ltp_mask.any():
-            # Per-synapse scaling based on postsynaptic neuron's BCM threshold
-            a_plus_vec = np.float32(p.a_plus) * bcm_scale[rows[active_idx[ltp_mask]]]
-            dw[ltp_mask] = a_plus_vec * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
-        else:
-            dw[ltp_mask] = p.a_plus * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
-
-        # LTD: pre fires after post (dt < 0)
-        # H3: BCM also modulates LTD — active neurons resist BOTH potentiation and depression
-        ltd_mask = dt_spike < 0
-        if bcm_scale is not None and ltd_mask.any():
-            # Inverse BCM for LTD: active neurons have reduced depression
-            a_minus_vec = np.float32(p.a_minus) * bcm_scale[rows[active_idx[ltd_mask]]]
-            dw[ltd_mask] = -a_minus_vec * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(
-                np.float32
-            )
         if bcm_scale is None:
             # Compiled kernel (or NumPy fallback): single fused pass, no temp mask arrays
             dw = _compiled_stdp_delta(dt_spike, p.a_plus, p.tau_plus, p.a_minus, p.tau_minus)
@@ -461,11 +446,15 @@ class SynapseGroup:
             dw = np.zeros(len(active_idx), dtype=np.float32)
             if ltp_mask.any():
                 a_plus_vec = np.float32(p.a_plus) * bcm_scale[rows[active_idx[ltp_mask]]]
-                dw[ltp_mask] = a_plus_vec * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
+                dw[ltp_mask] = a_plus_vec * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(
+                    np.float32
+                )
             ltd_mask = dt_spike < 0
             if ltd_mask.any():
                 a_minus_vec = np.float32(p.a_minus) * bcm_scale[rows[active_idx[ltd_mask]]]
-                dw[ltd_mask] = -a_minus_vec * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(np.float32)
+                dw[ltd_mask] = -a_minus_vec * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(
+                    np.float32
+                )
 
         # Compartment-aware credit assignment: scale dw by compartment activity
         if compartment_activity < 1.0:
@@ -752,9 +741,14 @@ class SynapseGroup:
                 float(decay),
                 p.w_min,
                 p.w_max,
-                plasticity_mask
-                if (plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility))
-                else None,
+                (
+                    plasticity_mask
+                    if (
+                        plasticity_mask is not None
+                        and len(plasticity_mask) == len(self.eligibility)
+                    )
+                    else None
+                ),
             )
             return
 
@@ -811,9 +805,11 @@ class SynapseGroup:
             p.w_min,
             p.w_max,
             float(self._elig_prune_threshold),
-            plasticity_mask
-            if (plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility))
-            else None,
+            (
+                plasticity_mask
+                if (plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility))
+                else None
+            ),
         )
         if not alive.all():
             self._elig_active = idx[alive]

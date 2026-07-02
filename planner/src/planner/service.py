@@ -6,12 +6,8 @@ and manages the execution flow through the Kernel.
 """
 
 import asyncio
-import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
-import json
-from dataclasses import dataclass, field, asdict
-from typing import Any, Optional
 
 from activelearning import BaseService, generate_trace_id
 from activelearning.nats_client import serialize_message
@@ -74,7 +70,9 @@ class PlannerService(BaseService):
 
         # Subscribe to status requests (request-reply)
         await self.event_bus.subscribe(
-            "planner.status", self._handle_status, is_request_handler=True,
+            "planner.status",
+            self._handle_status,
+            is_request_handler=True,
         )
 
         # Start action processor

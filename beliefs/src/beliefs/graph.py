@@ -7,16 +7,11 @@ confidence updates, contradiction detection, and belief propagation.
 
 import logging
 import time
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
 
 import networkx as nx
-
 from activelearning import current_timestamp, generate_trace_id
 
 if TYPE_CHECKING:
@@ -73,7 +68,7 @@ class BeliefEdge:
     strength: float = 1.0
     evidence: str | None = None
     created_at: int = field(default_factory=lambda: int(time.time() * 1000))
-    evidence: Optional[str] = None
+    evidence: str | None = None
     created_at: int = field(default_factory=current_timestamp)
 
 

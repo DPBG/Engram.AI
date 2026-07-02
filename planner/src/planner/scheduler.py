@@ -10,7 +10,6 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
-from typing import Any, Optional
 
 from activelearning import current_timestamp
 
@@ -36,7 +35,7 @@ class PendingAction:
     created_at: int = field(default_factory=lambda: int(time.time() * 1000))
     expires_at: int | None = None
     created_at: int = field(default_factory=current_timestamp)
-    expires_at: Optional[int] = None
+    expires_at: int | None = None
 
 
 class Scheduler:
@@ -130,10 +129,7 @@ class Scheduler:
         now = int(time.time() * 1000)
         self._pending = [a for a in self._pending if a.expires_at is None or a.expires_at > now]
         now = current_timestamp()
-        self._pending = [
-            a for a in self._pending
-            if a.expires_at is None or a.expires_at > now
-        ]
+        self._pending = [a for a in self._pending if a.expires_at is None or a.expires_at > now]
 
         if not self._pending:
             return None

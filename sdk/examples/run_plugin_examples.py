@@ -27,10 +27,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from minimal_actuator import LedCommand, LedStripActuator
 from minimal_sensor import TemperatureSensor
 
-
 # ---------------------------------------------------------------------------
 # Standalone demo — no NATS, no running services required.
 # ---------------------------------------------------------------------------
+
 
 async def run_standalone() -> None:
     """Run both plugins without any NATS connection."""
@@ -61,9 +61,9 @@ async def run_standalone() -> None:
 
     print("Executing 3 colour commands:")
     colours = [
-        LedCommand(255, 0, 0, 1.0),    # full red
-        LedCommand(0, 200, 50, 0.7),   # green-ish
-        LedCommand(0, 80, 255, 0.4),   # blue
+        LedCommand(255, 0, 0, 1.0),  # full red
+        LedCommand(0, 200, 50, 0.7),  # green-ish
+        LedCommand(0, 80, 255, 0.4),  # blue
     ]
     for cmd in colours:
         await actuator._do_execute(cmd)
@@ -88,6 +88,7 @@ async def run_standalone() -> None:
 # Live demo — requires a running NATS broker.
 # ---------------------------------------------------------------------------
 
+
 async def run_live(nats_url: str, duration_s: float) -> None:
     """Run both plugins against a live NATS broker for `duration_s` seconds."""
     from activelearning.nats_client import EventBus
@@ -111,7 +112,7 @@ async def run_live(nats_url: str, duration_s: float) -> None:
     async def on_observation(data: dict) -> None:
         obs_data = data.get("data", data)
         temp = obs_data.get("celsius", "?")
-        hum  = obs_data.get("humidity_pct", "?")
+        hum = obs_data.get("humidity_pct", "?")
         print(f"  bus ← observation: {temp} °C  /  {hum} % RH")
         received.append(data)
 
@@ -139,6 +140,7 @@ async def run_live(nats_url: str, duration_s: float) -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Engram SDK plugin examples")

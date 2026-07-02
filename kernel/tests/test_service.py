@@ -10,6 +10,7 @@ import logging
 
 from activelearning import KernelDecisionType as DecisionType
 from activelearning.subjects import code_decision_subject
+
 from kernel.service import KernelService
 
 

@@ -34,10 +34,9 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import numpy as np
-
 from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
@@ -142,16 +141,17 @@ class RealSenseDriver:
         config = rs.config()
         if self._serial:
             config.enable_device(self._serial)
-        config.enable_stream(
-            rs.stream.depth, self._width, self._height, rs.format.z16, self._fps
-        )
+        config.enable_stream(rs.stream.depth, self._width, self._height, rs.format.z16, self._fps)
         pipeline = rs.pipeline()
         pipeline.start(config)
         self._pipeline = pipeline
         self._align = rs.align(rs.stream.depth)
         logger.info(
             "RealSenseDriver: streaming %dx%d @ %d fps (serial=%r)",
-            self._width, self._height, self._fps, self._serial or "auto",
+            self._width,
+            self._height,
+            self._fps,
+            self._serial or "auto",
         )
 
     def disconnect(self) -> None:
@@ -169,7 +169,6 @@ class RealSenseDriver:
             return np.zeros((_OUT_H, _OUT_W), dtype=np.float32)
         # get_distance() returns metres; asanyarray gives millimetre uint16 —
         # convert to metres manually for consistency.
-        import pyrealsense2 as rs  # type: ignore[import]
         data = np.asanyarray(depth_frame.get_data()).astype(np.float32)
         scale = depth_frame.get_units()  # typically 0.001 (mm → m)
         return data * scale
@@ -246,7 +245,7 @@ class DepthCameraSensor(SensorPlugin[list]):
 
     def __init__(
         self,
-        driver: Optional[DepthDriver] = None,
+        driver: DepthDriver | None = None,
         sensor_id: str = "depth.0",
         fps: float = 5.0,
         max_depth_m: float = _DEFAULT_MAX_DEPTH_M,
@@ -284,7 +283,9 @@ class DepthCameraSensor(SensorPlugin[list]):
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._driver.connect)
-        logger.info("DepthCameraSensor '%s' started (max_depth=%.1f m)", self.sensor_id, self._max_depth_m)
+        logger.info(
+            "DepthCameraSensor '%s' started (max_depth=%.1f m)", self.sensor_id, self._max_depth_m
+        )
         try:
             await super().start(bus)
         except Exception:
@@ -321,6 +322,7 @@ class DepthCameraSensor(SensorPlugin[list]):
         if raw.shape != (_OUT_H, _OUT_W):
             try:
                 import cv2  # noqa: PLC0415
+
                 raw = cv2.resize(raw, (_OUT_W, _OUT_H), interpolation=cv2.INTER_NEAREST)
             except ImportError:
                 # Pure-numpy nearest-neighbour resize — correct but slower

@@ -1,13 +1,13 @@
 """Pydantic request models for the dashboard API."""
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
 
 class ChatMessage(BaseModel):
     message: str
-    context: Optional[str] = None
+    context: str | None = None
 
 
 class ObservationPayload(BaseModel):

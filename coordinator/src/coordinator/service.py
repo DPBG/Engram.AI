@@ -8,8 +8,6 @@ Integrates:
 """
 
 import asyncio
-import uuid
-from typing import Optional
 
 from activelearning import BaseService, generate_trace_id, get_embedding_service
 from activelearning.nats_client import serialize_message

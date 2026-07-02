@@ -216,7 +216,6 @@ class OverrideProcessor:
                 }
 
             # Store in database
-            import uuid
 
             await self.db.execute(
                 """

@@ -21,22 +21,22 @@ Three sensory-input regimes are exercised (+ a fourth for timing comparison):
               later → adolescent entered later than A, proving timing tracks
               experience rather than step count.
 """
+
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from neuromorphic.config import (
-    NeuromorphicConfig,
     AdolescentEntryConfig,
     CriticalPeriodConfig,
+    NeuromorphicConfig,
 )
 from neuromorphic.neuromodulation import NeuromodulationSystem
-
 
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_fast_config(
     criteria_window: int = 50,
@@ -80,7 +80,7 @@ def _make_distinct_concepts(
     patterns = []
     for i in range(n_patterns):
         pat = np.zeros(n_neurons, dtype=np.float32)
-        pat[i * chunk:(i + 1) * chunk] = rng.random(chunk).astype(np.float32)
+        pat[i * chunk : (i + 1) * chunk] = rng.random(chunk).astype(np.float32)
         patterns.append(pat)
     return patterns
 
@@ -88,6 +88,7 @@ def _make_distinct_concepts(
 # ---------------------------------------------------------------------------
 # Regime descriptor
 # ---------------------------------------------------------------------------
+
 
 class InputRegime:
     """Encapsulates the external signals for one sensory-input environment."""
@@ -119,28 +120,28 @@ class InputRegime:
 
 REGIME_A = InputRegime(
     name="rich_experience",
-    inject_concepts_at=60,              # distinct patterns before min_steps check
+    inject_concepts_at=60,  # distinct patterns before min_steps check
     sensory_variance_fn=lambda s: 0.01,  # stable (< 0.1 threshold) from step 0
-    stdp_fn=lambda s: (0.1, 1.0),        # declined (0.1 < 0.5 * 1.0) from step 0
+    stdp_fn=lambda s: (0.1, 1.0),  # declined (0.1 < 0.5 * 1.0) from step 0
 )
 
 REGIME_B = InputRegime(
     name="degenerate_null",
-    inject_concepts_at=None,             # no distinct concepts ever
+    inject_concepts_at=None,  # no distinct concepts ever
     sensory_variance_fn=lambda s: 0.50,  # unstable (> 0.1 threshold)
-    stdp_fn=lambda s: (0.9, 1.0),        # not declined (0.9 > 0.5)
+    stdp_fn=lambda s: (0.9, 1.0),  # not declined (0.9 > 0.5)
 )
 
 REGIME_C = InputRegime(
     name="partial_2of3",
-    inject_concepts_at=60,               # concept criterion met ✓
+    inject_concepts_at=60,  # concept criterion met ✓
     sensory_variance_fn=lambda s: 0.01,  # sensory criterion met ✓
-    stdp_fn=lambda s: (0.9, 1.0),        # STDP NOT declined ✗ — only 2/3 criteria
+    stdp_fn=lambda s: (0.9, 1.0),  # STDP NOT declined ✗ — only 2/3 criteria
 )
 
 REGIME_D = InputRegime(
     name="delayed_rich",
-    inject_concepts_at=60,               # same as A
+    inject_concepts_at=60,  # same as A
     sensory_variance_fn=lambda s: 0.01,  # same as A
     # STDP decline arrives 40 steps later than A → entry must be later
     stdp_fn=lambda s: (0.1, 1.0) if s >= 140 else (0.9, 1.0),
@@ -150,6 +151,7 @@ REGIME_D = InputRegime(
 # ---------------------------------------------------------------------------
 # Regime runner
 # ---------------------------------------------------------------------------
+
 
 def run_regime(
     nm: NeuromodulationSystem,
@@ -187,6 +189,7 @@ def run_regime(
 # ---------------------------------------------------------------------------
 # Test classes
 # ---------------------------------------------------------------------------
+
 
 class TestTimeBasedEarlyPhases:
     """infant→toddler→juvenile transitions are time-based (Invariant 2 permits this)."""
@@ -333,9 +336,7 @@ class TestTransitionTimingVariesWithExperience:
         nm_d = NeuromodulationSystem(cfg)
         entry_a = run_regime(nm_a, REGIME_A, n_steps=300)
         entry_d = run_regime(nm_d, REGIME_D, n_steps=300)
-        assert entry_a != entry_d, (
-            "Entry step must vary with experience (A and D must differ)"
-        )
+        assert entry_a != entry_d, "Entry step must vary with experience (A and D must differ)"
 
     def test_no_step_count_singularity(self):
         """After identical step counts, A and B have different adolescent status."""
@@ -420,7 +421,9 @@ class TestInvariant2Regression:
         cfg = _make_fast_config()
         nm = NeuromodulationSystem(cfg)
         entry = run_regime(nm, REGIME_C)
-        assert entry is None, "Invariant 2 violated: partial experience (2/3 criteria) must not enter"
+        assert (
+            entry is None
+        ), "Invariant 2 violated: partial experience (2/3 criteria) must not enter"
 
     def test_entry_timing_is_experience_dependent(self):
         cfg = _make_fast_config()
@@ -430,6 +433,6 @@ class TestInvariant2Regression:
         entry_d = run_regime(nm_d, REGIME_D)
         assert entry_a is not None
         assert entry_d is not None
-        assert entry_a != entry_d, (
-            "Invariant 2 violated: entry timing must vary with experience, not be fixed"
-        )
+        assert (
+            entry_a != entry_d
+        ), "Invariant 2 violated: entry timing must vary with experience, not be fixed"

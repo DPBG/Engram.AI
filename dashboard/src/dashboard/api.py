@@ -19,7 +19,7 @@ import subprocess
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -224,7 +224,7 @@ class SkillRegistry:
         skill["calls"] += 1
         if not success:
             skill["errors"] += 1
-        skill["last_called"] = datetime.now(timezone.utc).isoformat()
+        skill["last_called"] = datetime.now(UTC).isoformat()
         # Running average
         old_avg = skill["avg_ms"]
         n = skill["calls"]
@@ -292,7 +292,7 @@ class KnowledgeBase:
             "category": category,
             "content": content,
             "metadata": metadata or {},
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._entries.append(entry)
         if source in self._source_counts:
@@ -622,7 +622,7 @@ class DashboardService:
         async def health():
             return {
                 "status": "healthy",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "nats": self._nats_connected,
                 "uptime_seconds": int(time.time() - _startup_time),
                 "total_skill_calls": self.skills.total_calls(),
@@ -638,7 +638,7 @@ class DashboardService:
             return {
                 "info": _system_info,
                 "live": get_live_metrics(),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
         # ── API: Skills ──────────────────────────────────────────────
@@ -676,7 +676,7 @@ class DashboardService:
             t0 = time.time()
             metrics = await self._fetch_docker_metrics()
             self.skills.record_call("env.docker", (time.time() - t0) * 1000)
-            return {"metrics": metrics, "timestamp": datetime.now(timezone.utc).isoformat()}
+            return {"metrics": metrics, "timestamp": datetime.now(UTC).isoformat()}
 
         # ── API: Services ────────────────────────────────────────────
 
@@ -690,7 +690,7 @@ class DashboardService:
         async def get_neuromorphic():
             return {
                 "neuromorphic": _neuro_metrics,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
         # ── API: Benchmark Results ─────────────────────────────────────
@@ -750,7 +750,7 @@ class DashboardService:
 
         @self.app.get("/api/gateway")
         async def get_gateway():
-            return {"gateway": _gateway_status, "timestamp": datetime.now(timezone.utc).isoformat()}
+            return {"gateway": _gateway_status, "timestamp": datetime.now(UTC).isoformat()}
 
         @self.app.post("/api/gateway/command")
         async def gateway_command(cmd: dict):
@@ -923,7 +923,7 @@ class DashboardService:
         async def get_video_sessions():
             return {
                 "sessions": list(_video_sessions.values()),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
         @self.app.post("/api/video/submit")
@@ -1109,14 +1109,14 @@ class DashboardService:
                 {
                     "role": "user",
                     "content": msg.message,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
             )
             chat_history.append(
                 {
                     "role": "assistant",
                     "content": reply["content"],
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
             )
             if len(chat_history) > MAX_CHAT_HISTORY:
@@ -1124,7 +1124,7 @@ class DashboardService:
 
             return {
                 "reply": reply["content"],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "model": reply.get("model", self._llm_model),
             }
 
@@ -1246,14 +1246,14 @@ class DashboardService:
                                 {
                                     "role": "user",
                                     "content": payload.get("message", ""),
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "timestamp": datetime.now(UTC).isoformat(),
                                 }
                             )
                             chat_history.append(
                                 {
                                     "role": "assistant",
                                     "content": reply["content"],
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "timestamp": datetime.now(UTC).isoformat(),
                                 }
                             )
                             if len(chat_history) > MAX_CHAT_HISTORY:
@@ -1265,7 +1265,7 @@ class DashboardService:
                                     "data": {
                                         "reply": reply["content"],
                                         "model": reply.get("model", self._llm_model),
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                        "timestamp": datetime.now(UTC).isoformat(),
                                     },
                                 }
                             )
@@ -1537,7 +1537,7 @@ class DashboardService:
                         if isinstance(raw, list) and len(raw) > 8:
                             data["data"] = raw[:4] + ["..."] + [f"({len(raw)} values)"]
                     msg_info = {
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                         "subject": msg.subject,
                         "data": data,
                     }
@@ -1553,7 +1553,7 @@ class DashboardService:
                 except Exception:
                     data = {"raw": msg.data.decode()[:500]}
                 msg_info = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "subject": msg.subject,
                     "data": data,
                 }
@@ -1569,7 +1569,7 @@ class DashboardService:
                         "name": svc,
                         "status": "running",
                         "uptime": data.get("uptime"),
-                        "last_seen": datetime.now(timezone.utc).isoformat(),
+                        "last_seen": datetime.now(UTC).isoformat(),
                     }
                     await self._broadcast(
                         {"type": "service_status", "data": self._service_status[svc]}
@@ -2056,7 +2056,7 @@ class DashboardService:
 
     async def _run_health_check(self):
         findings = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Disk
         try:

@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from typing import Optional
 
 import numpy as np
 import pytest
@@ -24,7 +23,7 @@ if _GW_ROOT not in sys.path:
 
 # Bootstrap the activelearning SDK namespace (same trick as neuromorphic tests —
 # avoid the aiohttp-pulling __init__ by registering a package stub with __path__).
-import types as _types
+import types as _types  # noqa: E402
 
 _SDK_SRC = os.path.abspath(os.path.join(_GW_ROOT, "..", "sdk", "src"))
 if "activelearning" not in sys.modules:
@@ -40,7 +39,6 @@ from sensors.depth_camera import (  # noqa: E402
     DepthDriver,
     NullDepthDriver,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -284,6 +282,7 @@ class TestProvenanceMapping:
         # Stub out the neuromorphic package so relative imports inside encoding.py
         # resolve without triggering the full package chain.
         import types as _t
+
         neuro_pkg = _t.ModuleType("neuromorphic")
         neuro_pkg.__path__ = [os.path.dirname(enc_path)]
         sys.modules.setdefault("neuromorphic", neuro_pkg)

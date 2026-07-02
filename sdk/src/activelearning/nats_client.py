@@ -19,9 +19,7 @@ from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
-from nats.js.api import ConsumerConfig, DeliverPolicy, StreamConfig
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
-from pydantic import BaseModel
 
 from activelearning.messages import (
     KernelDecisionMessage,
@@ -353,7 +351,6 @@ class EventBus:
         handler: MessageHandler,
         durable: str,
         message_model: type[WireModel] | None = None,
-        message_model: type[BaseModel] | None = None,
         *,
         ack_wait: float = DEFAULT_ACK_WAIT_SECONDS,
         max_deliver: int = DEFAULT_MAX_DELIVER,
@@ -429,7 +426,10 @@ class EventBus:
                     # stops redelivering (never an infinite loop, never dropped).
                     logger.error(
                         "Poisoning %s after %d/%d deliveries: %s",
-                        subject, delivered, max_deliver, e,
+                        subject,
+                        delivered,
+                        max_deliver,
+                        e,
                     )
                     await self._route_to_poison(
                         subject, msg, f"max_deliver_exhausted({delivered}): {e}"
@@ -438,7 +438,10 @@ class EventBus:
                 else:
                     logger.warning(
                         "Handler failed on %s (delivery %d/%d), will redeliver: %s",
-                        subject, delivered, max_deliver, e,
+                        subject,
+                        delivered,
+                        max_deliver,
+                        e,
                     )
                     await msg.nak()
 
@@ -448,7 +451,11 @@ class EventBus:
             max_deliver=max_deliver,
             # When backoff is set the server derives ack-wait from backoff[0];
             # passing both can be rejected, so set only one.
-            **({"backoff": [float(b) for b in backoff]} if backoff else {"ack_wait": float(ack_wait)}),
+            **(
+                {"backoff": [float(b) for b in backoff]}
+                if backoff
+                else {"ack_wait": float(ack_wait)}
+            ),
         )
         sub = await self._js.subscribe(
             subject,
@@ -655,7 +662,9 @@ class EventBus:
             try:
                 if subject in saved_js:
                     await self.js_subscribe(
-                        subject, handler, durable=saved_js[subject],
+                        subject,
+                        handler,
+                        durable=saved_js[subject],
                         poison_handler=saved_poison.get(subject),
                     )
                 else:

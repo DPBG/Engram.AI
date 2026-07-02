@@ -9,8 +9,7 @@ import asyncio
 import json
 import os
 import time
-import uuid
-from typing import Any, Optional
+from typing import Any
 
 from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
 from activelearning.nats_client import serialize_message
@@ -34,7 +33,11 @@ _DECISION_TYPES = ("ALLOW", "TRANSFORM", "DENY", "DEFER")
 
 def _empty_bucket() -> dict[str, Any]:
     """A zeroed decision-rate bucket: raw counts + normalized rates."""
-    return {"total": 0, "counts": {t: 0 for t in _DECISION_TYPES}, "rates": {t: 0.0 for t in _DECISION_TYPES}}
+    return {
+        "total": 0,
+        "counts": {t: 0 for t in _DECISION_TYPES},
+        "rates": {t: 0.0 for t in _DECISION_TYPES},
+    }
 
 
 def _accumulate(bucket: dict[str, Any], decision_type: str, count: int) -> None:
@@ -79,7 +82,7 @@ class KernelService(BaseService):
         self._deny_tracker = DecisionSequenceTracker()
 
         # Decision-rate governance signal (M6): periodic trend publish
-        self._decision_rates_task: Optional[asyncio.Task] = None
+        self._decision_rates_task: asyncio.Task | None = None
         self._decision_rates_interval_sec = float(
             os.environ.get("KERNEL_DECISION_RATES_INTERVAL_SEC", "300")
         )
@@ -90,6 +93,7 @@ class KernelService(BaseService):
         # A non-positive or non-finite interval would collapse the publish cadence,
         # so we validate and refuse to start with an invalid configuration.
         import math as _math
+
         _raw_hb = float(os.environ.get("KERNEL_HEARTBEAT_INTERVAL_S", "5.0"))
         if not (_math.isfinite(_raw_hb) and _raw_hb > 0.0):
             raise ValueError(
@@ -97,7 +101,7 @@ class KernelService(BaseService):
                 f"got {os.environ.get('KERNEL_HEARTBEAT_INTERVAL_S')!r}"
             )
         self._heartbeat_interval_s = _raw_hb
-        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: asyncio.Task | None = None
 
         # Load body profile from env if set
         self._load_body_profile()
@@ -148,7 +152,9 @@ class KernelService(BaseService):
             durable="kernel-code-proposals",
         )
         await self.event_bus.subscribe(
-            Subjects.KERNEL_STATUS, self._handle_status, is_request_handler=True,
+            Subjects.KERNEL_STATUS,
+            self._handle_status,
+            is_request_handler=True,
         )
         await self.event_bus.subscribe(
             Subjects.POLICY_LOAD_PROFILE,
@@ -160,7 +166,8 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT,
             self._handle_restrict,
-            Subjects.POLICY_RESTRICT_REQUEST, self._handle_restrict_request,
+            Subjects.POLICY_RESTRICT_REQUEST,
+            self._handle_restrict_request,
         )
         await self.event_bus.subscribe(
             Subjects.POLICY_ROLLBACK,
@@ -245,7 +252,9 @@ class KernelService(BaseService):
                     "operator_id": operator,
                 },
             )
-            await self.event_bus.publish(Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason})
+            await self.event_bus.publish(
+                Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason}
+            )
             restrict_data = {
                 "motor_limits": {
                     ch: {"max_intensity": 0.0}
@@ -636,14 +645,16 @@ class KernelService(BaseService):
 
     def _signed_code_decision(self, decision: KernelDecision) -> dict:
         """Build the signed wire payload for a code decision."""
-        return sign_decision({
-            "trace_id": decision.trace_id,
-            "type": decision.type.value,
-            "reason": decision.reason,
-            "risk_score": decision.risk_score,
-            "issued_at": decision.issued_at,
-            "expires_at": decision.expires_at,
-        })
+        return sign_decision(
+            {
+                "trace_id": decision.trace_id,
+                "type": decision.type.value,
+                "reason": decision.reason,
+                "risk_score": decision.risk_score,
+                "issued_at": decision.issued_at,
+                "expires_at": decision.expires_at,
+            }
+        )
 
     async def _handle_code_proposal(self, data: dict) -> None:
         """Handle code proposals from Meta-Programmer."""
@@ -693,46 +704,6 @@ class KernelService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
-
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status requests."""
-        try:
-            status = {
-                "status": "running",
-                "body_profile": self._body_profile,
-                "has_rollback": self._rollback.has_rollback,
-                "deny_sequences": self._deny_tracker.get_state(),
-                "metrics": {
-                    "allow_count": self._allow_count,
-                    "transform_count": self._transform_count,
-                    "deny_count": self._deny_count,
-                    "defer_count": self._defer_count,
-                },
-                "decision_rates": await self._compute_decision_rates(),
-            }
-
-            # Publish status response
-            await self.event_bus.publish("kernel.status.response", status)
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
-            # Always publish a decision so the Meta-Programmer's wait doesn't
-            # hang. Fail-safe: DENY on internal errors — the Kernel is the sole
-            # authority that may emit a decision and must fail closed
-            # (mirrors _handle_action_proposal).
-            try:
-                deny = KernelDecision(
-                    trace_id=trace_id,
-                    type=DecisionType.DENY,
-                    reason=f"Kernel internal error: {e}",
-                    risk_score=1.0,
-                )
-                await self.event_bus.publish(
-                    code_decision_subject(trace_id),
-                    self._signed_code_decision(deny),
-                )
-                self._deny_count += 1
-            except Exception:
-                pass  # best-effort — consumer will time out
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
@@ -814,20 +785,24 @@ class KernelService(BaseService):
         for row in all_time_rows:
             _accumulate(all_time_bucket, row["decision_type"], row["cnt"])
             source_bucket = by_source.setdefault(
-                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+                row["source"] or "unknown",
+                {"all_time": _empty_bucket(), "window": _empty_bucket()},
             )
             _accumulate(source_bucket["all_time"], row["decision_type"], row["cnt"])
 
         for row in window_rows:
             _accumulate(window_bucket, row["decision_type"], row["cnt"])
             source_bucket = by_source.setdefault(
-                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+                row["source"] or "unknown",
+                {"all_time": _empty_bucket(), "window": _empty_bucket()},
             )
             _accumulate(source_bucket["window"], row["decision_type"], row["cnt"])
 
-        for bucket in [all_time_bucket, window_bucket, *(
-            b for s in by_source.values() for b in s.values()
-        )]:
+        for bucket in [
+            all_time_bucket,
+            window_bucket,
+            *(b for s in by_source.values() for b in s.values()),
+        ]:
             _finalize_rates(bucket)
 
         return {
@@ -1147,12 +1122,15 @@ class KernelService(BaseService):
             # publisher so it cannot rely on a subscription round-trip).
             await self._apply_restriction(restrict_data)
             await self.event_bus.publish(Subjects.POLICY_RESTRICT, restrict_data)
-            await self.event_bus.publish("safety.deny_escalation", {
-                "channel": channel,
-                "action": "auto_disabled",
-                "deny_count": self._deny_tracker._sequences[channel].count,
-                "operator_id": "system:deny_tracker",
-            })
+            await self.event_bus.publish(
+                "safety.deny_escalation",
+                {
+                    "channel": channel,
+                    "action": "auto_disabled",
+                    "deny_count": self._deny_tracker._sequences[channel].count,
+                    "operator_id": "system:deny_tracker",
+                },
+            )
         except Exception as e:
             self.logger.error(f"Failed to auto-disable channel '{channel}': {e}")
 

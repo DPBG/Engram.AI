@@ -1550,9 +1550,12 @@ class NeuromorphicService(BaseService):
         try:
             has_motor_spam = any(a.check_name == "motor_spam" for a in status.alerts)
             if status.level >= AlertLevel.EMERGENCY:
-                # Request full motor halt — all channels to 0
+                # Request full motor halt — all channels to 0.
+                # Brain cannot publish policy.restrict directly (ADR 0001 §3);
+                # publish policy.restrict.request and the Kernel re-publishes as
+                # authoritative policy.restrict after validation.
                 await self.event_bus.publish(
-                    "policy.restrict",
+                    Subjects.POLICY_RESTRICT_REQUEST,
                     {
                         "motor_limits": {
                             ch: {"max_intensity": 0.0}
@@ -1560,21 +1563,13 @@ class NeuromorphicService(BaseService):
                         },
                         "reason": f"EMERGENCY watchdog escalation at step {status.step}",
                         "operator_id": "system:watchdog",
-                # Request full motor halt — all channels to 0.
-                # Brain cannot publish policy.restrict directly (ADR 0001 §3);
-                # publish policy.restrict.request and the Kernel re-publishes as
-                # authoritative policy.restrict after validation.
-                await self.event_bus.publish(Subjects.POLICY_RESTRICT_REQUEST, {
-                    "motor_limits": {
-                        ch: {"max_intensity": 0.0}
-                        for ch in ("locomotion", "manipulation", "head", "speech")
                     },
                 )
                 self.logger.error(f"WATCHDOG EMERGENCY: requested motor halt at step {status.step}")
             elif has_motor_spam:
                 # Motor spam: halve motor intensity
                 await self.event_bus.publish(
-                    "policy.restrict",
+                    Subjects.POLICY_RESTRICT_REQUEST,
                     {
                         "motor_limits": {
                             "locomotion": {"max_intensity": 0.5},
@@ -1582,10 +1577,6 @@ class NeuromorphicService(BaseService):
                         },
                         "reason": f"Motor spam detected at step {status.step}",
                         "operator_id": "system:watchdog",
-                await self.event_bus.publish(Subjects.POLICY_RESTRICT_REQUEST, {
-                    "motor_limits": {
-                        "locomotion": {"max_intensity": 0.5},
-                        "manipulation": {"max_intensity": 0.5},
                     },
                 )
                 self.logger.warning("WATCHDOG CRITICAL: motor spam — requested intensity reduction")

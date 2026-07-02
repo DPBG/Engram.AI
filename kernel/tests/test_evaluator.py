@@ -1,10 +1,9 @@
 """Tests for the Kernel code-proposal evaluator (Phase 1.5 + governance gate)."""
 
-from activelearning import KernelDecisionType as DecisionType
 from dataclasses import dataclass
 
-from kernel.evaluator import KernelEvaluator
-from activelearning import KernelDecisionType as DecisionType, RiskAnalysis
+from activelearning import KernelDecisionType as DecisionType
+from activelearning import RiskAnalysis
 
 from kernel.evaluator import KernelEvaluator
 

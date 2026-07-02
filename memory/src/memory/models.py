@@ -1,7 +1,5 @@
 """Data models for Memory Service."""
 
-import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
