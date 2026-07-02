@@ -155,14 +155,14 @@ completion** — no new autonomy on top of an unsigned decision bus.
 
 ## Phase 7 — Community & Ecosystem Growth (M7)
 
-**Status: 🟡 In Progress** — 1/4 tracking issues closed.
+**Status: 🟡 In Progress** — 2/4 tracking issues closed.
 
 Lower the barrier to contribution — restore `ROADMAP.md`, promote advisory
 CI checks to blocking, onboarding issues, SDK examples.
 
 | Issue | Deliverable | State |
 |---|---|---|
-| [#144](https://github.com/DPBG/Engram.AI/issues/144) | Restore/author `ROADMAP.md` | 🟡 This document |
+| [#144](https://github.com/DPBG/Engram.AI/issues/144) | Restore/author `ROADMAP.md` | ✅ Closed (this document) |
 | [#145](https://github.com/DPBG/Engram.AI/issues/145) | Promote `ruff`/`black`/`mypy` from advisory to blocking in CI | ⚪ Open |
 | [#146](https://github.com/DPBG/Engram.AI/issues/146) | Audit for "good first issue" candidates across `neuromorphic/`, `sdk/`, `sensory-gateway/` | ⚪ Open |
 | [#147](https://github.com/DPBG/Engram.AI/issues/147) | Minimal `SensorPlugin`/`ActuatorPlugin` example in the SDK | ✅ Closed |
