@@ -762,14 +762,14 @@ class SynapseGroup:
         # satisfying Claim 2's "plasticity->1%" requirement.
 
         # Fused: neuromod + decay + clip + prune in one pass over the active set.
-        # interval_gain restores every-step equivalence (see computation above).
+        # Per-entry effective gain handles mid-interval pruning correctly.
         alive = _compiled_neuromod_decay_sparse(
             self.eligibility,
             data,
             idx,
             modulator_signal,
-            float(interval_gain),
-            float(decay),
+            interval,
+            float(d),
             p.w_min,
             p.w_max,
             float(self._elig_prune_threshold),

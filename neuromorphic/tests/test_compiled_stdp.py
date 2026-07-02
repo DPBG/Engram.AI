@@ -119,30 +119,41 @@ class TestCompiledNeuromodDecaySparse:
         data = rng.uniform(0.1, 0.9, self._NNZ).astype(np.float32)
         return eligibility, data
 
-    def _numpy_ref(self, elig, data, idx, modulator, interval_gain, decay, mask=None):
+    def _numpy_ref(self, elig, data, idx, modulator, interval, d_per_step, mask=None):
+        """Per-entry effective gain reference — matches the corrected kernel semantics."""
         elig_slice = elig[idx].copy()
-        dw = np.float32(modulator) * elig_slice * np.float32(interval_gain)
+        abs_e = np.abs(elig_slice)
+        eff_gain = np.ones(len(idx), dtype=np.float32)
+        step_pow = np.float32(d_per_step)
+        e_check = abs_e * step_pow
+        for _ in range(1, interval):
+            alive_k = e_check > np.float32(self._PRUNE_THR)
+            if not alive_k.any():
+                break
+            eff_gain[alive_k] += step_pow
+            step_pow *= np.float32(d_per_step)
+            e_check *= np.float32(d_per_step)
+        dw = np.float32(modulator) * elig_slice * eff_gain
         if mask is not None:
             dw *= mask[idx]
         data[idx] = np.clip(data[idx] + dw, self._W_MIN, self._W_MAX)
-        elig_slice *= np.float32(decay)
+        decay_total = np.float32(d_per_step ** interval)
+        elig_slice *= decay_total
         elig[idx] = elig_slice
         return np.abs(elig_slice) > self._PRUNE_THR
 
     @pytest.mark.parametrize("interval", [1, 3, 10])
     def test_no_mask(self, interval):
         d = 0.999
-        decay = np.float32(d**interval)
-        interval_gain = float((1.0 - d**interval) / (1.0 - d))
         modulator = 0.5
         idx = np.arange(self._NNZ // 2, dtype=np.int32)
 
         elig_np, data_np = self._make_arrays(seed=interval)
         elig_c, data_c = elig_np.copy(), data_np.copy()
 
-        alive_ref = self._numpy_ref(elig_np, data_np, idx, modulator, interval_gain, decay)
+        alive_ref = self._numpy_ref(elig_np, data_np, idx, modulator, interval, d)
         alive_c = neuromod_decay_sparse(
-            elig_c, data_c, idx, modulator, interval_gain, decay,
+            elig_c, data_c, idx, modulator, interval, d,
             self._W_MIN, self._W_MAX, self._PRUNE_THR,
         )
 
@@ -157,17 +168,15 @@ class TestCompiledNeuromodDecaySparse:
     def test_with_mask(self, interval):
         mask = np.random.default_rng(99).uniform(0.01, 1.0, self._NNZ).astype(np.float32)
         d = 0.999
-        decay = np.float32(d**interval)
-        interval_gain = float((1.0 - d**interval) / (1.0 - d))
         modulator = 0.3
         idx = np.arange(self._NNZ // 2, dtype=np.int32)
 
         elig_np, data_np = self._make_arrays(seed=7)
         elig_c, data_c = elig_np.copy(), data_np.copy()
 
-        self._numpy_ref(elig_np, data_np, idx, modulator, interval_gain, decay, mask=mask)
+        self._numpy_ref(elig_np, data_np, idx, modulator, interval, d, mask=mask)
         neuromod_decay_sparse(
-            elig_c, data_c, idx, modulator, interval_gain, decay,
+            elig_c, data_c, idx, modulator, interval, d,
             self._W_MIN, self._W_MAX, self._PRUNE_THR, plasticity_mask=mask,
         )
 
@@ -183,7 +192,7 @@ class TestCompiledNeuromodDecaySparse:
         idx = np.arange(100, dtype=np.int32)
         # After update data would exceed w_max=1.0 without clipping
         neuromod_decay_sparse(
-            elig.copy(), data, idx, 5.0, 1.0, 0.999,
+            elig.copy(), data, idx, 5.0, 1, 0.999,
             np.float32(0.01), np.float32(1.0), np.float32(1e-6),
         )
         assert data.max() <= 1.0 + 1e-6, "w_max violated by compiled kernel"
@@ -384,7 +393,7 @@ class TestNumPyFallbackKernels:
         data = np.array([0.5, 0.6, 0.7], dtype=np.float32)
         idx = np.array([0, 1], dtype=np.int32)
         alive = neuromod_decay_sparse(
-            elig, data, idx, 1.0, 1.0, np.float32(0.999),
+            elig, data, idx, 1.0, 1, np.float32(0.999),
             np.float32(0.01), np.float32(1.0), np.float32(1e-6),
         )
         assert alive.dtype == bool
@@ -415,11 +424,11 @@ class TestNumPyFallbackKernels:
         # Both calls receive independent copies of elig so neither mutates the
         # other's baseline (neuromod_decay_sparse writes back eligibility[idx]).
         neuromod_decay_sparse(
-            elig_orig.copy(), data_no_mask, idx, 1.0, 1.0, np.float32(0.999),
+            elig_orig.copy(), data_no_mask, idx, 1.0, 1, np.float32(0.999),
             np.float32(0.01), np.float32(1.0), np.float32(1e-6),
         )
         neuromod_decay_sparse(
-            elig_orig.copy(), data, idx, 1.0, 1.0, np.float32(0.999),
+            elig_orig.copy(), data, idx, 1.0, 1, np.float32(0.999),
             np.float32(0.01), np.float32(1.0), np.float32(1e-6),
             plasticity_mask=mask,
         )

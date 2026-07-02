@@ -89,33 +89,51 @@ if COMPILED_STDP_ENABLED:
         data: np.ndarray,
         idx: np.ndarray,
         modulator: float,
-        interval_gain: float,
-        decay: float,
+        interval: int,
+        d_per_step: float,
         w_min: float,
         w_max: float,
         prune_threshold: float,
     ) -> np.ndarray:
         """Fused neuromod + decay + clip over sparse active set; returns alive mask.
 
-        Single pass: avoids the 4+ NumPy passes (dw, +=, clip, *=, abs>thr).
+        Uses per-entry effective gain so that a trace which decays below
+        prune_threshold mid-interval only accumulates weight change for the steps
+        it would have been alive — matching the per-step reference exactly.
         """
         n = len(idx)
         alive = np.empty(n, _nb.boolean)
-        mod_gain = np.float32(modulator * interval_gain)
-        d = np.float32(decay)
+        mod = np.float32(modulator)
+        d = np.float32(d_per_step)
+        pt = np.float32(prune_threshold)
+        # Full-interval decay applied to eligibility.
+        decay_total = np.float32(1.0)
+        for _ in range(interval):
+            decay_total *= d
         for i in range(n):
             k = idx[i]
             e = eligibility[k]
-            dw = mod_gain * e
+            # Step 0 always contributes; step j (j>0) contributes only if
+            # |e0 * d^j| > pt (entry was still alive at end of step j-1).
+            e_abs = e if e >= np.float32(0.0) else -e
+            step_pow = np.float32(1.0)
+            eff_gain = np.float32(0.0)
+            for j in range(interval):
+                eff_gain += step_pow
+                e_abs *= d
+                step_pow *= d
+                if e_abs <= pt:
+                    break  # pruned after step j; remaining steps don't contribute
+            dw = mod * e * eff_gain
             w = data[k] + dw
             if w < w_min:
                 w = w_min
             elif w > w_max:
                 w = w_max
             data[k] = np.float32(w)
-            e *= d
+            e *= decay_total
             eligibility[k] = e
-            alive[i] = e > prune_threshold or e < -prune_threshold
+            alive[i] = e > pt or e < -pt
         return alive
 
     @_nb.njit(cache=True, fastmath=True)
@@ -124,8 +142,8 @@ if COMPILED_STDP_ENABLED:
         data: np.ndarray,
         idx: np.ndarray,
         modulator: float,
-        interval_gain: float,
-        decay: float,
+        interval: int,
+        d_per_step: float,
         w_min: float,
         w_max: float,
         plasticity_mask: np.ndarray,
@@ -134,21 +152,34 @@ if COMPILED_STDP_ENABLED:
         """Fused sparse neuromod + decay + clip with per-synapse plasticity mask."""
         n = len(idx)
         alive = np.empty(n, _nb.boolean)
-        mod_gain = np.float32(modulator * interval_gain)
-        d = np.float32(decay)
+        mod = np.float32(modulator)
+        d = np.float32(d_per_step)
+        pt = np.float32(prune_threshold)
+        decay_total = np.float32(1.0)
+        for _ in range(interval):
+            decay_total *= d
         for i in range(n):
             k = idx[i]
             e = eligibility[k]
-            dw = mod_gain * e * plasticity_mask[k]
+            e_abs = e if e >= np.float32(0.0) else -e
+            step_pow = np.float32(1.0)
+            eff_gain = np.float32(0.0)
+            for j in range(interval):
+                eff_gain += step_pow
+                e_abs *= d
+                step_pow *= d
+                if e_abs <= pt:
+                    break
+            dw = mod * e * eff_gain * plasticity_mask[k]
             w = data[k] + dw
             if w < w_min:
                 w = w_min
             elif w > w_max:
                 w = w_max
             data[k] = np.float32(w)
-            e *= d
+            e *= decay_total
             eligibility[k] = e
-            alive[i] = e > prune_threshold or e < -prune_threshold
+            alive[i] = e > pt or e < -pt
         return alive
 
     @_nb.njit(cache=True, fastmath=True)
@@ -248,8 +279,8 @@ def neuromod_decay_sparse(
     data: np.ndarray,
     idx: np.ndarray,
     modulator: float,
-    interval_gain: float,
-    decay: float,
+    interval: int,
+    d_per_step: float,
     w_min: float,
     w_max: float,
     prune_threshold: float,
@@ -264,10 +295,10 @@ def neuromod_decay_sparse(
         data:             CSR weights.data (full nnz).
         idx:              int32 active-set indices (subset of [0, nnz)).
         modulator:        Neuromodulatory signal (averaged over interval).
-        interval_gain:    Geometric-sum factor restoring every-step equivalence.
-        decay:            ``trace_decay ** interval`` (compensated decay).
+        interval:         Number of logical steps being batched.
+        d_per_step:       Per-step trace decay (``trace_decay`` from config).
         w_min, w_max:     Weight bounds for hard clipping.
-        prune_threshold:  Entries with |e| <= this are considered dead.
+        prune_threshold:  Entries with |e| <= this after decay are considered dead.
         plasticity_mask:  Optional float32 per-synapse scaling (myelination/identity).
 
     Returns:
@@ -281,8 +312,8 @@ def neuromod_decay_sparse(
                 data,
                 idx,
                 float(modulator),
-                float(interval_gain),
-                float(decay),
+                int(interval),
+                float(d_per_step),
                 float(w_min),
                 float(w_max),
                 plasticity_mask,
@@ -293,19 +324,33 @@ def neuromod_decay_sparse(
             data,
             idx,
             float(modulator),
-            float(interval_gain),
-            float(decay),
+            int(interval),
+            float(d_per_step),
             float(w_min),
             float(w_max),
             float(prune_threshold),
         )
-    # NumPy fallback
+    # NumPy fallback — per-entry effective gain accounting for mid-interval pruning.
+    # Step 0 always contributes; step j (j>0) contributes only if the trace was
+    # still alive at the end of step j-1 (|e0 * d^j| > prune_threshold).
     elig_slice = eligibility[idx]
-    dw = np.float32(modulator) * elig_slice * np.float32(interval_gain)
+    abs_e = np.abs(elig_slice)
+    eff_gain = np.ones(len(idx), dtype=np.float32)
+    step_pow = np.float32(d_per_step)
+    e_check = abs_e * step_pow  # |e0 * d^1| — alive check after step 0
+    for _ in range(1, interval):
+        contributes = e_check > np.float32(prune_threshold)
+        if not contributes.any():
+            break
+        eff_gain[contributes] += step_pow
+        step_pow *= np.float32(d_per_step)
+        e_check *= np.float32(d_per_step)
+    dw = np.float32(modulator) * elig_slice * eff_gain
     if plasticity_mask is not None:
         dw *= plasticity_mask[idx]
     data[idx] = np.clip(data[idx] + dw, w_min, w_max)
-    elig_slice *= np.float32(decay)
+    decay_total = np.float32(d_per_step ** interval)
+    elig_slice *= decay_total
     eligibility[idx] = elig_slice
     return np.abs(elig_slice) > prune_threshold
 
