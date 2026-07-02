@@ -601,6 +601,7 @@ class CrossModalBindingAccuracyBenchmark:
         seed: int = 42,
     ) -> dict[str, Any]:
         net, probe = self._net, self._probe
+        n_pairs = max(2, n_pairs)
         fixtures = generate_correlated_stimulus_fixtures(n_pairs, seed=seed)
         correlated = fixtures["correlated_pairs"]
         decoys = fixtures["decoy_pairs"]
@@ -612,6 +613,7 @@ class CrossModalBindingAccuracyBenchmark:
         post = probe.probe_network(net).to_dict()
 
         n = len(correlated)
+        raw_coupling_matrix: list[list[float]] = []
         coupling_matrix: list[list[float]] = []
         matched_scores: list[float] = []
         decoy_scores: list[float] = []
@@ -620,6 +622,7 @@ class CrossModalBindingAccuracyBenchmark:
                 _pair_coupling_score(net, pair["visual"], correlated[j]["auditory"], probe)
                 for j in range(n)
             ]
+            raw_coupling_matrix.append(row)
             coupling_matrix.append([round(s, 8) for s in row])
             matched_scores.append(row[i])
             for j, decoy in enumerate(decoys):
@@ -628,7 +631,7 @@ class CrossModalBindingAccuracyBenchmark:
                         _pair_coupling_score(net, decoy["visual"], decoy["auditory"], probe),
                     )
 
-        pr = _binding_precision_recall(correlated, coupling_matrix)
+        pr = _binding_precision_recall(correlated, raw_coupling_matrix)
         matched_mean = float(np.mean(matched_scores)) if matched_scores else 0.0
         decoy_mean = float(np.mean(decoy_scores)) if decoy_scores else 0.0
         ratio = matched_mean / (decoy_mean + 1e-9)
@@ -699,7 +702,7 @@ class BenchmarkSuite:
         )
         logger.info("Benchmark 6/6: CrossModalBindingAccuracy")
         ba = CrossModalBindingAccuracyBenchmark(self.network).run(
-            n_pairs=min(n_patterns, 8),
+            n_pairs=max(2, min(n_patterns, 8)),
             training_reps=training_reps,
             steps_per_pair=steps_per_pattern,
             seed=seed,

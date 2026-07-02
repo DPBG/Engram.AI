@@ -102,6 +102,12 @@ class TestCrossModalBindingAccuracyBenchmark:
             assert key in result
         assert result["pairs_tested"] == 3
 
+    def test_clamps_n_pairs_to_minimum(self, small_network):
+        result = CrossModalBindingAccuracyBenchmark(small_network).run(
+            n_pairs=1, training_reps=2, steps_per_pair=6, seed=42,
+        )
+        assert result["pairs_tested"] == 2
+
     def test_results_json_serializable(self, small_network):
         result = CrossModalBindingAccuracyBenchmark(small_network).run(
             n_pairs=2, training_reps=2, steps_per_pair=6, seed=42,

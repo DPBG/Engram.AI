@@ -199,6 +199,12 @@ class TestCrossModalBindingAccuracyInSuite:
         assert "silhouette_score" in cs
         assert "linear_probe_accuracy" in cs
 
+    def test_run_all_with_single_pattern(self, small_network):
+        """Binding benchmark clamps n_pairs to 2 when n_patterns=1."""
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=1, training_reps=1, steps_per_pattern=4)
+        assert results["cross_modal_binding_accuracy"]["pairs_tested"] == 2
+
 
 @pytest.fixture
 def network_with_concept():
