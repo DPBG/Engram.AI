@@ -28,7 +28,11 @@ pytest.importorskip("jax", reason="jax not installed (optional 'gpu' extra)")
 def _random_synapse_group(n_pre, n_post, sparsity, seed=0) -> SynapseGroup:
     rng = np.random.default_rng(seed)
     return SynapseGroup(
-        n_pre=n_pre, n_post=n_post, sparsity=sparsity, init_weight=0.3, rng=rng,
+        n_pre=n_pre,
+        n_post=n_post,
+        sparsity=sparsity,
+        init_weight=0.3,
+        rng=rng,
     )
 
 
@@ -109,6 +113,7 @@ class TestCPUFallback:
         """This test environment has no GPU/TPU — confirms jax itself is
         exercising its CPU backend, not silently skipping computation."""
         import jax
+
         assert all(d.platform == "cpu" for d in jax.devices())
 
     def test_gpu_backend_available_true_when_jax_installed(self):

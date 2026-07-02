@@ -6,19 +6,19 @@ Verifies all 6 benchmarks produce valid results on a small network.
 import numpy as np
 import pytest
 
+from neuromorphic.benchmarks import (
+    AssociationStrengthBenchmark,
+    BenchmarkSuite,
+    ConceptSeparabilityBenchmark,
+    CrossModalBindingAccuracyBenchmark,
+    CrossModalRecallBenchmark,
+    EnergyEfficiencyBenchmark,
+    NoveltyDetectionBenchmark,
+    _to_native,
+    generate_test_patterns,
+)
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
-from neuromorphic.benchmarks import (
-    BenchmarkSuite,
-    CrossModalRecallBenchmark,
-    CrossModalBindingAccuracyBenchmark,
-    NoveltyDetectionBenchmark,
-    AssociationStrengthBenchmark,
-    EnergyEfficiencyBenchmark,
-    ConceptSeparabilityBenchmark,
-    generate_test_patterns,
-    _to_native,
-)
 
 
 @pytest.fixture
@@ -93,8 +93,9 @@ class TestNoveltyDetection:
         rng = np.random.default_rng(999)
         novel = generate_test_patterns(1, rng)[0]
         bench = NoveltyDetectionBenchmark(small_network)
-        result = bench.run(patterns[0], novel, familiarization_reps=2,
-                          steps_per_rep=4, test_steps=3)
+        result = bench.run(
+            patterns[0], novel, familiarization_reps=2, steps_per_rep=4, test_steps=3
+        )
         assert "familiar_pred_error" in result
         assert "novel_pred_error" in result
         assert "discrimination_ratio" in result
@@ -103,8 +104,9 @@ class TestNoveltyDetection:
     def test_pred_error_non_negative(self, small_network, patterns):
         novel = generate_test_patterns(1, np.random.default_rng(999))[0]
         bench = NoveltyDetectionBenchmark(small_network)
-        result = bench.run(patterns[0], novel, familiarization_reps=2,
-                          steps_per_rep=4, test_steps=3)
+        result = bench.run(
+            patterns[0], novel, familiarization_reps=2, steps_per_rep=4, test_steps=3
+        )
         assert result["familiar_pred_error"] >= 0.0
         assert result["novel_pred_error"] >= 0.0
 
@@ -184,6 +186,7 @@ class TestCrossModalBindingAccuracyInSuite:
         path = suite.save_results(results, str(tmp_path))
         assert path.exists()
         import json
+
         data = json.loads(path.read_text())
         assert "cross_modal_recall" in data
 
@@ -231,10 +234,15 @@ class TestConceptSeparabilityBenchmark:
         result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
         assert "error" not in result
         for key in (
-            "silhouette_score", "linear_probe_accuracy",
-            "mean_intra_class_distance", "mean_inter_class_distance",
-            "separation_ratio", "n_patterns", "n_samples",
-            "concept_neurons", "top_neurons_per_pattern",
+            "silhouette_score",
+            "linear_probe_accuracy",
+            "mean_intra_class_distance",
+            "mean_inter_class_distance",
+            "separation_ratio",
+            "n_patterns",
+            "n_samples",
+            "concept_neurons",
+            "top_neurons_per_pattern",
         ):
             assert key in result, f"missing key: {key}"
 

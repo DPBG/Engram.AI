@@ -148,8 +148,9 @@ def scan_source(code: str) -> list[Finding]:
                 if fn.id in _DANGEROUS_BUILTINS:
                     findings.append(Finding("high", "dangerous_builtin", f"{fn.id}()"))
                 elif fn.id in dangerous_local_names:
-                    findings.append(Finding("high", "dangerous_call",
-                                            f"{dangerous_local_names[fn.id]}()"))
+                    findings.append(
+                        Finding("high", "dangerous_call", f"{dangerous_local_names[fn.id]}()")
+                    )
                 elif fn.id in _REFLECTION_BUILTINS:
                     for arg in node.args:
                         if (
@@ -182,8 +183,9 @@ def scan_source(code: str) -> list[Finding]:
                     # `from os import *` / `from subprocess import *` pulls the
                     # dangerous sinks into the namespace wholesale and defeats
                     # name tracking — flag high.
-                    findings.append(Finding("high", "dangerous_import_star",
-                                            f"from {mod} import *"))
+                    findings.append(
+                        Finding("high", "dangerous_import_star", f"from {mod} import *")
+                    )
                 else:
                     findings.append(Finding("medium", "dangerous_import", f"from {mod} import …"))
             if any(s in mod.lower() for s in _SELF_REF):
@@ -237,7 +239,9 @@ def run_health_probe(target_path: str, timeout: float = 5.0) -> tuple[bool, str]
         return False, f"probe error: {e}"
 
 
-def deploy_atomically(target_path: str, code: str, validate_syntax: bool = True, probe_timeout: float = 0.0) -> tuple[bool, str]:
+def deploy_atomically(
+    target_path: str, code: str, validate_syntax: bool = True, probe_timeout: float = 0.0
+) -> tuple[bool, str]:
     """Write ``code`` to ``target_path`` with automatic rollback on failure (Phase 1.9).
 
     A deploy must never leave the system in a half-broken state. This:

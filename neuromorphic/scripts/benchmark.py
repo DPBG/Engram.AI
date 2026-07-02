@@ -39,6 +39,7 @@ from neuromorphic.network import NeuromorphicNetwork
 def get_system_info() -> dict:
     """Capture system information for reproducibility."""
     import multiprocessing
+
     return {
         "platform": platform.platform(),
         "processor": platform.processor(),
@@ -79,11 +80,13 @@ def generate_test_patterns(n_patterns: int, rng: np.random.Generator) -> list[di
         auditory[i % 13] = 1.0
         np.clip(auditory, 0.0, 1.0, out=auditory)
 
-        patterns.append({
-            "visual": visual.tolist(),
-            "auditory": auditory.tolist(),
-            "label": f"pattern_{i:03d}",
-        })
+        patterns.append(
+            {
+                "visual": visual.tolist(),
+                "auditory": auditory.tolist(),
+                "label": f"pattern_{i:03d}",
+            }
+        )
     return patterns
 
 
@@ -143,7 +146,7 @@ def run_learning_benchmark(
     repetitions: int,
 ) -> dict:
     """Measure learning capacity by injecting test patterns."""
-    initial_metrics = network.get_metrics()
+    _initial_metrics = network.get_metrics()
     initial_step = network._step_count
 
     # Record initial synapse state for key groups
@@ -250,8 +253,10 @@ def run_benchmark(args: argparse.Namespace) -> dict:
 
     # Build config (from env or defaults)
     config = NeuromorphicConfig.from_env()
-    print(f"\nNetwork: {config.populations.total:,} neurons, "
-          f"{len([c for c in config.connections.__dataclass_fields__])} connection types")
+    print(
+        f"\nNetwork: {config.populations.total:,} neurons, "
+        f"{len([c for c in config.connections.__dataclass_fields__])} connection types"
+    )
     print(f"Memory estimate: {config.estimate_memory_bytes() / (1024**2):.0f} MB")
 
     # Build or load network
@@ -262,8 +267,9 @@ def run_benchmark(args: argparse.Namespace) -> dict:
 
     if args.checkpoint and Path(args.checkpoint).exists():
         print(f"Loading checkpoint: {args.checkpoint}")
-        from neuromorphic.persistence import NeuromorphicPersistence
         import asyncio
+
+        from neuromorphic.persistence import NeuromorphicPersistence
 
         async def _load():
             p = NeuromorphicPersistence(args.checkpoint)
@@ -310,11 +316,13 @@ def run_benchmark(args: argparse.Namespace) -> dict:
     print(f"  {speed['steps_per_sec']} steps/sec ({speed['elapsed_s']}s)")
     if speed.get("phase_timing"):
         total_ms = speed["phase_timing"].get("total", {}).get("mean_ms", 1)
-        print(f"\n  Per-phase breakdown (mean ms, % of total):")
+        print("\n  Per-phase breakdown (mean ms, % of total):")
         for phase, stats in speed["phase_timing"].items():
             pct = (stats["mean_ms"] / total_ms * 100) if total_ms > 0 else 0
             label = phase if phase == "total" else phase.split("_", 1)[1] if "_" in phase else phase
-            print(f"    {label:30s}  {stats['mean_ms']:8.3f} ms  ({pct:5.1f}%)  p95={stats['p95_ms']:.3f}")
+            print(
+                f"    {label:30s}  {stats['mean_ms']:8.3f} ms  ({pct:5.1f}%)  p95={stats['p95_ms']:.3f}"
+            )
     results["speed"] = speed
 
     # 2. Learning benchmark (modifies weights — runs after speed)
@@ -322,12 +330,16 @@ def run_benchmark(args: argparse.Namespace) -> dict:
     patterns = generate_test_patterns(args.patterns, rng)
     print(f"\n--- Learning Benchmark ({args.patterns} patterns x {args.reps} reps) ---")
     learning = run_learning_benchmark(network, patterns, args.steps_per_pattern, args.reps)
-    print(f"  {learning['total_steps']:,} steps in {learning['elapsed_s']}s "
-          f"({learning['steps_per_sec']} steps/sec)")
+    print(
+        f"  {learning['total_steps']:,} steps in {learning['elapsed_s']}s "
+        f"({learning['steps_per_sec']} steps/sec)"
+    )
     if learning["weight_changes"]:
         for name, wc in learning["weight_changes"].items():
-            print(f"  {name}: {wc['initial_mean']:.4f} -> {wc['final_mean']:.4f} "
-                  f"(delta: {wc['delta']:+.6f})")
+            print(
+                f"  {name}: {wc['initial_mean']:.4f} -> {wc['final_mean']:.4f} "
+                f"(delta: {wc['delta']:+.6f})"
+            )
     if learning["concept_count"] > 0:
         print(f"  Concept patterns: {learning['concept_count']}")
     print(f"  Phase: {learning['neuromodulation'].get('phase', 'unknown')}")
@@ -346,7 +358,7 @@ def run_benchmark(args: argparse.Namespace) -> dict:
         "total_synapses": total_nnz_final,
         "myelination_fractions": myelination,
     }
-    print(f"\n--- Memory ---")
+    print("\n--- Memory ---")
     print(f"  Peak RSS: {rss_final:.0f} MB")
     print(f"  Synapses: {total_nnz_final:,}")
 
@@ -381,27 +393,39 @@ def run_benchmark(args: argparse.Namespace) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Neuromorphic network benchmark")
     parser.add_argument(
-        "--steps", type=int, default=1000,
+        "--steps",
+        type=int,
+        default=1000,
         help="Steps for speed benchmark (default: 1000)",
     )
     parser.add_argument(
-        "--patterns", type=int, default=50,
+        "--patterns",
+        type=int,
+        default=50,
         help="Number of test patterns for learning benchmark (default: 50)",
     )
     parser.add_argument(
-        "--reps", type=int, default=5,
+        "--reps",
+        type=int,
+        default=5,
         help="Repetitions per pattern (default: 5)",
     )
     parser.add_argument(
-        "--steps-per-pattern", type=int, default=20,
+        "--steps-per-pattern",
+        type=int,
+        default=20,
         help="Steps per pattern injection (default: 20)",
     )
     parser.add_argument(
-        "--checkpoint", type=str, default=None,
+        "--checkpoint",
+        type=str,
+        default=None,
         help="Path to SQLite checkpoint to load before benchmarking",
     )
     parser.add_argument(
-        "--output", type=str, default=str(Path(__file__).parent.parent / "benchmarks"),
+        "--output",
+        type=str,
+        default=str(Path(__file__).parent.parent / "benchmarks"),
         help="Output directory for results JSON",
     )
     args = parser.parse_args()

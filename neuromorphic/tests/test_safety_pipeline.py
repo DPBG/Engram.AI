@@ -13,6 +13,7 @@ import importlib
 import os
 import sys
 import types
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -85,10 +86,14 @@ NodeType = _beliefs_graph.NodeType
 _kernel_evaluator = _import_submodule("kernel", "evaluator")
 KernelEvaluator = _kernel_evaluator.KernelEvaluator
 
-from neuromorphic.config import NeuromorphicConfig, SafetyGateConfig, MotorFeedbackConfig
-
+from neuromorphic.config import (  # noqa: E402
+    MotorFeedbackConfig,
+    NeuromorphicConfig,
+    SafetyGateConfig,
+)
 
 # ===== Config tests =====
+
 
 class TestSafetyGateConfig:
     """Test SafetyGateConfig parsing from environment."""
@@ -127,6 +132,7 @@ class TestSafetyGateConfig:
 
 
 # ===== Belief tests =====
+
 
 class TestBeliefConstitution:
     """Test belief graph constitutional seeding and value protection."""
@@ -210,34 +216,37 @@ class TestBeliefConstitution:
     def test_import_enforces_value_floor(self):
         """import_from_dict enforces VALUE confidence floor (anti-tampering)."""
         import time
+
         now = int(time.time() * 1000)
         g = BeliefGraph()
         # Simulate loading corrupted persistence data
-        g.import_from_dict({
-            "nodes": [
-                {
-                    "id": "value.human_safety",
-                    "type": "value",
-                    "content": "Human safety",
-                    "confidence": 0.3,  # corrupted / tampered
-                    "source": "constitutional",
-                    "metadata": {},
-                    "created_at": now,
-                    "updated_at": now,
-                },
-                {
-                    "id": "norm.gradual_motor",
-                    "type": "norm",
-                    "content": "Gradual motor",
-                    "confidence": 0.3,  # norms CAN be low
-                    "source": "constitutional",
-                    "metadata": {},
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            ],
-            "edges": [],
-        })
+        g.import_from_dict(
+            {
+                "nodes": [
+                    {
+                        "id": "value.human_safety",
+                        "type": "value",
+                        "content": "Human safety",
+                        "confidence": 0.3,  # corrupted / tampered
+                        "source": "constitutional",
+                        "metadata": {},
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                    {
+                        "id": "norm.gradual_motor",
+                        "type": "norm",
+                        "content": "Gradual motor",
+                        "confidence": 0.3,  # norms CAN be low
+                        "source": "constitutional",
+                        "metadata": {},
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                ],
+                "edges": [],
+            }
+        )
         # VALUE must be floored at 0.9
         val = g.get_node("value.human_safety")
         assert val.confidence >= 0.9
@@ -257,6 +266,7 @@ class TestBeliefConstitution:
 
 
 # ===== Kernel tests =====
+
 
 class TestKernelNormViolations:
     """Test Kernel evaluator with norm violations."""
@@ -310,6 +320,7 @@ class TestKernelNormViolations:
 
 # ===== Feedback injection tests =====
 
+
 class TestSafetyFeedbackInjection:
     """Test that safety decisions inject motor outcome feedback.
 
@@ -330,14 +341,18 @@ class TestSafetyFeedbackInjection:
         """Replicate the service method for unit testing."""
         if not cfg.motor_feedback.enabled:
             return
-        pending_outcomes.append({
-            "proprio_data": proprio_data if proprio_data is not None else [1.0 if success else 0.0],
-            "provenance": f"motor.outcome.{channel}",
-            "gain": (
-                cfg.motor_feedback.success_gain if success
-                else cfg.motor_feedback.failure_gain
-            ) * confidence,
-        })
+        pending_outcomes.append(
+            {
+                "proprio_data": (
+                    proprio_data if proprio_data is not None else [1.0 if success else 0.0]
+                ),
+                "provenance": f"motor.outcome.{channel}",
+                "gain": (
+                    cfg.motor_feedback.success_gain if success else cfg.motor_feedback.failure_gain
+                )
+                * confidence,
+            }
+        )
 
     def test_deny_queues_negative_feedback(self):
         """DENY decision queues negative motor outcome for brain STDP."""

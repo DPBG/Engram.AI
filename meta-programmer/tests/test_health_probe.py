@@ -15,9 +15,7 @@ import tempfile
 import time
 
 # Load safety.py directly so the test doesn't pull in the `docker` SDK.
-_SAFETY_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "meta_programmer", "safety.py"
-)
+_SAFETY_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "meta_programmer", "safety.py")
 _spec = importlib.util.spec_from_file_location("mp_safety_hp", _SAFETY_PATH)
 _safety = importlib.util.module_from_spec(_spec)
 sys.modules["mp_safety_hp"] = _safety
@@ -28,6 +26,7 @@ deploy_atomically = _safety.deploy_atomically
 
 
 # ── run_health_probe unit tests ───────────────────────────────────────────────
+
 
 def test_probe_passes_for_valid_module():
     with tempfile.TemporaryDirectory() as d:
@@ -81,6 +80,7 @@ def test_probe_times_out_for_hanging_module():
 
 
 # ── deploy_atomically with probe_timeout ─────────────────────────────────────
+
 
 def test_deploy_with_probe_passes_healthy_artifact():
     with tempfile.TemporaryDirectory() as d:
@@ -144,6 +144,7 @@ def test_deploy_with_probe_replaces_existing_on_success():
 
 
 # ── default behaviour: no probe unless probe_timeout > 0 ─────────────────────
+
 
 def test_deploy_without_probe_does_not_catch_import_errors():
     """With probe_timeout=0 (default) only syntax is checked — import-time

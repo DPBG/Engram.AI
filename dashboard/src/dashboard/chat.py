@@ -104,15 +104,19 @@ class ChatEngine:
             os_i = system_info.get("os", {})
             cpu = system_info.get("cpu", {})
             mem = system_info.get("memory", {})
-            parts.append(f"Server: {os_i.get('system', '?')} {os_i.get('release', '')} -- {cpu.get('model', cpu.get('architecture', '?'))} ({cpu.get('cores', '?')} cores), {mem.get('total_gb', '?')} GB RAM")
+            parts.append(
+                f"Server: {os_i.get('system', '?')} {os_i.get('release', '')} -- {cpu.get('model', cpu.get('architecture', '?'))} ({cpu.get('cores', '?')} cores), {mem.get('total_gb', '?')} GB RAM"
+            )
 
-        parts.extend([
-            "",
-            "When the user teaches you something (e.g., 'a ball is round'), explain that the text has",
-            "been injected into the brain's sensory cortex as a spike pattern. The brain will form",
-            "associations through STDP if this input correlates with other sensory experience.",
-            "The brain learns from temporal correlation, not from understanding the sentence.",
-        ])
+        parts.extend(
+            [
+                "",
+                "When the user teaches you something (e.g., 'a ball is round'), explain that the text has",
+                "been injected into the brain's sensory cortex as a spike pattern. The brain will form",
+                "associations through STDP if this input correlates with other sensory experience.",
+                "The brain learns from temporal correlation, not from understanding the sentence.",
+            ]
+        )
         return "\n".join(parts)
 
     def _interpret_brain_state(self) -> str:
@@ -208,7 +212,9 @@ class ChatEngine:
         # Prediction error
         pred_error = neuro_metrics.get("drives", {}).get("prediction_error")
         if pred_error is not None and pred_error > 0.5:
-            parts.append(f"Surprise level: high ({pred_error:.2f}) — world model is being challenged")
+            parts.append(
+                f"Surprise level: high ({pred_error:.2f}) — world model is being challenged"
+            )
 
         return "\n".join(parts)
 
@@ -230,7 +236,9 @@ class ChatEngine:
         # Report active regions
         active = [(k, v) for k, v in firing.items() if v > 0.01]
         if active:
-            rates = ", ".join(f"{k} {v*100:.0f}%" for k, v in sorted(active, key=lambda x: -x[1])[:5])
+            rates = ", ".join(
+                f"{k} {v*100:.0f}%" for k, v in sorted(active, key=lambda x: -x[1])[:5]
+            )
             parts.append(f"Active regions: {rates}.")
         else:
             parts.append("Neurons are mostly quiet. The brain needs sensory input to activate.")
@@ -245,6 +253,7 @@ class ChatEngine:
     # ── LLM backends ──────────────────────────────────────────────────────
     async def _chat_ollama(self, messages: list[dict]) -> dict[str, str]:
         import aiohttp
+
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
                 async with session.post(
@@ -253,10 +262,16 @@ class ChatEngine:
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return {"content": data.get("message", {}).get("content", "No response."), "model": f"ollama/{self.llm_model}"}
+                        return {
+                            "content": data.get("message", {}).get("content", "No response."),
+                            "model": f"ollama/{self.llm_model}",
+                        }
                     else:
                         txt = await resp.text()
-                        return {"content": f"⚠️ Ollama {resp.status}. Model '{self.llm_model}' may not be pulled.\n\n`docker exec activelearning-ollama ollama pull {self.llm_model}`\n\n{txt[:200]}", "model": "error"}
+                        return {
+                            "content": f"⚠️ Ollama {resp.status}. Model '{self.llm_model}' may not be pulled.\n\n`docker exec activelearning-ollama ollama pull {self.llm_model}`\n\n{txt[:200]}",
+                            "model": "error",
+                        }
         except aiohttp.ClientConnectorError:
             return self._generate_brain_only_response()
         except Exception as e:
@@ -264,16 +279,23 @@ class ChatEngine:
 
     async def _chat_openai(self, messages: list[dict]) -> dict[str, str]:
         import aiohttp
+
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
                 async with session.post(
                     f"{self._openai_url}/v1/chat/completions",
                     json={"model": self.llm_model, "messages": messages, "max_tokens": 2000},
-                    headers={"Authorization": f"Bearer {self._openai_key}", "Content-Type": "application/json"},
+                    headers={
+                        "Authorization": f"Bearer {self._openai_key}",
+                        "Content-Type": "application/json",
+                    },
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return {"content": data["choices"][0]["message"]["content"], "model": data.get("model", self.llm_model)}
+                        return {
+                            "content": data["choices"][0]["message"]["content"],
+                            "model": data.get("model", self.llm_model),
+                        }
                     return {"content": f"OpenAI API error: {resp.status}", "model": "error"}
         except Exception as e:
             self.logger.warning(f"OpenAI failed, falling back to Ollama: {e}")

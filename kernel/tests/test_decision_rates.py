@@ -51,7 +51,12 @@ def test_compute_decision_rates_empty_when_no_decisions():
     result = _run(svc._compute_decision_rates())
 
     assert result["all_time"]["total"] == 0
-    assert result["all_time"]["rates"] == {"ALLOW": 0.0, "TRANSFORM": 0.0, "DENY": 0.0, "DEFER": 0.0}
+    assert result["all_time"]["rates"] == {
+        "ALLOW": 0.0,
+        "TRANSFORM": 0.0,
+        "DENY": 0.0,
+        "DEFER": 0.0,
+    }
     assert result["window"]["total"] == 0
     assert result["by_source"] == {}
 

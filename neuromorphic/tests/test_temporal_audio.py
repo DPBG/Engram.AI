@@ -34,7 +34,7 @@ def _make_temporal_frame(n_chunks: int = 5) -> dict:
         "n_chunks": n_chunks,
         "mean_mfcc": raw.mean(axis=0).tolist(),
         "delta_mfcc": (raw[-1] - raw[0]).tolist(),
-        "energy": np.sqrt((raw ** 2).mean(axis=1)).tolist(),
+        "energy": np.sqrt((raw**2).mean(axis=1)).tolist(),
         "raw_stack": raw.tolist(),
     }
 
@@ -101,7 +101,7 @@ class TestTemporalAudioEncoding:
             "n_chunks": 5,
             "mean_mfcc": raw1.mean(axis=0).tolist(),
             "delta_mfcc": (raw1[-1] - raw1[0]).tolist(),
-            "energy": np.sqrt((raw1 ** 2).mean(axis=1)).tolist(),
+            "energy": np.sqrt((raw1**2).mean(axis=1)).tolist(),
             "raw_stack": raw1.tolist(),
         }
         frame2 = {
@@ -109,7 +109,7 @@ class TestTemporalAudioEncoding:
             "n_chunks": 5,
             "mean_mfcc": raw2.mean(axis=0).tolist(),
             "delta_mfcc": (raw2[-1] - raw2[0]).tolist(),
-            "energy": np.sqrt((raw2 ** 2).mean(axis=1)).tolist(),
+            "energy": np.sqrt((raw2**2).mean(axis=1)).tolist(),
             "raw_stack": raw2.tolist(),
         }
         c1 = encoder.encode(sensory, frame1, "sensor.audiofile")

@@ -17,13 +17,13 @@ import pytest
 
 from launcher.registry import Service
 from launcher.supervisor import (
-    ManagedProcess,
-    Supervisor,
     _BACKOFF_FACTOR,
     _BACKOFF_INITIAL,
     _BACKOFF_MAX,
     _BACKOFF_RESET,
     _SIGKILL,
+    ManagedProcess,
+    Supervisor,
 )
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ class TestReadinessGating:
 
         # Schedule against fp_old, then replace mp.proc before the timer fires.
         sup._schedule_ready(mp)
-        fp_old.exit(1)          # old proc is dead
+        fp_old.exit(1)  # old proc is dead
         fp_new = FakePopen([])  # new proc is alive, but wasn't the captured one
         mp.proc = fp_new
 
@@ -263,6 +263,7 @@ class TestReadinessGating:
         svc = _svc(name="orphan", deps=("missing-dep",))
 
         import logging
+
         with caplog.at_level(logging.WARNING, logger="launcher.supervisor"):
             sup.start(svc, stagger=0.0)
 
@@ -358,7 +359,9 @@ class TestRestartWithBackoff:
             deadline = time.time() + 1.0
             while time.time() < deadline and mp.proc is second:
                 time.sleep(0.01)
-            assert mp.proc is not second, "second restart should complete within 1 s (reset delay = 0.05 s)"
+            assert (
+                mp.proc is not second
+            ), "second restart should complete within 1 s (reset delay = 0.05 s)"
             assert mp.restart_count >= 2, "restart_count should reflect both restarts"
 
             sup._stopping = True

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from neuromorphic.config import STDPParams, EligibilityTraceConfig, BCMConfig
+from neuromorphic.config import BCMConfig, EligibilityTraceConfig
 from neuromorphic.synapses import SynapseGroup
 
 
@@ -12,8 +12,12 @@ class TestEligibilityTraces:
 
     def _make_synapse(self, **kwargs):
         defaults = dict(
-            n_pre=50, n_post=50, sparsity=0.1, init_weight=0.5,
-            plastic=True, rng=np.random.default_rng(42),
+            n_pre=50,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            plastic=True,
+            rng=np.random.default_rng(42),
             eligibility_config=EligibilityTraceConfig(),
         )
         defaults.update(kwargs)
@@ -29,16 +33,24 @@ class TestEligibilityTraces:
     def test_no_eligibility_without_config(self):
         """Without eligibility config, no trace array."""
         sg = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.1, init_weight=0.5,
-            plastic=True, rng=np.random.default_rng(42),
+            n_pre=50,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            plastic=True,
+            rng=np.random.default_rng(42),
         )
         assert sg.eligibility is None
 
     def test_no_eligibility_non_plastic(self):
         """Non-plastic synapse should not have eligibility."""
         sg = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.1, init_weight=0.5,
-            plastic=False, rng=np.random.default_rng(42),
+            n_pre=50,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            plastic=False,
+            rng=np.random.default_rng(42),
             eligibility_config=EligibilityTraceConfig(),
         )
         assert sg.eligibility is None
@@ -130,9 +142,7 @@ class TestEligibilityTraces:
         # Weight change matches every-step (the bug made batched ~1/N of this)...
         np.testing.assert_allclose(batched_dw, truth_dw, rtol=1e-4, atol=1e-7)
         # ...and the final eligibility trace matches too.
-        np.testing.assert_allclose(
-            batched.eligibility, every.eligibility, rtol=1e-4, atol=1e-7
-        )
+        np.testing.assert_allclose(batched.eligibility, every.eligibility, rtol=1e-4, atol=1e-7)
         # Sanity: for interval>1 the update is non-trivial (guards against a
         # degenerate all-zero "match").
         if interval > 1:
@@ -144,8 +154,12 @@ class TestBCMMetaplasticity:
 
     def _make_synapse_with_bcm(self):
         sg = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.1, init_weight=0.5,
-            plastic=True, rng=np.random.default_rng(42),
+            n_pre=50,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            plastic=True,
+            rng=np.random.default_rng(42),
         )
         sg.enable_bcm(BCMConfig())
         return sg
@@ -160,8 +174,12 @@ class TestBCMMetaplasticity:
     def test_bcm_not_on_non_plastic(self):
         """Non-plastic synapses should ignore enable_bcm."""
         sg = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.1, init_weight=0.5,
-            plastic=False, rng=np.random.default_rng(42),
+            n_pre=50,
+            n_post=50,
+            sparsity=0.1,
+            init_weight=0.5,
+            plastic=False,
+            rng=np.random.default_rng(42),
         )
         sg.enable_bcm(BCMConfig())
         assert sg.bcm_theta is None
@@ -196,7 +214,7 @@ class TestBCMMetaplasticity:
         """Active neurons (high theta) should have lower LTP scaling."""
         sg = self._make_synapse_with_bcm()
         sg.bcm_theta[:25] = 0.001  # quiet neurons
-        sg.bcm_theta[25:] = 0.1    # active neurons
+        sg.bcm_theta[25:] = 0.1  # active neurons
 
         scaling = sg._get_bcm_scaling()
         assert scaling is not None

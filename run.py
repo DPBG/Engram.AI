@@ -23,10 +23,9 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 from launcher import nats_server
-from launcher.registry import ROOT, get_service, services_for_profile, PROFILES
+from launcher.registry import PROFILES, ROOT, get_service, services_for_profile
 from launcher.supervisor import Supervisor
 
 # Windows consoles default to cp1252; make our (and children's) output UTF-8 safe.
@@ -79,9 +78,7 @@ def base_env() -> dict:
 def cmd_install() -> int:
     req = ROOT / "requirements-local.txt"
     log.info("Installing Python dependencies from %s", req.name)
-    rc = subprocess.call(
-        [sys.executable, "-m", "pip", "install", "-r", str(req)]
-    )
+    rc = subprocess.call([sys.executable, "-m", "pip", "install", "-r", str(req)])
     if rc == 0:
         log.info("Dependencies installed.")
     else:
@@ -127,28 +124,35 @@ def main() -> int:
         prog="run.py", description="Run Engram locally with pure Python (no Docker)."
     )
     parser.add_argument(
-        "--profile", default="core", choices=list(PROFILES),
+        "--profile",
+        default="core",
+        choices=list(PROFILES),
         help="which set of services to run (default: core)",
     )
     parser.add_argument(
-        "--only", help="comma-separated service names to run instead of a profile",
+        "--only",
+        help="comma-separated service names to run instead of a profile",
     )
     parser.add_argument("--list", action="store_true", help="list services and exit")
     parser.add_argument(
-        "--install", action="store_true", help="pip install dependencies and exit",
+        "--install",
+        action="store_true",
+        help="pip install dependencies and exit",
     )
     parser.add_argument(
-        "--no-nats", action="store_true",
+        "--no-nats",
+        action="store_true",
         help="don't download/manage NATS (assume it's already running)",
     )
     parser.add_argument(
-        "--skip-infra-check", action="store_true",
+        "--skip-infra-check",
+        action="store_true",
         help="start qdrant/ollama-dependent services even if not detected",
     )
     parser.add_argument(
-        "--video", metavar="PATH",
-        help="video file/URL to stream into the brain via sensory-gateway "
-             "(sets SENSORY_VIDEO)",
+        "--video",
+        metavar="PATH",
+        help="video file/URL to stream into the brain via sensory-gateway " "(sets SENSORY_VIDEO)",
     )
     args = parser.parse_args()
 

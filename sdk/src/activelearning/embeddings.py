@@ -11,7 +11,6 @@ Uses Ollama's embedding models to generate text embeddings for:
 import hashlib
 import logging
 from collections import OrderedDict
-from typing import Optional
 
 import aiohttp
 
@@ -44,7 +43,7 @@ class EmbeddingService(_OllamaSession):
 
     def __init__(
         self,
-        ollama_host: Optional[str] = None,
+        ollama_host: str | None = None,
         model: str = "nomic-embed-text",
         dimensions: int = 768,
     ):
@@ -182,9 +181,7 @@ class EmbeddingService(_OllamaSession):
                 if response.status == 200:
                     data = await response.json()
                     models = [m["name"] for m in data.get("models", [])]
-                    return self.model in models or any(
-                        self.model in m for m in models
-                    )
+                    return self.model in models or any(self.model in m for m in models)
                 return False
         except Exception as e:
             logger.warning(f"Embedding service not available: {e}")
@@ -192,7 +189,7 @@ class EmbeddingService(_OllamaSession):
 
 
 # Global embedding service instance
-_embedding_service: Optional[EmbeddingService] = None
+_embedding_service: EmbeddingService | None = None
 
 
 def get_embedding_service() -> EmbeddingService:

@@ -17,11 +17,10 @@ The adolescent phase is entered dynamically (experience-dependent, not time-base
 from __future__ import annotations
 
 import logging
-from collections import deque
 
 import numpy as np
 
-from neuromorphic.config import NeuromorphicConfig, CriticalPeriodConfig, AdolescentEntryConfig
+from neuromorphic.config import AdolescentEntryConfig, NeuromorphicConfig
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class ConceptDifferentiationTracker:
         if len(firing_rates) > self._n_sample:
             # Deterministic subsample (evenly spaced)
             step = len(firing_rates) // self._n_sample
-            sample = firing_rates[::step][:self._n_sample]
+            sample = firing_rates[::step][: self._n_sample]
         else:
             sample = firing_rates.copy()
         norm = np.linalg.norm(sample)
@@ -53,7 +52,7 @@ class ConceptDifferentiationTracker:
             sample = sample / norm
             self._patterns.append(sample)
             if len(self._patterns) > self._max_stored:
-                self._patterns = self._patterns[-self._max_stored:]
+                self._patterns = self._patterns[-self._max_stored :]
 
     def count_distinct(self) -> int:
         """Count distinct clusters via greedy cosine similarity."""
@@ -201,8 +200,10 @@ class NeuromodulationSystem:
         if sensory_met:
             self._criterion_last_met["sensory_stability"] = step
 
-        stdp_met = (self._feature_stdp_peak < 1e-8 or
-                    self._feature_stdp_current < cfg.feature_stdp_decline * self._feature_stdp_peak)
+        stdp_met = (
+            self._feature_stdp_peak < 1e-8
+            or self._feature_stdp_current < cfg.feature_stdp_decline * self._feature_stdp_peak
+        )
         if stdp_met:
             self._criterion_last_met["feature_stdp_decline"] = step
 
@@ -221,8 +222,11 @@ class NeuromodulationSystem:
 
         # Log criteria progress every check so operators can monitor approach
         n_concepts = self._concept_tracker.count_distinct()
-        stdp_ratio = (self._feature_stdp_current / self._feature_stdp_peak
-                      if self._feature_stdp_peak > 1e-8 else 0.0)
+        stdp_ratio = (
+            self._feature_stdp_current / self._feature_stdp_peak
+            if self._feature_stdp_peak > 1e-8
+            else 0.0
+        )
         logger.info(
             "Adolescent entry check at step %s: "
             "concepts=%d/%d %s | "
@@ -231,13 +235,17 @@ class NeuromodulationSystem:
             "consecutive=%d/%d | "
             "all_in_window=%s",
             f"{step:,}",
-            n_concepts, cfg.min_concept_patterns,
+            n_concepts,
+            cfg.min_concept_patterns,
             "MET" if concept_met else "---",
-            self._sensory_rate_variance, cfg.sensory_stability_threshold,
+            self._sensory_rate_variance,
+            cfg.sensory_stability_threshold,
             "MET" if sensory_met else "---",
-            stdp_ratio, cfg.feature_stdp_decline,
+            stdp_ratio,
+            cfg.feature_stdp_decline,
             "MET" if stdp_met else "---",
-            self._adolescent_entry_checks, cfg.consecutive_checks,
+            self._adolescent_entry_checks,
+            cfg.consecutive_checks,
             "YES" if all_within_window else "NO",
         )
 
@@ -261,8 +269,12 @@ class NeuromodulationSystem:
         exit_reason = None
         if duration >= cfg.max_duration:
             exit_reason = f"max_duration ({duration:,} steps)"
-        elif duration >= cfg.min_duration and self._myelination_fraction >= self._myelination_target:
-            exit_reason = f"myelination target ({self._myelination_fraction:.1%}) after {duration:,} steps"
+        elif (
+            duration >= cfg.min_duration and self._myelination_fraction >= self._myelination_target
+        ):
+            exit_reason = (
+                f"myelination target ({self._myelination_fraction:.1%}) after {duration:,} steps"
+            )
 
         if exit_reason:
             self._adolescent_active = False
@@ -299,12 +311,19 @@ class NeuromodulationSystem:
             )
         elif self._adolescent_active:
             phase = "adolescent"
-            baselines = (cp.adolescent_da, cp.adolescent_ach, cp.adolescent_ne, cp.adolescent_serotonin)
+            baselines = (
+                cp.adolescent_da,
+                cp.adolescent_ach,
+                cp.adolescent_ne,
+                cp.adolescent_serotonin,
+            )
         else:
             phase = "mature"
             baselines = (cp.mature_da, cp.mature_ach, cp.mature_ne, cp.mature_serotonin)
 
-        self._baseline_da, self._baseline_ach, self._baseline_ne, self._baseline_serotonin = baselines
+        self._baseline_da, self._baseline_ach, self._baseline_ne, self._baseline_serotonin = (
+            baselines
+        )
         # Only update phase from time-based transitions; adolescent entry/exit handled separately
         if not self._adolescent_active:
             self._current_phase = phase

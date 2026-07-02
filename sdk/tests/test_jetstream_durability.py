@@ -39,14 +39,18 @@ async def test_success_acks_exactly_once(event_bus: EventBus, wait_for_message) 
     # Short redelivery interval: if the message were NOT acked, a redelivery
     # would arrive within ~0.5s and the count would climb past 1.
     await event_bus.js_subscribe(
-        subject, handler, durable=f"d-{uuid.uuid4().hex[:8]}",
-        max_deliver=3, backoff=[0.5, 0.5],
+        subject,
+        handler,
+        durable=f"d-{uuid.uuid4().hex[:8]}",
+        max_deliver=3,
+        backoff=[0.5, 0.5],
     )
     await event_bus.publish(subject, _decision_payload("ok-1"))
 
     await wait_for_message(lambda: len(calls) == 1, timeout=5.0)
     # Give any erroneous redelivery time to show up, then assert it didn't.
     import asyncio
+
     await asyncio.sleep(1.5)
     assert len(calls) == 1, "successful message must be acked exactly once"
 
@@ -64,8 +68,11 @@ async def test_redelivers_after_handler_crash(event_bus: EventBus, wait_for_mess
         succeeded.append(data)
 
     await event_bus.js_subscribe(
-        subject, handler, durable=f"d-{uuid.uuid4().hex[:8]}",
-        max_deliver=5, backoff=[0.5, 0.5, 0.5, 0.5],
+        subject,
+        handler,
+        durable=f"d-{uuid.uuid4().hex[:8]}",
+        max_deliver=5,
+        backoff=[0.5, 0.5, 0.5, 0.5],
     )
     await event_bus.publish(subject, _decision_payload("retry-1"))
 
@@ -94,8 +101,12 @@ async def test_poison_after_max_deliver(event_bus: EventBus, wait_for_message) -
     await event_bus.subscribe(poison_subject(subject), lambda d: dlq_msgs.append(d) or None)
 
     await event_bus.js_subscribe(
-        subject, handler, durable=f"d-{uuid.uuid4().hex[:8]}",
-        max_deliver=max_deliver, backoff=[0.3, 0.3], poison_handler=on_poison,
+        subject,
+        handler,
+        durable=f"d-{uuid.uuid4().hex[:8]}",
+        max_deliver=max_deliver,
+        backoff=[0.3, 0.3],
+        poison_handler=on_poison,
     )
     await event_bus.publish(subject, _decision_payload("poison-1"))
 
@@ -109,6 +120,7 @@ async def test_poison_after_max_deliver(event_bus: EventBus, wait_for_message) -
 
     # No further redelivery after poisoning (term).
     import asyncio
+
     await asyncio.sleep(1.5)
     assert len(attempts) == max_deliver, "poisoned message must stop redelivering"
     assert len(poisoned) == 1

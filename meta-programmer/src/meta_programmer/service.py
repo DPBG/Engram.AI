@@ -6,13 +6,9 @@ tests in isolated sandboxes, and deploys after Kernel approval.
 """
 
 import asyncio
-import os
-import time
-from typing import Any
-import json
 import math
 import os
-from typing import Any, Optional
+from typing import Any
 
 from activelearning import BaseService, current_timestamp, generate_trace_id
 from activelearning.nats_client import serialize_message
@@ -78,7 +74,7 @@ class MetaProgrammerService(BaseService):
         self._deployments = 0
         self._reviews_expired = 0
         self._health_probe_failures = 0  # E1.9.2: deploys that failed the post-deploy probe
-        self._auto_rollbacks = 0         # E1.9.2: automatic rollbacks triggered by probe failure
+        self._auto_rollbacks = 0  # E1.9.2: automatic rollbacks triggered by probe failure
 
     async def _setup(self) -> None:
         """Initialize service-specific setup."""
@@ -110,7 +106,9 @@ class MetaProgrammerService(BaseService):
 
         # Subscribe to status requests (request-reply)
         await self.event_bus.subscribe(
-            "metaprogrammer.status", self._handle_status, is_request_handler=True,
+            "metaprogrammer.status",
+            self._handle_status,
+            is_request_handler=True,
         )
 
         # Subscribe to human approval/denial responses from the Dashboard.
@@ -322,6 +320,8 @@ class MetaProgrammerService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling knowledge gap: {e}", exc_info=True)
+            if "trace_id" in locals():
+                await self._publish_gap_result(trace_id, False, str(e))
             await self._publish_gap_result(trace_id, False, str(e))
 
     async def _request_kernel_approval(
@@ -366,7 +366,9 @@ class MetaProgrammerService(BaseService):
         """Wait for a Kernel decision."""
         try:
             decision = await self.event_bus.wait_for_decision(
-                trace_id, timeout=timeout, code=code,
+                trace_id,
+                timeout=timeout,
+                code=code,
             )
             return decision
         except TimeoutError:
@@ -392,7 +394,9 @@ class MetaProgrammerService(BaseService):
             # back to the prior content (or remove a newly-created file) on any
             # failure — never leave a broken artifact.
             ok, detail = await asyncio.to_thread(
-                lambda: deploy_atomically(target_path, code, probe_timeout=self._health_probe_timeout)
+                lambda: deploy_atomically(
+                    target_path, code, probe_timeout=self._health_probe_timeout
+                )
             )
             if not ok:
                 if "health probe" in detail:
@@ -400,7 +404,9 @@ class MetaProgrammerService(BaseService):
                     self._auto_rollbacks += 1
                     self.logger.error(
                         "POST-DEPLOY HEALTH PROBE FAILED for %s at %s — auto-rolled back. %s",
-                        trace_id, target_path, detail,
+                        trace_id,
+                        target_path,
+                        detail,
                     )
                     try:
                         await self.event_bus.publish(
@@ -413,7 +419,9 @@ class MetaProgrammerService(BaseService):
                             },
                         )
                     except Exception as pub_err:
-                        self.logger.warning("Could not publish deploy.rolled_back event: %s", pub_err)
+                        self.logger.warning(
+                            "Could not publish deploy.rolled_back event: %s", pub_err
+                        )
                 else:
                     self.logger.error("Deploy rolled back for %s: %s", target_path, detail)
                 raise RuntimeError(f"Deploy rolled back: {detail}")
@@ -421,7 +429,6 @@ class MetaProgrammerService(BaseService):
             self.logger.info(f"Deployed code to: {target_path}")
 
             # Log deployment
-            import uuid
 
             await self.database.insert(
                 "deployments",
@@ -487,6 +494,7 @@ class MetaProgrammerService(BaseService):
             await self.event_bus.publish("metaprogrammer.status.response", status)
         except Exception as e:
             self.logger.error(f"Error getting status: {e}")
+
     async def _handle_status(self, _data: dict[str, Any], msg: Msg) -> None:
         """Reply to status requests via request-reply."""
         ac = self._approval_consumer

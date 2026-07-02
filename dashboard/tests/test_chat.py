@@ -27,6 +27,7 @@ def _engine(state=None, nats=None):
 
 # ── brain-state interpretation ─────────────────────────────────────────────
 
+
 def test_interpret_brain_state_empty_returns_blank():
     assert _engine()._interpret_brain_state() == ""
 
@@ -56,12 +57,15 @@ def test_interpret_brain_state_infers_phase_from_step_count():
 
 # ── system context ─────────────────────────────────────────────────────────
 
+
 def test_build_system_context_includes_brain_and_server_sections():
     state = DashboardState()
     state.neuro_metrics = {"step_count": 5, "phase": "infant", "firing_rates": {}, "drives": {}}
-    state.system_info = {"os": {"system": "Linux", "release": "6.1"},
-                         "cpu": {"cores": 8, "architecture": "x86_64"},
-                         "memory": {"total_gb": 32}}
+    state.system_info = {
+        "os": {"system": "Linux", "release": "6.1"},
+        "cpu": {"cores": 8, "architecture": "x86_64"},
+        "memory": {"total_gb": 32},
+    }
     ctx = _engine(state)._build_system_context()
     assert "You are the voice of Engram" in ctx
     assert "CURRENT BRAIN STATE" in ctx
@@ -76,6 +80,7 @@ def test_build_system_context_without_state_has_no_brain_or_server():
 
 # ── brain-only fallback ────────────────────────────────────────────────────
 
+
 def test_generate_brain_only_response_initializing_when_no_metrics():
     out = _engine()._generate_brain_only_response()
     assert out["model"] == "neural-only"
@@ -84,14 +89,18 @@ def test_generate_brain_only_response_initializing_when_no_metrics():
 
 def test_generate_brain_only_response_lists_active_regions():
     state = DashboardState()
-    state.neuro_metrics = {"step_count": 7, "phase": "toddler",
-                           "firing_rates": {"motor_cortex": 0.2, "sensory_cortex": 0.05}}
+    state.neuro_metrics = {
+        "step_count": 7,
+        "phase": "toddler",
+        "firing_rates": {"motor_cortex": 0.2, "sensory_cortex": 0.05},
+    }
     out = _engine(state)._generate_brain_only_response()
     assert "Active regions" in out["content"]
     assert out["model"] == "neural-only"
 
 
 # ── teleoperation turn orchestration ───────────────────────────────────────
+
 
 def test_converse_runs_full_turn():
     state = DashboardState()

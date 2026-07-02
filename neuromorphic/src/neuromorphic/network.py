@@ -10,41 +10,37 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
-from scipy import sparse
 
 from neuromorphic.config import (
-    NeuromorphicConfig, STDPParams, FeatureLayerConfig, ConceptLayerConfig,
-    PatternSeparatorConfig, OscillatoryConfig,
-    TrainingAccelerationConfig, PruningConfig, MyelinationConfig, NeighborhoodConsolidationConfig,
-    AdolescentSTDPConfig,
+    NeuromorphicConfig,
+    STDPParams,
 )
-from neuromorphic.neurons import NeuronPopulation
-from neuromorphic.synapses import SynapseGroup
-from neuromorphic.regions import (
-    BrainRegion,
-    Brainstem,
-    ReflexArc,
-    SensoryCortex,
-    MotorCortex,
-    Cerebellum,
-    AssociationCortex,
-    PredictiveLayer,
-    WorkingMemory,
-    FeatureLayer,
-    ConceptLayer,
-    MetaControllerRegion,
-    PatternSeparator,
-    GlobalWorkspace,
-    create_all_regions,
-)
+from neuromorphic.cross_modal_probe import CrossModalMetrics, CrossModalProbe
+from neuromorphic.decoding import CognitiveDecoder, PredictionDecoder, SpeechDecoder, SpikeDecoder
 from neuromorphic.drives import HomeostaticDriveSystem
-from neuromorphic.reflexes import ReflexManager, ReflexResponse
-from neuromorphic.encoding import SpikeEncoder, DynamicSensoryAllocator, _resolve_modality
-from neuromorphic.decoding import SpikeDecoder, PredictionDecoder, CognitiveDecoder, SpeechDecoder
+from neuromorphic.encoding import DynamicSensoryAllocator, SpikeEncoder, _resolve_modality
 from neuromorphic.instincts import OrientingInstincts
 from neuromorphic.neuromodulation import NeuromodulationSystem
-from neuromorphic.cross_modal_probe import CrossModalProbe, CrossModalMetrics, ProbeInputs
 from neuromorphic.oscillations import OscillatorBank
+from neuromorphic.reflexes import ReflexManager
+from neuromorphic.regions import (
+    AssociationCortex,
+    BrainRegion,
+    Brainstem,
+    Cerebellum,
+    ConceptLayer,
+    FeatureLayer,
+    GlobalWorkspace,
+    MetaControllerRegion,
+    MotorCortex,
+    PatternSeparator,
+    PredictiveLayer,
+    ReflexArc,
+    SensoryCortex,
+    WorkingMemory,
+    create_all_regions,
+)
+from neuromorphic.synapses import SynapseGroup
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +72,13 @@ class NeuromorphicNetwork:
 
         # Create regions (each gets an independent child RNG for reproducibility)
         pop = self.config.populations
-        n_regions = 8 + (pop.feature_layer > 0) + (pop.concept_layer > 0) + (pop.pattern_separator > 0) + (pop.meta_controller > 0)
+        n_regions = (
+            8
+            + (pop.feature_layer > 0)
+            + (pop.concept_layer > 0)
+            + (pop.pattern_separator > 0)
+            + (pop.meta_controller > 0)
+        )
         logger.info(f"Creating {pop.total:,} neurons across {n_regions} regions...")
         self.regions: dict[str, BrainRegion] = create_all_regions(
             self.config, self._rng.spawn(1)[0]
@@ -103,11 +105,12 @@ class NeuromorphicNetwork:
         # using signed_spikes (80/20 E/I) would be net excitatory.
         self._ws_lateral_sign: np.ndarray | None = (
             -np.ones(self.config.populations.global_workspace, dtype=np.float32)
-            if self.workspace is not None else None
+            if self.workspace is not None
+            else None
         )
 
         # Create synapse groups
-        logger.info(f"Creating synapse groups (sparse matrices)...")
+        logger.info("Creating synapse groups (sparse matrices)...")
         self.synapses: dict[str, SynapseGroup] = self._create_synapses()
 
         # Subsystems
@@ -146,6 +149,7 @@ class NeuromorphicNetwork:
         self.astrocytes: AstrocyteNetwork | None = None
         if self.config.astrocyte.enabled:
             from neuromorphic.astrocytes import AstrocyteNetwork
+
             region_names = list(self.regions.keys())
             self.astrocytes = AstrocyteNetwork(self.config.astrocyte, region_names)
             logger.info(f"Astrocyte network enabled: {len(region_names)} astrocytes")
@@ -155,7 +159,9 @@ class NeuromorphicNetwork:
 
         # Cross-modal recall probe — read-only measurement (Patent Claim 4)
         self.cross_modal_probe = CrossModalProbe()
-        self._crossmodal_probe_interval = 30  # run probe every Nth get_metrics() call (~5min at 10s interval)
+        self._crossmodal_probe_interval = (
+            30  # run probe every Nth get_metrics() call (~5min at 10s interval)
+        )
         self._crossmodal_probe_counter = 0
         self._crossmodal_last_result: dict[str, Any] = CrossModalMetrics().to_dict()
 
@@ -208,9 +214,7 @@ class NeuromorphicNetwork:
         # Strategy 3: Adaptive per-group STDP interval — stable groups skip more steps
         self._base_stdp_interval = self.config.stdp_update_interval
         # Per-group interval multiplier: starts at 1, doubles when stable, resets on activity
-        self._group_stdp_mult: dict[str, int] = {
-            name: 1 for name, _ in self._plastic_synapses
-        }
+        self._group_stdp_mult: dict[str, int] = {name: 1 for name, _ in self._plastic_synapses}
         self._adaptive_stdp_max_mult = int(os.environ.get("NEURO_ADAPTIVE_STDP_MAX", "4"))
         # Threshold: if last_stdp_delta < this fraction of convergence_threshold, group is "stable"
         self._adaptive_stdp_threshold = self.config.training_accel.convergence_threshold * 0.5
@@ -235,6 +239,7 @@ class NeuromorphicNetwork:
         # Lock protects _step_timing and _step_timing_ema from concurrent
         # reads (get_step_timing on event loop) while step() writes in executor.
         import threading
+
         self._timing_lock = threading.Lock()
         self._step_timing: dict[str, float] = {}
         self._step_timing_ema: dict[str, float] = {}
@@ -292,41 +297,69 @@ class NeuromorphicNetwork:
         # === Hardwired (NON-plastic) ===
 
         synapses["sensory_reflex"] = SynapseGroup(
-            n_pre=pop.sensory_cortex, n_post=pop.reflex_arc,
-            sparsity=c.sensory_reflex_sparsity, init_weight=c.sensory_reflex_weight,
-            plastic=False, rng=next(_ri), name="sensory→reflex",
+            n_pre=pop.sensory_cortex,
+            n_post=pop.reflex_arc,
+            sparsity=c.sensory_reflex_sparsity,
+            init_weight=c.sensory_reflex_weight,
+            plastic=False,
+            rng=next(_ri),
+            name="sensory→reflex",
         )
         synapses["reflex_motor"] = SynapseGroup(
-            n_pre=pop.reflex_arc, n_post=pop.motor_cortex,
-            sparsity=c.reflex_motor_sparsity, init_weight=c.reflex_motor_weight,
-            plastic=False, rng=next(_ri), name="reflex→motor",
+            n_pre=pop.reflex_arc,
+            n_post=pop.motor_cortex,
+            sparsity=c.reflex_motor_sparsity,
+            init_weight=c.reflex_motor_weight,
+            plastic=False,
+            rng=next(_ri),
+            name="reflex→motor",
         )
         synapses["brainstem_sensory"] = SynapseGroup(
-            n_pre=pop.brainstem, n_post=pop.sensory_cortex,
-            sparsity=c.brainstem_sensory_sparsity, init_weight=c.brainstem_sensory_weight,
-            plastic=False, rng=next(_ri), name="brainstem→sensory",
+            n_pre=pop.brainstem,
+            n_post=pop.sensory_cortex,
+            sparsity=c.brainstem_sensory_sparsity,
+            init_weight=c.brainstem_sensory_weight,
+            plastic=False,
+            rng=next(_ri),
+            name="brainstem→sensory",
         )
         # Reticular activating system: brainstem arousal to all cortical regions.
         # Non-plastic — provides tonic excitation so feedforward STDP can bootstrap.
         synapses["brainstem_association"] = SynapseGroup(
-            n_pre=pop.brainstem, n_post=pop.association_cortex,
-            sparsity=c.brainstem_association_sparsity, init_weight=c.brainstem_association_weight,
-            plastic=False, rng=next(_ri), name="brainstem→association",
+            n_pre=pop.brainstem,
+            n_post=pop.association_cortex,
+            sparsity=c.brainstem_association_sparsity,
+            init_weight=c.brainstem_association_weight,
+            plastic=False,
+            rng=next(_ri),
+            name="brainstem→association",
         )
         synapses["brainstem_cerebellum"] = SynapseGroup(
-            n_pre=pop.brainstem, n_post=pop.cerebellum,
-            sparsity=c.brainstem_cerebellum_sparsity, init_weight=c.brainstem_cerebellum_weight,
-            plastic=False, rng=next(_ri), name="brainstem→cerebellum",
+            n_pre=pop.brainstem,
+            n_post=pop.cerebellum,
+            sparsity=c.brainstem_cerebellum_sparsity,
+            init_weight=c.brainstem_cerebellum_weight,
+            plastic=False,
+            rng=next(_ri),
+            name="brainstem→cerebellum",
         )
         synapses["brainstem_working"] = SynapseGroup(
-            n_pre=pop.brainstem, n_post=pop.working_memory,
-            sparsity=c.brainstem_working_sparsity, init_weight=c.brainstem_working_weight,
-            plastic=False, rng=next(_ri), name="brainstem→working_memory",
+            n_pre=pop.brainstem,
+            n_post=pop.working_memory,
+            sparsity=c.brainstem_working_sparsity,
+            init_weight=c.brainstem_working_weight,
+            plastic=False,
+            rng=next(_ri),
+            name="brainstem→working_memory",
         )
         synapses["brainstem_predictive"] = SynapseGroup(
-            n_pre=pop.brainstem, n_post=pop.predictive_layer,
-            sparsity=c.brainstem_predictive_sparsity, init_weight=c.brainstem_predictive_weight,
-            plastic=False, rng=next(_ri), name="brainstem→predictive",
+            n_pre=pop.brainstem,
+            n_post=pop.predictive_layer,
+            sparsity=c.brainstem_predictive_sparsity,
+            init_weight=c.brainstem_predictive_weight,
+            plastic=False,
+            rng=next(_ri),
+            name="brainstem→predictive",
         )
 
         # === Plastic (STDP) — base connections ===
@@ -334,14 +367,26 @@ class NeuromorphicNetwork:
         elig = self.config.eligibility
 
         synapses["sensory_association"] = SynapseGroup(
-            n_pre=pop.sensory_cortex, n_post=pop.association_cortex,
-            sparsity=c.sensory_association_sparsity, init_weight=c.sensory_association_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri), name="sensory→association",
+            n_pre=pop.sensory_cortex,
+            n_post=pop.association_cortex,
+            sparsity=c.sensory_association_sparsity,
+            init_weight=c.sensory_association_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
+            name="sensory→association",
         )
         synapses["association_lateral"] = SynapseGroup(
-            n_pre=pop.association_cortex, n_post=pop.association_cortex,
-            sparsity=c.association_lateral_sparsity, init_weight=c.association_lateral_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri), name="association→association",
+            n_pre=pop.association_cortex,
+            n_post=pop.association_cortex,
+            sparsity=c.association_lateral_sparsity,
+            init_weight=c.association_lateral_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
+            name="association→association",
         )
         # Motor feedback: optionally add R-STDP so prediction error gates motor learning.
         # Both feedback.enabled AND motor_rstdp_enabled must be true — otherwise
@@ -350,65 +395,130 @@ class NeuromorphicNetwork:
         _mfb = self.config.motor_feedback
         motor_rstdp = rstdp if (_mfb.enabled and _mfb.motor_rstdp_enabled) else None
         synapses["sensory_motor"] = SynapseGroup(
-            n_pre=pop.sensory_cortex, n_post=pop.motor_cortex,
-            sparsity=c.sensory_motor_sparsity, init_weight=c.sensory_motor_weight,
-            plastic=True, stdp_params=stdp, rstdp_params=motor_rstdp, eligibility_config=elig, rng=next(_ri),
+            n_pre=pop.sensory_cortex,
+            n_post=pop.motor_cortex,
+            sparsity=c.sensory_motor_sparsity,
+            init_weight=c.sensory_motor_weight,
+            plastic=True,
+            stdp_params=stdp,
+            rstdp_params=motor_rstdp,
+            eligibility_config=elig,
+            rng=next(_ri),
             name="sensory→motor",
         )
         synapses["brainstem_motor"] = SynapseGroup(
-            n_pre=pop.brainstem, n_post=pop.motor_cortex,
-            sparsity=c.brainstem_motor_sparsity, init_weight=c.brainstem_motor_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri), name="brainstem→motor",
+            n_pre=pop.brainstem,
+            n_post=pop.motor_cortex,
+            sparsity=c.brainstem_motor_sparsity,
+            init_weight=c.brainstem_motor_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
+            name="brainstem→motor",
         )
         synapses["sensory_cerebellum"] = SynapseGroup(
-            n_pre=pop.sensory_cortex, n_post=pop.cerebellum,
-            sparsity=c.sensory_cerebellum_sparsity, init_weight=c.sensory_cerebellum_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri), name="sensory→cerebellum",
+            n_pre=pop.sensory_cortex,
+            n_post=pop.cerebellum,
+            sparsity=c.sensory_cerebellum_sparsity,
+            init_weight=c.sensory_cerebellum_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
+            name="sensory→cerebellum",
         )
         synapses["motor_cerebellum"] = SynapseGroup(
-            n_pre=pop.motor_cortex, n_post=pop.cerebellum,
-            sparsity=c.motor_cerebellum_sparsity, init_weight=c.motor_cerebellum_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri), name="motor→cerebellum",
+            n_pre=pop.motor_cortex,
+            n_post=pop.cerebellum,
+            sparsity=c.motor_cerebellum_sparsity,
+            init_weight=c.motor_cerebellum_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
+            name="motor→cerebellum",
         )
         synapses["cerebellum_motor"] = SynapseGroup(
-            n_pre=pop.cerebellum, n_post=pop.motor_cortex,
-            sparsity=c.cerebellum_motor_sparsity, init_weight=c.cerebellum_motor_weight,
-            plastic=True, stdp_params=stdp, rstdp_params=motor_rstdp, eligibility_config=elig, rng=next(_ri),
+            n_pre=pop.cerebellum,
+            n_post=pop.motor_cortex,
+            sparsity=c.cerebellum_motor_sparsity,
+            init_weight=c.cerebellum_motor_weight,
+            plastic=True,
+            stdp_params=stdp,
+            rstdp_params=motor_rstdp,
+            eligibility_config=elig,
+            rng=next(_ri),
             name="cerebellum→motor",
         )
         synapses["association_predictive"] = SynapseGroup(
-            n_pre=pop.association_cortex, n_post=pop.predictive_layer,
-            sparsity=c.association_predictive_sparsity, init_weight=c.association_predictive_weight,
-            plastic=True, stdp_params=stdp, rstdp_params=rstdp, eligibility_config=elig, rng=next(_ri),
+            n_pre=pop.association_cortex,
+            n_post=pop.predictive_layer,
+            sparsity=c.association_predictive_sparsity,
+            init_weight=c.association_predictive_weight,
+            plastic=True,
+            stdp_params=stdp,
+            rstdp_params=rstdp,
+            eligibility_config=elig,
+            rng=next(_ri),
             name="association→predictive",
         )
         synapses["predictive_recurrent"] = SynapseGroup(
-            n_pre=pop.predictive_layer, n_post=pop.predictive_layer,
-            sparsity=c.predictive_recurrent_sparsity, init_weight=c.predictive_recurrent_weight,
-            plastic=True, stdp_params=stdp, rstdp_params=rstdp, eligibility_config=elig, rng=next(_ri),
+            n_pre=pop.predictive_layer,
+            n_post=pop.predictive_layer,
+            sparsity=c.predictive_recurrent_sparsity,
+            init_weight=c.predictive_recurrent_weight,
+            plastic=True,
+            stdp_params=stdp,
+            rstdp_params=rstdp,
+            eligibility_config=elig,
+            rng=next(_ri),
             name="predictive→predictive",
         )
         synapses["predictive_association"] = SynapseGroup(
-            n_pre=pop.predictive_layer, n_post=pop.association_cortex,
-            sparsity=c.predictive_association_sparsity, init_weight=c.predictive_association_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri), name="predictive→association",
+            n_pre=pop.predictive_layer,
+            n_post=pop.association_cortex,
+            sparsity=c.predictive_association_sparsity,
+            init_weight=c.predictive_association_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
+            name="predictive→association",
         )
         synapses["association_working"] = SynapseGroup(
-            n_pre=pop.association_cortex, n_post=pop.working_memory,
-            sparsity=c.association_working_sparsity, init_weight=c.association_working_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri), name="association→working_memory",
+            n_pre=pop.association_cortex,
+            n_post=pop.working_memory,
+            sparsity=c.association_working_sparsity,
+            init_weight=c.association_working_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
+            name="association→working_memory",
         )
         # WM self-recurrence — creates attractor states when NMDA enabled (CIP-24)
         synapses["working_recurrent"] = SynapseGroup(
-            n_pre=pop.working_memory, n_post=pop.working_memory,
-            sparsity=c.working_recurrent_sparsity, init_weight=c.working_recurrent_weight,
-            plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+            n_pre=pop.working_memory,
+            n_post=pop.working_memory,
+            sparsity=c.working_recurrent_sparsity,
+            init_weight=c.working_recurrent_weight,
+            plastic=True,
+            stdp_params=stdp,
+            eligibility_config=elig,
+            rng=next(_ri),
             name="working_memory→working_memory",
         )
         synapses["working_motor"] = SynapseGroup(
-            n_pre=pop.working_memory, n_post=pop.motor_cortex,
-            sparsity=c.working_motor_sparsity, init_weight=c.working_motor_weight,
-            plastic=True, stdp_params=stdp, rstdp_params=motor_rstdp, eligibility_config=elig, rng=next(_ri),
+            n_pre=pop.working_memory,
+            n_post=pop.motor_cortex,
+            sparsity=c.working_motor_sparsity,
+            init_weight=c.working_motor_weight,
+            plastic=True,
+            stdp_params=stdp,
+            rstdp_params=motor_rstdp,
+            eligibility_config=elig,
+            rng=next(_ri),
             name="working_memory→motor",
         )
 
@@ -417,111 +527,194 @@ class NeuromorphicNetwork:
         if pop.feature_layer > 0:
             fl = self.config.feature_layer
             feat_stdp = STDPParams(
-                a_plus=fl.a_plus, a_minus=fl.a_minus,
-                tau_plus=fl.tau_plus, tau_minus=fl.tau_minus,
-                w_min=stdp.w_min, w_max=stdp.w_max,
+                a_plus=fl.a_plus,
+                a_minus=fl.a_minus,
+                tau_plus=fl.tau_plus,
+                tau_minus=fl.tau_minus,
+                w_min=stdp.w_min,
+                w_max=stdp.w_max,
             )
             synapses["sensory_feature"] = SynapseGroup(
-                n_pre=pop.sensory_cortex, n_post=pop.feature_layer,
-                sparsity=c.sensory_feature_sparsity, init_weight=c.sensory_feature_weight,
-                plastic=True, stdp_params=feat_stdp, eligibility_config=elig, rng=next(_ri), name="sensory→feature",
+                n_pre=pop.sensory_cortex,
+                n_post=pop.feature_layer,
+                sparsity=c.sensory_feature_sparsity,
+                init_weight=c.sensory_feature_weight,
+                plastic=True,
+                stdp_params=feat_stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
+                name="sensory→feature",
             )
             synapses["brainstem_feature"] = SynapseGroup(
-                n_pre=pop.brainstem, n_post=pop.feature_layer,
-                sparsity=c.brainstem_feature_sparsity, init_weight=c.brainstem_feature_weight,
-                plastic=False, rng=next(_ri), name="brainstem→feature",
+                n_pre=pop.brainstem,
+                n_post=pop.feature_layer,
+                sparsity=c.brainstem_feature_sparsity,
+                init_weight=c.brainstem_feature_weight,
+                plastic=False,
+                rng=next(_ri),
+                name="brainstem→feature",
             )
             synapses["feature_association"] = SynapseGroup(
-                n_pre=pop.feature_layer, n_post=pop.association_cortex,
-                sparsity=c.feature_association_sparsity, init_weight=c.feature_association_weight,
-                plastic=True, stdp_params=feat_stdp, eligibility_config=elig, rng=next(_ri), name="feature→association",
+                n_pre=pop.feature_layer,
+                n_post=pop.association_cortex,
+                sparsity=c.feature_association_sparsity,
+                init_weight=c.feature_association_weight,
+                plastic=True,
+                stdp_params=feat_stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
+                name="feature→association",
             )
 
         if pop.concept_layer > 0:
             cl = self.config.concept_layer
             concept_stdp = STDPParams(
-                a_plus=cl.a_plus, a_minus=cl.a_minus,
-                tau_plus=cl.tau_plus, tau_minus=cl.tau_minus,
-                w_min=stdp.w_min, w_max=stdp.w_max,
+                a_plus=cl.a_plus,
+                a_minus=cl.a_minus,
+                tau_plus=cl.tau_plus,
+                tau_minus=cl.tau_minus,
+                w_min=stdp.w_min,
+                w_max=stdp.w_max,
             )
             synapses["association_concept"] = SynapseGroup(
-                n_pre=pop.association_cortex, n_post=pop.concept_layer,
-                sparsity=c.association_concept_sparsity, init_weight=c.association_concept_weight,
-                plastic=True, stdp_params=concept_stdp, eligibility_config=elig, rng=next(_ri), name="association→concept",
+                n_pre=pop.association_cortex,
+                n_post=pop.concept_layer,
+                sparsity=c.association_concept_sparsity,
+                init_weight=c.association_concept_weight,
+                plastic=True,
+                stdp_params=concept_stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
+                name="association→concept",
             )
             synapses["concept_lateral"] = SynapseGroup(
-                n_pre=pop.concept_layer, n_post=pop.concept_layer,
-                sparsity=c.concept_lateral_sparsity, init_weight=c.concept_lateral_weight,
-                plastic=True, stdp_params=concept_stdp, eligibility_config=elig, rng=next(_ri), name="concept→concept",
+                n_pre=pop.concept_layer,
+                n_post=pop.concept_layer,
+                sparsity=c.concept_lateral_sparsity,
+                init_weight=c.concept_lateral_weight,
+                plastic=True,
+                stdp_params=concept_stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
+                name="concept→concept",
             )
             synapses["concept_predictive"] = SynapseGroup(
-                n_pre=pop.concept_layer, n_post=pop.predictive_layer,
-                sparsity=c.concept_predictive_sparsity, init_weight=c.concept_predictive_weight,
-                plastic=True, stdp_params=concept_stdp, rstdp_params=rstdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=pop.concept_layer,
+                n_post=pop.predictive_layer,
+                sparsity=c.concept_predictive_sparsity,
+                init_weight=c.concept_predictive_weight,
+                plastic=True,
+                stdp_params=concept_stdp,
+                rstdp_params=rstdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="concept→predictive",
             )
             synapses["concept_working"] = SynapseGroup(
-                n_pre=pop.concept_layer, n_post=pop.working_memory,
-                sparsity=c.concept_working_sparsity, init_weight=c.concept_working_weight,
-                plastic=True, stdp_params=concept_stdp, eligibility_config=elig, rng=next(_ri), name="concept→working_memory",
+                n_pre=pop.concept_layer,
+                n_post=pop.working_memory,
+                sparsity=c.concept_working_sparsity,
+                init_weight=c.concept_working_weight,
+                plastic=True,
+                stdp_params=concept_stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
+                name="concept→working_memory",
             )
             synapses["predictive_concept"] = SynapseGroup(
-                n_pre=pop.predictive_layer, n_post=pop.concept_layer,
-                sparsity=c.predictive_concept_sparsity, init_weight=c.predictive_concept_weight,
-                plastic=True, stdp_params=concept_stdp, eligibility_config=elig, rng=next(_ri), name="predictive→concept",
+                n_pre=pop.predictive_layer,
+                n_post=pop.concept_layer,
+                sparsity=c.predictive_concept_sparsity,
+                init_weight=c.predictive_concept_weight,
+                plastic=True,
+                stdp_params=concept_stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
+                name="predictive→concept",
             )
             # Brainstem arousal → concept layer (non-plastic tonic excitation)
             synapses["brainstem_concept"] = SynapseGroup(
-                n_pre=pop.brainstem, n_post=pop.concept_layer,
-                sparsity=c.brainstem_concept_sparsity, init_weight=c.brainstem_concept_weight,
-                plastic=False, rng=next(_ri), name="brainstem→concept",
+                n_pre=pop.brainstem,
+                n_post=pop.concept_layer,
+                sparsity=c.brainstem_concept_sparsity,
+                init_weight=c.brainstem_concept_weight,
+                plastic=False,
+                rng=next(_ri),
+                name="brainstem→concept",
             )
 
         if pop.pattern_separator > 0:
             dg = self.config.pattern_separator
             dg_stdp = STDPParams(
-                a_plus=dg.a_plus, a_minus=dg.a_minus,
-                tau_plus=dg.tau_plus, tau_minus=dg.tau_minus,
-                w_min=stdp.w_min, w_max=stdp.w_max,
+                a_plus=dg.a_plus,
+                a_minus=dg.a_minus,
+                tau_plus=dg.tau_plus,
+                tau_minus=dg.tau_minus,
+                w_min=stdp.w_min,
+                w_max=stdp.w_max,
             )
             # Association → pattern separator (plastic, learns what to separate)
             synapses["association_dg"] = SynapseGroup(
-                n_pre=pop.association_cortex, n_post=pop.pattern_separator,
-                sparsity=c.association_dg_sparsity, init_weight=c.association_dg_weight,
-                plastic=True, stdp_params=dg_stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=pop.association_cortex,
+                n_post=pop.pattern_separator,
+                sparsity=c.association_dg_sparsity,
+                init_weight=c.association_dg_weight,
+                plastic=True,
+                stdp_params=dg_stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="association→pattern_separator",
             )
             # Pattern separator → concept layer (plastic, learns orthogonal mapping)
             # Only created when concept layer also enabled — otherwise DG has no downstream target
             if pop.concept_layer > 0:
                 synapses["dg_concept"] = SynapseGroup(
-                    n_pre=pop.pattern_separator, n_post=pop.concept_layer,
-                    sparsity=c.dg_concept_sparsity, init_weight=c.dg_concept_weight,
-                    plastic=True, stdp_params=dg_stdp, eligibility_config=elig, rng=next(_ri),
+                    n_pre=pop.pattern_separator,
+                    n_post=pop.concept_layer,
+                    sparsity=c.dg_concept_sparsity,
+                    init_weight=c.dg_concept_weight,
+                    plastic=True,
+                    stdp_params=dg_stdp,
+                    eligibility_config=elig,
+                    rng=next(_ri),
                     name="pattern_separator→concept",
                 )
             # Brainstem arousal → pattern separator (non-plastic tonic excitation)
             synapses["brainstem_dg"] = SynapseGroup(
-                n_pre=pop.brainstem, n_post=pop.pattern_separator,
-                sparsity=c.brainstem_dg_sparsity, init_weight=c.brainstem_dg_weight,
-                plastic=False, rng=next(_ri), name="brainstem→pattern_separator",
+                n_pre=pop.brainstem,
+                n_post=pop.pattern_separator,
+                sparsity=c.brainstem_dg_sparsity,
+                init_weight=c.brainstem_dg_weight,
+                plastic=False,
+                rng=next(_ri),
+                name="brainstem→pattern_separator",
             )
 
         if pop.meta_controller > 0:
             # Meta-controller reads from association cortex (broad sampling)
             synapses["association_meta"] = SynapseGroup(
-                n_pre=pop.association_cortex, n_post=pop.meta_controller,
-                sparsity=c.meta_input_sparsity, init_weight=c.meta_input_weight,
-                plastic=True, stdp_params=STDPParams(
+                n_pre=pop.association_cortex,
+                n_post=pop.meta_controller,
+                sparsity=c.meta_input_sparsity,
+                init_weight=c.meta_input_weight,
+                plastic=True,
+                stdp_params=STDPParams(
                     a_plus=self.config.meta_controller.a_plus,
                     a_minus=self.config.meta_controller.a_minus,
-                ), eligibility_config=elig, rng=next(_ri), name="association→meta",
+                ),
+                eligibility_config=elig,
+                rng=next(_ri),
+                name="association→meta",
             )
             # Meta-controller projects diffusely (read only — effect is through neuromodulation, not synaptic current)
             synapses["meta_association"] = SynapseGroup(
-                n_pre=pop.meta_controller, n_post=pop.association_cortex,
-                sparsity=c.meta_output_sparsity, init_weight=c.meta_output_weight,
-                plastic=False, rng=next(_ri), name="meta→association",
+                n_pre=pop.meta_controller,
+                n_post=pop.association_cortex,
+                sparsity=c.meta_output_sparsity,
+                init_weight=c.meta_output_weight,
+                plastic=False,
+                rng=next(_ri),
+                name="meta→association",
             )
             # Meta-controller relies on internal E/I dynamics (InhibitoryConfig)
             # + strong SFA (1.5) for competition.  A signed_spikes lateral group
@@ -534,98 +727,166 @@ class NeuromorphicNetwork:
 
             # Afferent: higher-order regions → workspace (plastic, STDP)
             synapses["association_workspace"] = SynapseGroup(
-                n_pre=pop.association_cortex, n_post=ws,
-                sparsity=gw.afferent_sparsity, init_weight=gw.afferent_weight,
-                plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=pop.association_cortex,
+                n_post=ws,
+                sparsity=gw.afferent_sparsity,
+                init_weight=gw.afferent_weight,
+                plastic=True,
+                stdp_params=stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="association→workspace",
             )
             synapses["predictive_workspace"] = SynapseGroup(
-                n_pre=pop.predictive_layer, n_post=ws,
-                sparsity=gw.afferent_sparsity, init_weight=gw.afferent_weight,
-                plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=pop.predictive_layer,
+                n_post=ws,
+                sparsity=gw.afferent_sparsity,
+                init_weight=gw.afferent_weight,
+                plastic=True,
+                stdp_params=stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="predictive→workspace",
             )
             synapses["working_workspace"] = SynapseGroup(
-                n_pre=pop.working_memory, n_post=ws,
-                sparsity=gw.afferent_sparsity, init_weight=gw.afferent_weight,
-                plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=pop.working_memory,
+                n_post=ws,
+                sparsity=gw.afferent_sparsity,
+                init_weight=gw.afferent_weight,
+                plastic=True,
+                stdp_params=stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="working_memory→workspace",
             )
 
             # Efferent: workspace → regions (broadcast, plastic)
             synapses["workspace_association"] = SynapseGroup(
-                n_pre=ws, n_post=pop.association_cortex,
-                sparsity=gw.efferent_sparsity, init_weight=gw.efferent_weight,
-                plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=ws,
+                n_post=pop.association_cortex,
+                sparsity=gw.efferent_sparsity,
+                init_weight=gw.efferent_weight,
+                plastic=True,
+                stdp_params=stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="workspace→association",
             )
             synapses["workspace_predictive"] = SynapseGroup(
-                n_pre=ws, n_post=pop.predictive_layer,
-                sparsity=gw.efferent_sparsity, init_weight=gw.efferent_weight,
-                plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=ws,
+                n_post=pop.predictive_layer,
+                sparsity=gw.efferent_sparsity,
+                init_weight=gw.efferent_weight,
+                plastic=True,
+                stdp_params=stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="workspace→predictive",
             )
             synapses["workspace_working"] = SynapseGroup(
-                n_pre=ws, n_post=pop.working_memory,
-                sparsity=gw.efferent_sparsity, init_weight=gw.efferent_weight,
-                plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=ws,
+                n_post=pop.working_memory,
+                sparsity=gw.efferent_sparsity,
+                init_weight=gw.efferent_weight,
+                plastic=True,
+                stdp_params=stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="workspace→working_memory",
             )
             synapses["workspace_motor"] = SynapseGroup(
-                n_pre=ws, n_post=pop.motor_cortex,
-                sparsity=gw.efferent_sparsity, init_weight=gw.efferent_weight,
-                plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                n_pre=ws,
+                n_post=pop.motor_cortex,
+                sparsity=gw.efferent_sparsity,
+                init_weight=gw.efferent_weight,
+                plastic=True,
+                stdp_params=stdp,
+                eligibility_config=elig,
+                rng=next(_ri),
                 name="workspace→motor",
             )
 
             # Lateral inhibition (strong, non-plastic — forces competition)
             synapses["workspace_lateral"] = SynapseGroup(
-                n_pre=ws, n_post=ws,
-                sparsity=gw.lateral_sparsity, init_weight=gw.competition_inhibition,
-                plastic=False, rng=next(_ri), name="workspace→workspace(lateral)",
+                n_pre=ws,
+                n_post=ws,
+                sparsity=gw.lateral_sparsity,
+                init_weight=gw.competition_inhibition,
+                plastic=False,
+                rng=next(_ri),
+                name="workspace→workspace(lateral)",
             )
 
             # Brainstem arousal → workspace (non-plastic tonic excitation)
             # Lower weight than other brainstem groups so stimulus-driven input
             # dominates and STDP can learn from temporal correlations.
             synapses["brainstem_workspace"] = SynapseGroup(
-                n_pre=pop.brainstem, n_post=ws,
-                sparsity=c.brainstem_workspace_sparsity, init_weight=c.brainstem_workspace_weight,
-                plastic=False, rng=next(_ri), name="brainstem→workspace",
+                n_pre=pop.brainstem,
+                n_post=ws,
+                sparsity=c.brainstem_workspace_sparsity,
+                init_weight=c.brainstem_workspace_weight,
+                plastic=False,
+                rng=next(_ri),
+                name="brainstem→workspace",
             )
 
             # Conditional afferent/efferent for optional regions
             if pop.concept_layer > 0:
                 synapses["concept_workspace"] = SynapseGroup(
-                    n_pre=pop.concept_layer, n_post=ws,
-                    sparsity=gw.afferent_sparsity, init_weight=gw.afferent_weight,
-                    plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                    n_pre=pop.concept_layer,
+                    n_post=ws,
+                    sparsity=gw.afferent_sparsity,
+                    init_weight=gw.afferent_weight,
+                    plastic=True,
+                    stdp_params=stdp,
+                    eligibility_config=elig,
+                    rng=next(_ri),
                     name="concept→workspace",
                 )
                 synapses["workspace_concept"] = SynapseGroup(
-                    n_pre=ws, n_post=pop.concept_layer,
-                    sparsity=gw.efferent_sparsity, init_weight=gw.efferent_weight,
-                    plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                    n_pre=ws,
+                    n_post=pop.concept_layer,
+                    sparsity=gw.efferent_sparsity,
+                    init_weight=gw.efferent_weight,
+                    plastic=True,
+                    stdp_params=stdp,
+                    eligibility_config=elig,
+                    rng=next(_ri),
                     name="workspace→concept",
                 )
             if pop.feature_layer > 0:
                 synapses["feature_workspace"] = SynapseGroup(
-                    n_pre=pop.feature_layer, n_post=ws,
-                    sparsity=gw.afferent_sparsity, init_weight=gw.afferent_weight,
-                    plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                    n_pre=pop.feature_layer,
+                    n_post=ws,
+                    sparsity=gw.afferent_sparsity,
+                    init_weight=gw.afferent_weight,
+                    plastic=True,
+                    stdp_params=stdp,
+                    eligibility_config=elig,
+                    rng=next(_ri),
                     name="feature→workspace",
                 )
                 synapses["workspace_feature"] = SynapseGroup(
-                    n_pre=ws, n_post=pop.feature_layer,
-                    sparsity=gw.efferent_sparsity, init_weight=gw.efferent_weight,
-                    plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                    n_pre=ws,
+                    n_post=pop.feature_layer,
+                    sparsity=gw.efferent_sparsity,
+                    init_weight=gw.efferent_weight,
+                    plastic=True,
+                    stdp_params=stdp,
+                    eligibility_config=elig,
+                    rng=next(_ri),
                     name="workspace→feature",
                 )
             if pop.meta_controller > 0:
                 synapses["meta_workspace"] = SynapseGroup(
-                    n_pre=pop.meta_controller, n_post=ws,
-                    sparsity=gw.afferent_sparsity, init_weight=gw.afferent_weight,
-                    plastic=True, stdp_params=stdp, eligibility_config=elig, rng=next(_ri),
+                    n_pre=pop.meta_controller,
+                    n_post=ws,
+                    sparsity=gw.afferent_sparsity,
+                    init_weight=gw.afferent_weight,
+                    plastic=True,
+                    stdp_params=stdp,
+                    eligibility_config=elig,
+                    rng=next(_ri),
                     name="meta→workspace",
                 )
 
@@ -742,7 +1003,11 @@ class NeuromorphicNetwork:
         syn = self.synapses[synapse_name]
         current = syn.compute_current(exc_spikes.astype(np.float32), None) * self._synaptic_gain
         # Apply NMDA fraction -- only a portion of excitatory current is NMDA-mediated
-        nmda_frac = self.config.nmda.wm_recurrent_nmda if "recurrent" in synapse_name else self.config.nmda.nmda_fraction
+        nmda_frac = (
+            self.config.nmda.wm_recurrent_nmda
+            if "recurrent" in synapse_name
+            else self.config.nmda.nmda_fraction
+        )
         current *= np.float32(nmda_frac)
         target_region.population.accumulate_nmda(current)
 
@@ -775,9 +1040,12 @@ class NeuromorphicNetwork:
         for (syn_name, _pre_sp, _pre_sign, target), current in zip(routes, currents):
             self._inject_current(syn_name, current, target)
 
-    def step(self, sensory_current: np.ndarray | None = None,
-             da_multiplier: float = 1.0,
-             sensory_gap: int = 0) -> dict[str, Any]:
+    def step(
+        self,
+        sensory_current: np.ndarray | None = None,
+        da_multiplier: float = 1.0,
+        sensory_gap: int = 0,
+    ) -> dict[str, Any]:
         """
         Run one simulation step.
 
@@ -856,9 +1124,13 @@ class NeuromorphicNetwork:
             ("sensory_reflex", self.sensory.spikes, None, self.reflex_arc),
         ]
         if self.feature is not None:
-            _reflex_feature_routes.append(("sensory_feature", self.sensory.spikes, None, self.feature))
+            _reflex_feature_routes.append(
+                ("sensory_feature", self.sensory.spikes, None, self.feature)
+            )
             if "brainstem_feature" in s:
-                _reflex_feature_routes.append(("brainstem_feature", self.brainstem.spikes, None, self.feature))
+                _reflex_feature_routes.append(
+                    ("brainstem_feature", self.brainstem.spikes, None, self.feature)
+                )
         self._route_parallel(_reflex_feature_routes)
 
         self.reflex_arc.step(np.zeros(self.reflex_arc.n, dtype=np.float32), dt)
@@ -874,13 +1146,22 @@ class NeuromorphicNetwork:
         _assoc_routes: list[tuple[str, np.ndarray, np.ndarray | None, BrainRegion]] = [
             ("brainstem_association", self.brainstem.spikes, None, self.association),
             ("sensory_association", self.sensory.spikes, None, self.association),
-            ("association_lateral", self.association.spikes, signed("association_cortex"), self.association),
+            (
+                "association_lateral",
+                self.association.spikes,
+                signed("association_cortex"),
+                self.association,
+            ),
             ("predictive_association", self.predictive.spikes, None, self.association),
         ]
         if self.feature is not None:
-            _assoc_routes.append(("feature_association", self.feature.spikes, None, self.association))
+            _assoc_routes.append(
+                ("feature_association", self.feature.spikes, None, self.association)
+            )
         if self.meta_ctrl is not None and "meta_association" in s:
-            _assoc_routes.append(("meta_association", self.meta_ctrl.spikes, None, self.association))
+            _assoc_routes.append(
+                ("meta_association", self.meta_ctrl.spikes, None, self.association)
+            )
         self._route_parallel(_assoc_routes)
         # GABA-B: route SST slow inhibition for association lateral (CIP-21)
         self._route_gaba_b("association_lateral", self.association, self.association)
@@ -905,12 +1186,16 @@ class NeuromorphicNetwork:
                 ("concept_lateral", self.concept.spikes, signed("concept_layer"), self.concept),
             ]
             if "predictive_concept" in s:
-                _concept_routes.append(("predictive_concept", self.predictive.spikes, None, self.concept))
+                _concept_routes.append(
+                    ("predictive_concept", self.predictive.spikes, None, self.concept)
+                )
             # Pattern separator output feeds into concept layer (if both enabled)
             if self.pattern_sep is not None and "dg_concept" in s:
                 _concept_routes.append(("dg_concept", self.pattern_sep.spikes, None, self.concept))
             if "brainstem_concept" in s:
-                _concept_routes.append(("brainstem_concept", self.brainstem.spikes, None, self.concept))
+                _concept_routes.append(
+                    ("brainstem_concept", self.brainstem.spikes, None, self.concept)
+                )
             self._route_parallel(_concept_routes)
             # GABA-B: route SST slow inhibition for concept lateral (CIP-21)
             self._route_gaba_b("concept_lateral", self.concept, self.concept)
@@ -919,12 +1204,19 @@ class NeuromorphicNetwork:
         # 8. Predictive layer — parallel inputs
         _pred_routes: list[tuple[str, np.ndarray, np.ndarray | None, BrainRegion]] = [
             ("association_predictive", self.association.spikes, None, self.predictive),
-            ("predictive_recurrent", self.predictive.spikes, signed("predictive_layer"), self.predictive),
+            (
+                "predictive_recurrent",
+                self.predictive.spikes,
+                signed("predictive_layer"),
+                self.predictive,
+            ),
         ]
         if self.concept is not None:
             _pred_routes.append(("concept_predictive", self.concept.spikes, None, self.predictive))
         if "brainstem_predictive" in s:
-            _pred_routes.append(("brainstem_predictive", self.brainstem.spikes, None, self.predictive))
+            _pred_routes.append(
+                ("brainstem_predictive", self.brainstem.spikes, None, self.predictive)
+            )
         self._route_parallel(_pred_routes)
         # GABA-B: route SST slow inhibition for predictive recurrent (CIP-21)
         self._route_gaba_b("predictive_recurrent", self.predictive, self.predictive)
@@ -945,17 +1237,28 @@ class NeuromorphicNetwork:
         # Gather all input routes for the three independent regions
         _parallel_routes: list[tuple[str, np.ndarray, np.ndarray | None, BrainRegion]] = []
         if self.meta_ctrl is not None:
-            _parallel_routes.append(("association_meta", self.association.spikes, None, self.meta_ctrl))
-        _parallel_routes.extend([
-            ("association_working", self.association.spikes, None, self.working_mem),
-            ("brainstem_working", self.brainstem.spikes, None, self.working_mem),
-            ("working_recurrent", self.working_mem.spikes, signed("working_memory"), self.working_mem),
-            ("brainstem_cerebellum", self.brainstem.spikes, None, self.cerebellum),
-            ("sensory_cerebellum", self.sensory.spikes, None, self.cerebellum),
-            ("motor_cerebellum", self.motor.spikes, None, self.cerebellum),
-        ])
+            _parallel_routes.append(
+                ("association_meta", self.association.spikes, None, self.meta_ctrl)
+            )
+        _parallel_routes.extend(
+            [
+                ("association_working", self.association.spikes, None, self.working_mem),
+                ("brainstem_working", self.brainstem.spikes, None, self.working_mem),
+                (
+                    "working_recurrent",
+                    self.working_mem.spikes,
+                    signed("working_memory"),
+                    self.working_mem,
+                ),
+                ("brainstem_cerebellum", self.brainstem.spikes, None, self.cerebellum),
+                ("sensory_cerebellum", self.sensory.spikes, None, self.cerebellum),
+                ("motor_cerebellum", self.motor.spikes, None, self.cerebellum),
+            ]
+        )
         if self.concept is not None:
-            _parallel_routes.append(("concept_working", self.concept.spikes, None, self.working_mem))
+            _parallel_routes.append(
+                ("concept_working", self.concept.spikes, None, self.working_mem)
+            )
         self._route_parallel(_parallel_routes)
 
         # NMDA: accumulate slow excitatory conductance from WM recurrence (CIP-24)
@@ -967,12 +1270,21 @@ class NeuromorphicNetwork:
         if self._stdp_executor is not None:
             _region_futures = []
             if self.meta_ctrl is not None:
-                _region_futures.append(self._stdp_executor.submit(
-                    self.meta_ctrl.step, np.zeros(self.meta_ctrl.n, dtype=np.float32), dt))
-            _region_futures.append(self._stdp_executor.submit(
-                self.working_mem.step, np.zeros(self.working_mem.n, dtype=np.float32), dt))
-            _region_futures.append(self._stdp_executor.submit(
-                self.cerebellum.step, np.zeros(self.cerebellum.n, dtype=np.float32), dt))
+                _region_futures.append(
+                    self._stdp_executor.submit(
+                        self.meta_ctrl.step, np.zeros(self.meta_ctrl.n, dtype=np.float32), dt
+                    )
+                )
+            _region_futures.append(
+                self._stdp_executor.submit(
+                    self.working_mem.step, np.zeros(self.working_mem.n, dtype=np.float32), dt
+                )
+            )
+            _region_futures.append(
+                self._stdp_executor.submit(
+                    self.cerebellum.step, np.zeros(self.cerebellum.n, dtype=np.float32), dt
+                )
+            )
             for f in _region_futures:
                 f.result()
         else:
@@ -1019,9 +1331,11 @@ class NeuromorphicNetwork:
                     _ws_broadcast.append(("workspace_feature", self.feature))
                 for syn_name, target in _ws_broadcast:
                     syn = s[syn_name]
-                    current = syn.compute_current(
-                        self.workspace.spikes.astype(np.float32), None
-                    ) * self._synaptic_gain * np.float32(_broadcast_gain)
+                    current = (
+                        syn.compute_current(self.workspace.spikes.astype(np.float32), None)
+                        * self._synaptic_gain
+                        * np.float32(_broadcast_gain)
+                    )
                     self._inject_current(syn_name, current, target)
 
         # 13. Motor cortex — depends on cerebellum + WM (must wait for above)
@@ -1119,7 +1433,9 @@ class NeuromorphicNetwork:
                     _, post_region = self._get_syn_regions(_name)
                     if post_region is not None:
                         rname = post_region.name
-                        region_delta_sum[rname] = region_delta_sum.get(rname, 0.0) + syn.last_stdp_delta * nnz
+                        region_delta_sum[rname] = (
+                            region_delta_sum.get(rname, 0.0) + syn.last_stdp_delta * nnz
+                        )
                         region_delta_count[rname] = region_delta_count.get(rname, 0) + nnz
             # Update per-region weight change magnitudes
             self._weight_change_by_region = {
@@ -1131,7 +1447,9 @@ class NeuromorphicNetwork:
                 mean_delta = weighted_delta / total_nnz
                 self._convergence_history.append(mean_delta)
                 if len(self._convergence_history) > self._convergence_window:
-                    self._convergence_history = self._convergence_history[-self._convergence_window:]
+                    self._convergence_history = self._convergence_history[
+                        -self._convergence_window :
+                    ]
                 if mean_delta < self._convergence_threshold:
                     self._convergence_stable_count += 1
                 else:
@@ -1187,7 +1505,9 @@ class NeuromorphicNetwork:
                     # Parallel Phase 17: each group writes to its own weights.data + eligibility
                     futures = [
                         self._stdp_executor.submit(
-                            syn.apply_neuromodulation_and_decay, gmod, mask,
+                            syn.apply_neuromodulation_and_decay,
+                            gmod,
+                            mask,
                             elig_interval,
                         )
                         for syn, mask, gmod in elig_groups
@@ -1196,8 +1516,7 @@ class NeuromorphicNetwork:
                         f.result()
                 else:
                     for syn, mask, gmod in elig_groups:
-                        syn.apply_neuromodulation_and_decay(gmod, mask,
-                                                            elig_interval)
+                        syn.apply_neuromodulation_and_decay(gmod, mask, elig_interval)
 
         _t9 = time.perf_counter()
         _timings["9_eligibility"] = _t9 - _t8
@@ -1211,14 +1530,19 @@ class NeuromorphicNetwork:
                     pre_region, post_region = self._get_syn_regions(name)
                     if pre_region and post_region:
                         syn.apply_neighborhood_consolidation(
-                            self.neuromodulation.da, nc, t,
-                            pre_region.last_spike_time, post_region.last_spike_time,
+                            self.neuromodulation.da,
+                            nc,
+                            t,
+                            pre_region.last_spike_time,
+                            post_region.last_spike_time,
                         )
 
         # 17c. BCM metaplasticity — update per-neuron modification thresholds.
         # Patent Claim 1c: theta tracks postsynaptic firing rate² (EMA, tau=10000 steps).
         # Uses current-step spikes as instantaneous rate estimate; the slow EMA smooths.
-        if self._step_count % 10 == 0:  # every 10 steps — theta_tau=10000 makes per-step updates wasteful
+        if (
+            self._step_count % 10 == 0
+        ):  # every 10 steps — theta_tau=10000 makes per-step updates wasteful
             for name, syn in self._plastic_synapses:
                 if syn.bcm_theta is not None:
                     _, post_region = self._get_syn_regions(name)
@@ -1230,7 +1554,7 @@ class NeuromorphicNetwork:
         # input, homeostasis pulls all weights toward target_frac (0.5), erasing
         # learned structure.  200-step threshold matches one normal homeostasis
         # interval -- if the brain hasn't received input for that long, freeze.
-        _STARVATION_HOMEOSTASIS_THRESHOLD = 200
+        _STARVATION_HOMEOSTASIS_THRESHOLD = 200  # noqa: N806
         _sensory_starving = sensory_gap > _STARVATION_HOMEOSTASIS_THRESHOLD
 
         # Adaptive interval: 10x more frequent when any region fires above 30%.
@@ -1242,18 +1566,22 @@ class NeuromorphicNetwork:
         if _max_rate > 0.30:
             _home_interval = max(_home_interval // 10, 50)
             _home_rate = min(_home_rate * 3.0, 0.05)
-        _adol_bypass = (
-            is_adol and self.config.homeostasis_adolescent_bypass
-        )
+        _adol_bypass = is_adol and self.config.homeostasis_adolescent_bypass
         # Motor groups that should receive homeostasis boost during supported phase.
         # Excludes brainstem_motor (arousal, not learned) and reflex_motor (hardwired).
-        _MOTOR_BOOST_GROUPS = {"sensory_motor", "cerebellum_motor", "working_motor", "workspace_motor"}
+        _MOTOR_BOOST_GROUPS = {  # noqa: N806
+            "sensory_motor",
+            "cerebellum_motor",
+            "working_motor",
+            "workspace_motor",
+        }
         _emergency_ceiling = self.config.homeostasis_emergency_ceiling
         if _sensory_starving:
             if self._step_count % 1000 == 0:
                 logger.warning(
                     "Homeostasis FROZEN: sensory starvation (gap=%d steps > %d threshold)",
-                    sensory_gap, _STARVATION_HOMEOSTASIS_THRESHOLD,
+                    sensory_gap,
+                    _STARVATION_HOMEOSTASIS_THRESHOLD,
                 )
         elif self._step_count % _home_interval == 0:
             self._homeostasis_regular_count += 1
@@ -1278,8 +1606,13 @@ class NeuromorphicNetwork:
         # 10 steps (not every step) to avoid scanning ~4.76 GB of weight data
         # per step at 1M scale.  Skips groups already corrected by the regular
         # homeostasis round above (double-correction guard).
-        _did_regular = (self._step_count % _home_interval == 0)
-        if not _sensory_starving and _emergency_ceiling < 1.0 and self._step_count % 10 == 0 and not _did_regular:
+        _did_regular = self._step_count % _home_interval == 0
+        if (
+            not _sensory_starving
+            and _emergency_ceiling < 1.0
+            and self._step_count % 10 == 0
+            and not _did_regular
+        ):
             for _name, syn in self._plastic_synapses:
                 if syn.weights.nnz > 0:
                     _mean_w = float(syn.weights.data.mean())
@@ -1302,7 +1635,9 @@ class NeuromorphicNetwork:
                             logger.info(
                                 "Emergency homeostasis: %s mean=%.4f (ceiling=%.2f), "
                                 "applied 3x rate",
-                                _name, _mean_w, _emergency_ceiling * _w_max,
+                                _name,
+                                _mean_w,
+                                _emergency_ceiling * _w_max,
                             )
         # Reset boost OUTSIDE the interval check to prevent stale boost
         # persisting across task transitions between homeostasis rounds.
@@ -1344,7 +1679,9 @@ class NeuromorphicNetwork:
                     "Homeostasis: regular=%d emergency=%d (interval=%d rate=%.3f bypass=%s)",
                     self._homeostasis_regular_count,
                     self._homeostasis_emergency_count,
-                    _home_interval, _home_rate, _adol_bypass,
+                    _home_interval,
+                    _home_rate,
+                    _adol_bypass,
                 )
                 self._homeostasis_regular_count = 0
                 self._homeostasis_emergency_count = 0
@@ -1357,8 +1694,10 @@ class NeuromorphicNetwork:
                     logger.warning(
                         "Meta controller burst: rate=%.1f%% DA=%.2f ACh=%.2f NE=%.2f 5HT=%.2f",
                         _meta_rate * 100,
-                        _nm_out.get("da", 0), _nm_out.get("ach", 0),
-                        _nm_out.get("ne", 0), _nm_out.get("serotonin", 0),
+                        _nm_out.get("da", 0),
+                        _nm_out.get("ach", 0),
+                        _nm_out.get("ne", 0),
+                        _nm_out.get("serotonin", 0),
                     )
 
             # CIP-22: Update astrocyte calcium with fresh firing rates + weight change magnitudes
@@ -1390,7 +1729,12 @@ class NeuromorphicNetwork:
             "cognitive_commands": cognitive_commands,
             "speech_commands": speech_commands,
             "reflex_responses": [
-                {"name": r.reflex_name, "intensity": r.intensity, "action": r.action, "priority": r.priority}
+                {
+                    "name": r.reflex_name,
+                    "intensity": r.intensity,
+                    "action": r.action,
+                    "priority": r.priority,
+                }
                 for r in reflex_responses
             ],
             "prediction_error": prediction_error,
@@ -1502,7 +1846,11 @@ class NeuromorphicNetwork:
         # Sensory rate variance (G4: deque for O(1) append)
         sen_rate = self._firing_rate_report.get("sensory_cortex", 0.0)
         self._sensory_rate_buffer.append(sen_rate)
-        variance = float(np.var(list(self._sensory_rate_buffer))) if len(self._sensory_rate_buffer) >= 5 else 1.0
+        variance = (
+            float(np.var(list(self._sensory_rate_buffer)))
+            if len(self._sensory_rate_buffer) >= 5
+            else 1.0
+        )
 
         # Feature STDP current (mean delta across feature layer synapses)
         feat_delta = 0.0
@@ -1519,7 +1867,7 @@ class NeuromorphicNetwork:
 
         # G5: Record association firing pattern for concept differentiation
         if self._step_count % cfg.concept_sample_interval == 0:
-            if hasattr(self.association, 'spikes'):
+            if hasattr(self.association, "spikes"):
                 spikes = self.association.spikes.astype(np.float32)
                 self.neuromodulation.concept_tracker.record_pattern(spikes)
 
@@ -1545,10 +1893,14 @@ class NeuromorphicNetwork:
                 # Backup original STDP params and apply widened windows
                 orig = syn.stdp_params
                 self._original_stdp_params[name] = STDPParams(
-                    a_plus=orig.a_plus, a_minus=orig.a_minus,
-                    tau_plus=orig.tau_plus, tau_minus=orig.tau_minus,
-                    w_min=orig.w_min, w_max=orig.w_max,
-                    min_dt=orig.min_dt, max_dt=orig.max_dt,
+                    a_plus=orig.a_plus,
+                    a_minus=orig.a_minus,
+                    tau_plus=orig.tau_plus,
+                    tau_minus=orig.tau_minus,
+                    w_min=orig.w_min,
+                    w_max=orig.w_max,
+                    min_dt=orig.min_dt,
+                    max_dt=orig.max_dt,
                 )
                 # A2: a_minus uses its own scale factor (default 1.0 — preserves LTP/LTD asymmetry)
                 syn.stdp_params = STDPParams(
@@ -1556,8 +1908,10 @@ class NeuromorphicNetwork:
                     a_minus=orig.a_minus * adol_stdp.a_minus_scale,
                     tau_plus=adol_stdp.tau_plus,
                     tau_minus=adol_stdp.tau_minus,
-                    w_min=orig.w_min, w_max=orig.w_max,
-                    min_dt=orig.min_dt, max_dt=orig.max_dt,
+                    w_min=orig.w_min,
+                    w_max=orig.w_max,
+                    min_dt=orig.min_dt,
+                    max_dt=orig.max_dt,
                 )
 
         elif not is_adol and self._adolescent_initialized:
@@ -1618,7 +1972,9 @@ class NeuromorphicNetwork:
 
                 # G3: Update cached myelination fraction after myelination/pruning
                 myel_fracs = [syn.myelination_fraction for _n, syn in self._plastic_synapses]
-                self._cached_myel_fraction = sum(myel_fracs) / len(myel_fracs) if myel_fracs else 0.0
+                self._cached_myel_fraction = (
+                    sum(myel_fracs) / len(myel_fracs) if myel_fracs else 0.0
+                )
 
                 # Update plasticity masks on all synapse groups (H2)
                 for _name, syn in self._plastic_synapses:
@@ -1789,8 +2145,9 @@ class NeuromorphicNetwork:
                 if pre_rate < min_rate and post_rate < min_rate:
                     return
             comp_act = self._compute_compartment_activity(name, post_sp)
-            s[name].update_weights_stdp(pre_sp, post_sp, pre_t, post_t, t,
-                                        compartment_activity=comp_act)
+            s[name].update_weights_stdp(
+                pre_sp, post_sp, pre_t, post_t, t, compartment_activity=comp_act
+            )
             # Update adaptive interval based on STDP delta
             delta = s[name].last_stdp_delta
             if delta < thresh:
@@ -1817,8 +2174,9 @@ class NeuromorphicNetwork:
                 if pre_rate < min_rate and post_rate < min_rate:
                     return
             comp_act = self._compute_compartment_activity(name, post_sp)
-            s[name].update_weights_rstdp(pre_sp, post_sp, pre_t, post_t, t, modulation,
-                                         compartment_activity=comp_act)
+            s[name].update_weights_rstdp(
+                pre_sp, post_sp, pre_t, post_t, t, modulation, compartment_activity=comp_act
+            )
             delta = s[name].last_stdp_delta
             if delta < thresh:
                 self._group_stdp_mult[name] = min(mult * 2, max_mult)
@@ -1829,11 +2187,13 @@ class NeuromorphicNetwork:
         if self._stdp_executor is not None:
             futures = []
             for name, pre_sp, pre_t, post_sp, post_t in stdp_pairs:
-                futures.append(self._stdp_executor.submit(
-                    _run_stdp, name, pre_sp, pre_t, post_sp, post_t))
+                futures.append(
+                    self._stdp_executor.submit(_run_stdp, name, pre_sp, pre_t, post_sp, post_t)
+                )
             for name, pre_sp, pre_t, post_sp, post_t in rstdp_pairs:
-                futures.append(self._stdp_executor.submit(
-                    _run_rstdp, name, pre_sp, pre_t, post_sp, post_t))
+                futures.append(
+                    self._stdp_executor.submit(_run_rstdp, name, pre_sp, pre_t, post_sp, post_t)
+                )
             # Wait for all to complete — exceptions propagate on .result()
             for f in futures:
                 f.result()
@@ -1871,7 +2231,11 @@ class NeuromorphicNetwork:
         # Apply instinctual gain
         modality = _resolve_modality(provenance)
         ranges = self.allocator.current_ranges
-        active = {modality: ranges[modality]} if modality in ranges and ranges[modality] != (0, 0) else {}
+        active = (
+            {modality: ranges[modality]}
+            if modality in ranges and ranges[modality] != (0, 0)
+            else {}
+        )
         gain = self.instincts.compute_gain(current, active, self._step_count)
         current = current * gain
 
@@ -1929,7 +2293,9 @@ class NeuromorphicNetwork:
             self._teaching_buffer[channel] = current
 
     def inject_standing_pattern(
-        self, actuator_intensities: dict[str, float], gain: float,
+        self,
+        actuator_intensities: dict[str, float],
+        gain: float,
     ) -> None:
         """Inject PD-computed standing torques as weak motor cortex current.
 
@@ -2000,10 +2366,14 @@ class NeuromorphicNetwork:
             "adolescent_initialized": self._adolescent_initialized,
             "original_stdp_params": {
                 name: {
-                    "a_plus": p.a_plus, "a_minus": p.a_minus,
-                    "tau_plus": p.tau_plus, "tau_minus": p.tau_minus,
-                    "w_min": p.w_min, "w_max": p.w_max,
-                    "min_dt": p.min_dt, "max_dt": p.max_dt,
+                    "a_plus": p.a_plus,
+                    "a_minus": p.a_minus,
+                    "tau_plus": p.tau_plus,
+                    "tau_minus": p.tau_minus,
+                    "w_min": p.w_min,
+                    "w_max": p.w_max,
+                    "min_dt": p.min_dt,
+                    "max_dt": p.max_dt,
                 }
                 for name, p in self._original_stdp_params.items()
             },
@@ -2012,8 +2382,12 @@ class NeuromorphicNetwork:
             "cached_myel_fraction": self._cached_myel_fraction,
             "feature_stdp_peak": self._feature_stdp_peak,
             # Decoder state
-            "speech_decoder": self.speech_decoder.get_state() if self.speech_decoder.enabled else {},
-            "cognitive_decoder": self.cognitive_decoder.get_state() if self.cognitive_decoder.enabled else {},
+            "speech_decoder": (
+                self.speech_decoder.get_state() if self.speech_decoder.enabled else {}
+            ),
+            "cognitive_decoder": (
+                self.cognitive_decoder.get_state() if self.cognitive_decoder.enabled else {}
+            ),
             # Sensory allocator ranges (prevents range remapping across restarts)
             "sensory_allocator": {
                 "ranges": {k: list(v) for k, v in self.allocator.current_ranges.items()},
@@ -2075,7 +2449,9 @@ class NeuromorphicNetwork:
             if needs_sync:
                 logger.info(
                     "Region %s clock sync: %s (setting time_base=%.0f)",
-                    name, reason, common_time_base,
+                    name,
+                    reason,
+                    common_time_base,
                 )
                 pop._time = expected_time
                 pop._time_base = common_time_base
@@ -2109,7 +2485,9 @@ class NeuromorphicNetwork:
                         _syn.weights.data[:] = np.float32(_bweight)
                         logger.info(
                             "Override non-plastic %s weights: %.3f -> %.3f (config)",
-                            _bname, _old_mean, _bweight,
+                            _bname,
+                            _old_mean,
+                            _bweight,
                         )
 
         # Strategy 3: Restore adaptive STDP interval multipliers
@@ -2125,8 +2503,11 @@ class NeuromorphicNetwork:
         if reset_names:
             for n in reset_names:
                 self._group_stdp_mult[n] = 1
-            logger.info("Reset %d maxed-out STDP interval multipliers: %s",
-                        len(reset_names), ", ".join(reset_names))
+            logger.info(
+                "Reset %d maxed-out STDP interval multipliers: %s",
+                len(reset_names),
+                ", ".join(reset_names),
+            )
 
         # P2: Restore adolescent phase state (prevent double-widening)
         self._adolescent_initialized = state.get("adolescent_initialized", False)
@@ -2134,10 +2515,14 @@ class NeuromorphicNetwork:
         self._original_stdp_params = {}
         for name, params in saved_originals.items():
             self._original_stdp_params[name] = STDPParams(
-                a_plus=params["a_plus"], a_minus=params["a_minus"],
-                tau_plus=params["tau_plus"], tau_minus=params["tau_minus"],
-                w_min=params["w_min"], w_max=params["w_max"],
-                min_dt=params.get("min_dt", 1.0), max_dt=params.get("max_dt", 50.0),
+                a_plus=params["a_plus"],
+                a_minus=params["a_minus"],
+                tau_plus=params["tau_plus"],
+                tau_minus=params["tau_minus"],
+                w_min=params["w_min"],
+                w_max=params["w_max"],
+                min_dt=params.get("min_dt", 1.0),
+                max_dt=params.get("max_dt", 50.0),
             )
 
         # P7: Restore sensory buffer and caches
@@ -2189,9 +2574,7 @@ class NeuromorphicNetwork:
             # Restore _last_active so gain system and recompute work correctly.
             saved_last_active = alloc_state.get("last_active")
             if saved_last_active:
-                self.allocator._last_active = {
-                    k: int(v) for k, v in saved_last_active.items()
-                }
+                self.allocator._last_active = {k: int(v) for k, v in saved_last_active.items()}
             else:
                 # Old state format without last_active — initialize all frozen
                 # modalities as recently active so gain system treats them as live.
@@ -2216,7 +2599,7 @@ class NeuromorphicNetwork:
         """Get current per-region firing rates (fraction, 0.0-1.0)."""
         return dict(self._firing_rate_report)
 
-    def get_synapse_groups(self) -> list[tuple[str, "SynapseGroup"]]:
+    def get_synapse_groups(self) -> list[tuple[str, SynapseGroup]]:
         """Get list of (name, SynapseGroup) for all plastic synapse groups."""
         return list(self._plastic_synapses)
 
@@ -2260,10 +2643,19 @@ class NeuromorphicNetwork:
             },
             "cross_modal": self._get_cross_modal_metrics(),
             "oscillatory": (
-                {"enabled": True, **{k: round(v, 3) for k, v in self.oscillators.get_metrics().items()}}
+                {
+                    "enabled": True,
+                    **{k: round(v, 3) for k, v in self.oscillators.get_metrics().items()},
+                }
                 if self.oscillators is not None
-                else {"enabled": False, "gamma_phase": 0.0, "theta_phase": 0.0,
-                      "gamma_gain": 1.0, "theta_factor": 1.0, "coherence": 0.0}
+                else {
+                    "enabled": False,
+                    "gamma_phase": 0.0,
+                    "theta_phase": 0.0,
+                    "gamma_gain": 1.0,
+                    "theta_factor": 1.0,
+                    "coherence": 0.0,
+                }
             ),
             "step_timing_ms": self.get_step_timing(ema=True),
         }

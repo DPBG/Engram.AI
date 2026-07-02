@@ -530,6 +530,7 @@ python run.py --only dashboard
 
 | Document | Content |
 |----------|---------|
+| [`ROADMAP.md`](ROADMAP.md) | Technical plan & current-state audit — phases M1–M7, tracking issues, status |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full system design, component relationships, NATS message schemas |
 | [`DESIGN-PRINCIPLES.md`](DESIGN-PRINCIPLES.md) | 6 core architecture invariants and implementation file map |
 | [`docs/SENSORY-GATEWAY.md`](docs/SENSORY-GATEWAY.md) | Gateway architecture, sensor types, discovery |
@@ -555,8 +556,10 @@ Engram is a research system, and we believe in being honest about its current st
   sandbox, but generated drivers are experimental, not production-grade.
 - **Hardware integration.** Built-in sensors cover camera, microphone, and serial
   devices; IMU / depth / real-actuator support is partial or planned.
-- **Some stubs remain.** A few subsystems contain placeholders (see the `TODO`s
-  in the code). Contributions here are especially welcome.
+- **Contribution opportunities.** The `good first issue` backlog (issues labelled
+  [`good first issue`](https://github.com/DPBG/Engram.AI/labels/good%20first%20issue))
+  lists small, well-scoped tasks across `neuromorphic/`, `sdk/`, and
+  `sensory-gateway/`. Contributions are especially welcome.
 
 If something doesn't match the docs, please open an issue — accurate docs are a priority.
 

@@ -9,6 +9,7 @@ from activelearning import current_timestamp, generate_trace_id
 @dataclass
 class Episode:
     """An episodic memory entry."""
+
     trace_id: str
     summary: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -21,6 +22,7 @@ class Episode:
 @dataclass
 class MemoryQuery:
     """A memory query request."""
+
     query: str
     limit: int = 10
     min_score: float = 0.5
@@ -29,6 +31,7 @@ class MemoryQuery:
 @dataclass
 class MemoryResult:
     """A memory search result."""
+
     episode_id: str
     score: float
     trace_id: str

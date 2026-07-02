@@ -204,9 +204,7 @@ PROFILES = {
 def services_for_profile(profile: str) -> list[Service]:
     wanted = PROFILES.get(profile)
     if wanted is None:
-        raise ValueError(
-            f"Unknown profile {profile!r}. Choose from: {', '.join(PROFILES)}"
-        )
+        raise ValueError(f"Unknown profile {profile!r}. Choose from: {', '.join(PROFILES)}")
     return [s for s in SERVICES if s.profile in wanted]
 
 

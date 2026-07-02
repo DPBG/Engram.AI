@@ -36,25 +36,25 @@ from pathlib import Path
 # Allow running from the repo root without installing the SDK.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from activelearning.core import ActionProposal, KernelDecisionType, generate_trace_id
 from activelearning.plugins import ActuatorPlugin, PluginCapability, RiskClass, register_actuator
-
 
 # ---------------------------------------------------------------------------
 # 1. Define the command type your actuator accepts.
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class LedCommand:
-    red: int    # 0–255
+    red: int  # 0–255
     green: int  # 0–255
-    blue: int   # 0–255
+    blue: int  # 0–255
     brightness: float  # 0.0–1.0
 
 
 # ---------------------------------------------------------------------------
 # 2. Subclass ActuatorPlugin, parameterised with your command type.
 # ---------------------------------------------------------------------------
+
 
 class LedStripActuator(ActuatorPlugin[LedCommand]):
     """Synthetic RGB LED strip actuator.
@@ -76,25 +76,27 @@ class LedStripActuator(ActuatorPlugin[LedCommand]):
             description="Logs colour commands; no hardware required.",
             envelope={
                 # parameter_name: (min, max)
-                "red":        (0.0, 255.0),
-                "green":      (0.0, 255.0),
-                "blue":       (0.0, 255.0),
+                "red": (0.0, 255.0),
+                "green": (0.0, 255.0),
+                "blue": (0.0, 255.0),
                 "brightness": (0.0, 1.0),
             },
             risk_class=RiskClass.LOW,
         )
 
-        self.add_capability(PluginCapability(
-            name="set_color",
-            description="Set the LED strip colour and brightness",
-            parameters={
-                "red":        "int [0, 255]",
-                "green":      "int [0, 255]",
-                "blue":       "int [0, 255]",
-                "brightness": "float [0.0, 1.0]",
-            },
-            risk_class=RiskClass.LOW,
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="set_color",
+                description="Set the LED strip colour and brightness",
+                parameters={
+                    "red": "int [0, 255]",
+                    "green": "int [0, 255]",
+                    "blue": "int [0, 255]",
+                    "brightness": "float [0.0, 1.0]",
+                },
+                risk_class=RiskClass.LOW,
+            )
+        )
 
         # Tracks the last successfully applied colour (for status queries).
         self._current: LedCommand | None = None
@@ -119,6 +121,7 @@ class LedStripActuator(ActuatorPlugin[LedCommand]):
 # 4. Optionally register the actuator in the global registry.
 # ---------------------------------------------------------------------------
 
+
 def create_and_register() -> LedStripActuator:
     """Instantiate the actuator and add it to the global plugin registry."""
     actuator = LedStripActuator()
@@ -131,6 +134,7 @@ def create_and_register() -> LedStripActuator:
 # you can verify the logic without a running stack.
 # ---------------------------------------------------------------------------
 
+
 async def _demo() -> None:
     actuator = LedStripActuator()
     print(f"Actuator: {actuator.name} ({actuator.actuator_id})")
@@ -138,9 +142,9 @@ async def _demo() -> None:
 
     print("Sending 3 synthetic commands (direct _do_execute, no Kernel):")
     commands = [
-        LedCommand(red=255, green=0,   blue=0,   brightness=1.0),
-        LedCommand(red=0,   green=255, blue=0,   brightness=0.5),
-        LedCommand(red=0,   green=0,   blue=255, brightness=0.75),
+        LedCommand(red=255, green=0, blue=0, brightness=1.0),
+        LedCommand(red=0, green=255, blue=0, brightness=0.5),
+        LedCommand(red=0, green=0, blue=255, brightness=0.75),
     ]
     for cmd in commands:
         await actuator._do_execute(cmd)
