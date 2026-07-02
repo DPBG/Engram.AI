@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, RedirectResponse
 
 from dashboard.context import DashboardContext
+from dashboard.learning_evidence import build_learning_evidence_series
 from dashboard.system import detect_system_info, get_live_metrics
 from dashboard.util import now_iso
 
@@ -106,5 +107,12 @@ def build_system_router(ctx: DashboardContext, static_dir: str) -> APIRouter:
             return {"results": results}
         except Exception as e:
             return {"error": str(e), "results": []}
+
+    @router.get("/api/learning-evidence")
+    async def get_learning_evidence(limit: int = 50):
+        """Learning Evidence panel — benchmark trends over time (issue #131)."""
+        payload = build_learning_evidence_series(limit=min(max(limit, 1), 200))
+        payload["timestamp"] = now_iso()
+        return payload
 
     return router

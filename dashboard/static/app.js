@@ -34,7 +34,7 @@ class ActiveLearningAI {
         setInterval(() => this.fetchNeuro(), 5000);
         setInterval(() => this.fetchKernelDecisionRates(), 60000);
         setInterval(() => this._checkGatewayStale(), 5000);
-        setInterval(() => this.fetchVideoSessions(), 10000);
+        setInterval(() => this.fetchLearningEvidence(), 60000);
     }
 
     // ─── UI Bindings ─────────────────────────────────────────────────
@@ -251,6 +251,7 @@ class ActiveLearningAI {
             this.fetchGateway(),
             this.fetchVideoSessions(),
             this.fetchKernelDecisionRates(),
+            this.fetchLearningEvidence(),
         ]);
     }
 
@@ -291,6 +292,118 @@ class ActiveLearningAI {
             const d = await (await fetch('/api/kernel/decision-rates')).json();
             this.renderKernelDecisionRates(d);
         } catch (e) { console.warn('kernel decision rates:', e); }
+    }
+
+    async fetchLearningEvidence() {
+        try {
+            const d = await (await fetch('/api/learning-evidence')).json();
+            this.renderLearningEvidence(d);
+        } catch (e) { console.warn('learning evidence:', e); }
+    }
+
+    renderLearningEvidence(data) {
+        const summary = document.getElementById('le-summary');
+        const meta = document.getElementById('le-meta');
+        if (!summary) return;
+
+        if (data.error && !data.count) {
+            summary.innerHTML = `<div class="le-empty">${this._esc(data.error)}</div>`;
+            if (meta) meta.textContent = '';
+            this._drawTrendChart('le-chart-concept', [], '#5ea4f5');
+            this._drawTrendChart('le-chart-binding', [], '#38d97a');
+            return;
+        }
+
+        const latest = data.latest;
+        const lm = latest?.metrics || {};
+        const conceptVal = lm.concept_separability;
+        const bindVal = lm.binding_accuracy;
+        summary.innerHTML = `
+            <div class="le-stat-grid">
+                <div class="le-stat">
+                    <span class="le-stat-label">Concepts</span>
+                    <span class="le-stat-val">${conceptVal != null ? conceptVal : '—'}</span>
+                </div>
+                <div class="le-stat">
+                    <span class="le-stat-label">Binding F1</span>
+                    <span class="le-stat-val">${bindVal != null ? Number(bindVal).toFixed(3) : '—'}</span>
+                </div>
+                <div class="le-stat">
+                    <span class="le-stat-label">Runs</span>
+                    <span class="le-stat-val">${data.count || 0}</span>
+                </div>
+            </div>`;
+
+        if (meta) {
+            const fname = latest?.filename ? `Latest: ${latest.filename}` : 'No runs yet';
+            meta.textContent = fname;
+        }
+
+        const conceptSeries = data.series?.concept_separability || [];
+        const bindingSeries = data.series?.binding_accuracy || [];
+        this._drawTrendChart('le-chart-concept', conceptSeries, '#5ea4f5');
+        this._drawTrendChart('le-chart-binding', bindingSeries, '#38d97a');
+    }
+
+    _drawTrendChart(canvasId, points, color) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        ctx.fillRect(0, 0, w, h);
+
+        if (!points.length) {
+            ctx.fillStyle = 'rgba(255,255,255,0.35)';
+            ctx.font = '11px system-ui, sans-serif';
+            ctx.fillText('No data yet', 10, h / 2);
+            return;
+        }
+
+        const values = points.map(p => Number(p.value));
+        let min = Math.min(...values);
+        let max = Math.max(...values);
+        if (min === max) {
+            min -= 0.5;
+            max += 0.5;
+        }
+        const padX = 8;
+        const padY = 10;
+        const plotW = w - padX * 2;
+        const plotH = h - padY * 2;
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.beginPath();
+        ctx.moveTo(padX, padY);
+        ctx.lineTo(padX, h - padY);
+        ctx.lineTo(w - padX, h - padY);
+        ctx.stroke();
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        points.forEach((p, i) => {
+            const x = padX + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
+            const y = h - padY - ((Number(p.value) - min) / (max - min)) * plotH;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        const last = values[values.length - 1];
+        ctx.fillStyle = color;
+        ctx.font = '10px SF Mono, Monaco, monospace';
+        ctx.fillText(last.toFixed(3), w - padX - 44, padY + 8);
+    }
+
+    _esc(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
     }
 
     async fetchInsights() {
