@@ -24,6 +24,11 @@ def _camera():
     return CameraSensor
 
 
+def _depth_camera():
+    from sensors.depth_camera import DepthCameraSensor
+    return DepthCameraSensor
+
+
 def _microphone():
     from sensors.microphone import MicrophoneSensor
     return MicrophoneSensor
@@ -45,6 +50,7 @@ def _audio_file():
 
 
 CameraSensor = _optional(_camera, "camera")
+DepthCameraSensor = _optional(_depth_camera, "depth_camera")
 MicrophoneSensor = _optional(_microphone, "microphone")
 SerialSensor = _optional(_serial, "serial")
 VideoFileSensor = _optional(_video_file, "video_file")
@@ -52,6 +58,7 @@ AudioFileSensor = _optional(_audio_file, "audio_file")
 
 __all__ = [
     "CameraSensor",
+    "DepthCameraSensor",
     "MicrophoneSensor",
     "SerialSensor",
     "VideoFileSensor",
