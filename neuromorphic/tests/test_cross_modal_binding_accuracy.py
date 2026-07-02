@@ -61,6 +61,16 @@ class TestCorrelatedStimulusFixtures:
         b = generate_correlated_stimulus_fixtures(3, seed=7)
         assert a["correlated_pairs"][0]["visual"] == b["correlated_pairs"][0]["visual"]
 
+    def test_rejects_invalid_n_pairs(self):
+        with pytest.raises(ValueError, match="at least 2"):
+            generate_correlated_stimulus_fixtures(n_pairs=1)
+        with pytest.raises(ValueError, match="auditory_size"):
+            generate_correlated_stimulus_fixtures(n_pairs=14, auditory_size=13)
+
+    def test_rejects_non_positive_sizes(self):
+        with pytest.raises(ValueError, match="must be positive"):
+            generate_correlated_stimulus_fixtures(visual_size=0)
+
 
 class TestBindingPrecisionRecall:
     def test_perfect_predictions(self):
@@ -77,6 +87,7 @@ class TestBindingPrecisionRecall:
         matrix = [[0.0, 0.0], [0.0, 0.0]]
         pr = _binding_precision_recall([{"pair_id": "a"}, {"pair_id": "b"}], matrix)
         assert pr["recall"] == 0.0
+        assert pr["precision"] == 0.0
 
 
 class TestCrossModalBindingAccuracyBenchmark:

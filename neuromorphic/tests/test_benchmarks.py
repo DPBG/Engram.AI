@@ -176,7 +176,7 @@ class TestCrossModalBindingAccuracyInSuite:
         ba = results["cross_modal_binding_accuracy"]
         assert "precision" in ba
         assert "recall" in ba
-        assert ba["pairs_tested"] <= 2
+        assert ba["pairs_tested"] == 2
 
     def test_save_results(self, small_network, tmp_path):
         suite = BenchmarkSuite(small_network)

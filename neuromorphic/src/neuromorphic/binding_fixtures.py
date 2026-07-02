@@ -14,9 +14,9 @@ import numpy as np
 BINDING_ACCURACY_REGRESSION_THRESHOLDS: dict[str, float] = {
     "binding_strength_min": 0.01,
     "matched_coupling_ratio_min": 1.0,
-    "precision_min": 0.0,
-    "recall_min": 0.0,
-    "f1_min": 0.0,
+    "precision_min": 0.1,
+    "recall_min": 0.1,
+    "f1_min": 0.1,
     "n_cross_modal_min": 1.0,
 }
 
@@ -33,6 +33,13 @@ def generate_correlated_stimulus_fixtures(
     signature peak so ground-truth bindings are identifiable.  Decoys pair
     each visual stimulus with an auditory signature from a different pair.
     """
+    if n_pairs < 2:
+        raise ValueError("n_pairs must be at least 2 to create decoy mismatches")
+    if visual_size <= 0 or auditory_size <= 0:
+        raise ValueError("visual_size and auditory_size must be positive")
+    if n_pairs > auditory_size:
+        raise ValueError("n_pairs must not exceed auditory_size for distinct signatures")
+
     rng = np.random.default_rng(seed)
     y, x = np.mgrid[0:visual_size, 0:visual_size]
 
