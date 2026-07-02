@@ -14,20 +14,22 @@ logger = logging.getLogger(__name__)
 
 
 def _looks_like_imu_reading(raw: dict) -> bool:
-    """Return True when a parsed JSON dict contains accelerometer axes."""
+    """Return True when a parsed JSON dict contains a full accelerometer triplet."""
     if not isinstance(raw, dict):
         return False
-    accel_keys = {
-        "ax", "ay", "az",
-        "accel_x", "accel_y", "accel_z",
-        "accx", "accy", "accz",
+    normalized = {
+        key.lower()
+        for key, value in raw.items()
+        if not isinstance(value, bool) and isinstance(value, (int, float))
     }
-    for key, value in raw.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        if key.lower() in accel_keys:
-            return True
-    return False
+    return any(
+        keys <= normalized
+        for keys in (
+            {"ax", "ay", "az"},
+            {"accel_x", "accel_y", "accel_z"},
+            {"accx", "accy", "accz"},
+        )
+    )
 
 
 class SensorType(Enum):
@@ -200,7 +202,10 @@ class SensorManager:
                     line = ser.readline().decode("utf-8", errors="ignore").strip()
                     if not line:
                         continue
-                    data = json.loads(line)
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
                     if _looks_like_imu_reading(data):
                         return True
             finally:

@@ -56,6 +56,10 @@ def test_looks_like_imu_reading_rejects_non_imu_payload():
     assert _looks_like_imu_reading({"temperature": 22.5, "humidity": 40}) is False
 
 
+def test_looks_like_imu_reading_rejects_single_axis():
+    assert _looks_like_imu_reading({"ax": 1.0}) is False
+
+
 @patch.object(SensorManager, "_probe_imu_port_sync", return_value=True)
 def test_detect_imu_registers_serial_device(_mock_probe):
     manager = SensorManager()
@@ -71,6 +75,13 @@ def test_detect_imu_registers_serial_device(_mock_probe):
 def test_detect_imu_returns_false_when_no_compatible_ports(_mock_probe):
     manager = SensorManager()
     with patch.dict(sys.modules, _fake_serial_modules(ports=["/dev/ttyUSB0"])):
+        assert _run(manager._detect_imu()) is False
+    assert manager.get_available_sensors(SensorType.IMU) == []
+
+
+def test_detect_imu_returns_false_when_no_ports_available():
+    manager = SensorManager()
+    with patch.dict(sys.modules, _fake_serial_modules(ports=[])):
         assert _run(manager._detect_imu()) is False
     assert manager.get_available_sensors(SensorType.IMU) == []
 
@@ -103,3 +114,13 @@ def test_probe_imu_port_sync_ignores_malformed_json():
     fake_serial.readline.return_value = b"not-json\n"
     with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
         assert SensorManager._probe_imu_port_sync("/dev/ttyUSB0") is False
+
+
+def test_probe_imu_port_sync_skips_banner_before_valid_json():
+    fake_serial = MagicMock()
+    fake_serial.readline.side_effect = [
+        b"IMU firmware v1.0\n",
+        b'{"ax": 0.1, "ay": 0.0, "az": 9.8}\n',
+    ]
+    with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
+        assert SensorManager._probe_imu_port_sync("/dev/ttyUSB0") is True
