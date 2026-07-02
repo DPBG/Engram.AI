@@ -407,17 +407,19 @@ class TestNumPyFallbackKernels:
 
     def test_neuromod_decay_sparse_fallback_with_mask(self, monkeypatch):
         monkeypatch.setattr(_ck_mod, "COMPILED_STDP_ENABLED", False)
-        elig = np.array([0.05, -0.03, 0.0], dtype=np.float32)
+        elig_orig = np.array([0.05, -0.03, 0.0], dtype=np.float32)
         data = np.array([0.5, 0.6, 0.7], dtype=np.float32)
         data_no_mask = data.copy()
         idx = np.array([0, 1], dtype=np.int32)
         mask = np.array([2.0, 0.5, 1.0], dtype=np.float32)  # per-synapse scale
+        # Both calls receive independent copies of elig so neither mutates the
+        # other's baseline (neuromod_decay_sparse writes back eligibility[idx]).
         neuromod_decay_sparse(
-            elig, data_no_mask, idx, 1.0, 1.0, np.float32(0.999),
+            elig_orig.copy(), data_no_mask, idx, 1.0, 1.0, np.float32(0.999),
             np.float32(0.01), np.float32(1.0), np.float32(1e-6),
         )
         neuromod_decay_sparse(
-            elig.copy(), data, idx, 1.0, 1.0, np.float32(0.999),
+            elig_orig.copy(), data, idx, 1.0, 1.0, np.float32(0.999),
             np.float32(0.01), np.float32(1.0), np.float32(1e-6),
             plasticity_mask=mask,
         )
