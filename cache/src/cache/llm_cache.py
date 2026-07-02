@@ -6,13 +6,13 @@ Uses vector similarity to find cached responses for similar prompts.
 
 import hashlib
 import logging
-import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from activelearning import (
     EmbeddingService,
     QdrantPoint,
     QdrantStore,
+    current_timestamp,
     get_embedding_service,
 )
 
@@ -33,8 +33,8 @@ class LLMCache:
         db: Any,
         hit_threshold: float = 0.95,
         *,
-        store: Optional[QdrantStore] = None,
-        embedding_service: Optional[EmbeddingService] = None,
+        store: QdrantStore | None = None,
+        embedding_service: EmbeddingService | None = None,
     ):
         self.db = db
         self.hit_threshold = hit_threshold
@@ -62,7 +62,7 @@ class LLMCache:
         """Release the Qdrant connection."""
         await self._qdrant.close()
 
-    async def get(self, prompt: str, model: str = "deepseek-coder:6.7b") -> Optional[Dict]:
+    async def get(self, prompt: str, model: str = "deepseek-coder:6.7b") -> dict | None:
         """
         Get cached response for a prompt.
 
@@ -149,7 +149,7 @@ class LLMCache:
                 "prompt": prompt,
                 "response": response,
                 "model": model,
-                "cached_at": int(time.time() * 1000),
+                "cached_at": current_timestamp(),
                 "hit_count": 0,
                 "last_hit_at": None,
             }
@@ -167,7 +167,7 @@ class LLMCache:
             logger.error(f"Cache store error: {e}", exc_info=True)
             return False
 
-    async def _store_in_db(self, cache_entry: Dict) -> None:
+    async def _store_in_db(self, cache_entry: dict) -> None:
         """Store cache entry in SQLite."""
         try:
             await self.db.execute(
@@ -193,7 +193,7 @@ class LLMCache:
     async def _update_hit_stats(self, cache_id: str) -> None:
         """Update cache hit statistics."""
         try:
-            now = int(time.time() * 1000)
+            now = current_timestamp()
 
             await self.db.execute(
                 """
@@ -208,7 +208,7 @@ class LLMCache:
         except Exception as e:
             logger.error(f"Error updating hit stats: {e}")
 
-    def get_metrics(self) -> Dict:
+    def get_metrics(self) -> dict:
         """Get cache metrics."""
         total = self._cache_hits + self._cache_misses
         hit_rate = self._cache_hits / total if total > 0 else 0.0

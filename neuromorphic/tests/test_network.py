@@ -43,13 +43,25 @@ class TestNetworkConstruction:
 
     def test_synapse_names(self, network):
         expected = {
-            "sensory_reflex", "reflex_motor", "brainstem_sensory",
-            "brainstem_association", "brainstem_cerebellum",
-            "brainstem_working", "brainstem_predictive",
-            "sensory_association", "association_lateral", "sensory_motor",
-            "brainstem_motor", "sensory_cerebellum", "motor_cerebellum",
-            "cerebellum_motor", "association_predictive", "predictive_recurrent",
-            "predictive_association", "association_working", "working_recurrent",
+            "sensory_reflex",
+            "reflex_motor",
+            "brainstem_sensory",
+            "brainstem_association",
+            "brainstem_cerebellum",
+            "brainstem_working",
+            "brainstem_predictive",
+            "sensory_association",
+            "association_lateral",
+            "sensory_motor",
+            "brainstem_motor",
+            "sensory_cerebellum",
+            "motor_cerebellum",
+            "cerebellum_motor",
+            "association_predictive",
+            "predictive_recurrent",
+            "predictive_association",
+            "association_working",
+            "working_recurrent",
             "working_motor",
         }
         assert set(network.synapses.keys()) == expected
@@ -65,10 +77,18 @@ class TestNetworkConstruction:
 
     def test_plastic_connections(self, network):
         plastic_names = [
-            "sensory_association", "association_lateral", "sensory_motor",
-            "brainstem_motor", "sensory_cerebellum", "motor_cerebellum",
-            "cerebellum_motor", "association_predictive", "predictive_recurrent",
-            "predictive_association", "association_working", "working_motor",
+            "sensory_association",
+            "association_lateral",
+            "sensory_motor",
+            "brainstem_motor",
+            "sensory_cerebellum",
+            "motor_cerebellum",
+            "cerebellum_motor",
+            "association_predictive",
+            "predictive_recurrent",
+            "predictive_association",
+            "association_working",
+            "working_motor",
         ]
         for name in plastic_names:
             assert network.synapses[name].plastic, f"{name} should be plastic"
@@ -123,8 +143,9 @@ class TestNetworkSimulation:
         # Check that voltage moved significantly from resting.
         sensory_v = network.sensory.population.v_membrane
         resting = network.config.lif.resting
-        assert sensory_v.mean() != pytest.approx(resting, abs=0.5), \
-            "Sensory cortex should have been driven away from resting by strong input"
+        assert sensory_v.mean() != pytest.approx(
+            resting, abs=0.5
+        ), "Sensory cortex should have been driven away from resting by strong input"
 
         # Verify sensory→motor connection produces current when sensory fires
         # Force sensory spikes to test the pathway
@@ -141,8 +162,9 @@ class TestNetworkSimulation:
         # so the mean may stay close to resting. Check that at least some neurons
         # have been driven away (depolarized or post-spike reset).
         max_deviation = float(np.abs(motor_v - resting).max())
-        assert max_deviation > 0.1, \
-            f"Motor cortex should show some activity (max deviation={max_deviation:.3f})"
+        assert (
+            max_deviation > 0.1
+        ), f"Motor cortex should show some activity (max deviation={max_deviation:.3f})"
 
 
 class TestMultiModalBinding:
@@ -171,8 +193,8 @@ class TestMultiModalBinding:
         # received current via sensory→association connections.
         # Verify the pathway works by checking weights have non-zero entries
         # and that association voltage moved from resting.
-        assoc_v = network.association.population.v_membrane
-        resting = network.config.lif.resting
+        _assoc_v = network.association.population.v_membrane
+        _resting = network.config.lif.resting
         assert network.step_count > 50
         # The sensory→association synapse should have produced current
         sa_syn = network.synapses["sensory_association"]
@@ -207,11 +229,12 @@ class TestTemporalLearning:
         # Check that at least some individual weights changed (not just mean)
         if len(initial_weights) > 0 and len(final_weights) > 0:
             min_len = min(len(initial_weights), len(final_weights))
-            changed = np.any(initial_weights[:min_len] != final_weights[:min_len])
+            _changed = np.any(initial_weights[:min_len] != final_weights[:min_len])
             # In a small network with sparse connectivity, STDP may not fire on
             # all synapses, but the pathway must at least have connections
-            assert network.synapses["association_predictive"].nnz > 0, \
-                "association→predictive must have connections"
+            assert (
+                network.synapses["association_predictive"].nnz > 0
+            ), "association→predictive must have connections"
 
 
 class TestNetworkState:
@@ -300,6 +323,7 @@ class TestPainVector:
 
     def test_pain_provenance_mapping(self):
         from neuromorphic.encoding import _resolve_modality
+
         assert _resolve_modality("observation.pain") == "tactile"
 
     @pytest.fixture
@@ -307,6 +331,7 @@ class TestPainVector:
         """Create a MuJoCo body if mujoco is available."""
         try:
             from neuromorphic.mujoco_body import MuJoCoBody
+
             body = MuJoCoBody()
             return body
         except ImportError:
@@ -322,6 +347,7 @@ class TestPainVector:
         # Reset body to default pose (joints near center)
         mujoco_body._data.qpos[:] = 0.0
         import mujoco
+
         mujoco.mj_forward(mujoco_body._model, mujoco_body._data)
         pain = mujoco_body.compute_pain_vector(limit_zone=0.2)
         # Most joints should be near zero pain at default pose
@@ -362,6 +388,7 @@ class TestPainConfig:
 
     def test_pain_config_defaults(self):
         from neuromorphic.config import MotorFeedbackConfig
+
         cfg = MotorFeedbackConfig()
         assert cfg.pain_enabled is True
         assert cfg.pain_limit_zone == 0.2
@@ -541,8 +568,9 @@ class TestAllMechanismsSimultaneous:
         """All plastic synapse groups must have eligibility traces (Claim 1b)."""
         for name, syn in net.synapses.items():
             if syn.plastic:
-                assert syn.eligibility is not None, \
-                    f"Plastic group {name} must have eligibility traces"
+                assert (
+                    syn.eligibility is not None
+                ), f"Plastic group {name} must have eligibility traces"
                 assert len(syn.eligibility) == syn.weights.nnz
 
     def test_stdp_modifies_weights_via_eligibility(self, net):
@@ -557,8 +585,9 @@ class TestAllMechanismsSimultaneous:
 
         # Weights should have changed through the eligibility pathway
         w_after = syn.weights.data
-        assert not np.allclose(w_before, w_after), \
-            "Weights should change via STDP->eligibility->neuromodulation"
+        assert not np.allclose(
+            w_before, w_after
+        ), "Weights should change via STDP->eligibility->neuromodulation"
 
     def test_bcm_theta_updates(self, net):
         """BCM threshold should update based on postsynaptic activity."""
@@ -570,8 +599,9 @@ class TestAllMechanismsSimultaneous:
             net.step(strong)
 
         # BCM theta should have changed (tracks postsynaptic firing rate)
-        assert not np.allclose(syn.bcm_theta, theta_before), \
-            "BCM theta should update based on firing"
+        assert not np.allclose(
+            syn.bcm_theta, theta_before
+        ), "BCM theta should update based on firing"
 
     def test_homeostasis_runs(self, net):
         """Homeostatic scaling should execute within the step."""
@@ -583,8 +613,9 @@ class TestAllMechanismsSimultaneous:
 
         # After homeostasis, mean should be pulled toward target (0.5 * w_max)
         mean_w = float(syn.weights.data.mean())
-        assert mean_w < syn.stdp_params.w_max * 0.95, \
-            "Homeostasis should pull saturated weights down"
+        assert (
+            mean_w < syn.stdp_params.w_max * 0.95
+        ), "Homeostasis should pull saturated weights down"
 
     def test_homeostasis_frozen_during_starvation(self, net):
         """Homeostasis must NOT run when sensory_gap exceeds threshold."""
@@ -596,8 +627,9 @@ class TestAllMechanismsSimultaneous:
         net.step(sensory_gap=500)
 
         after = float(syn.weights.data.mean())
-        assert abs(after - before) < 1e-6, \
-            f"Homeostasis should be frozen during starvation, but weight changed {before:.6f} -> {after:.6f}"
+        assert (
+            abs(after - before) < 1e-6
+        ), f"Homeostasis should be frozen during starvation, but weight changed {before:.6f} -> {after:.6f}"
 
     def test_homeostasis_resumes_after_starvation(self, net):
         """Homeostasis must resume when sensory_gap drops below threshold."""
@@ -609,17 +641,16 @@ class TestAllMechanismsSimultaneous:
         net.step(sensory_gap=0)
 
         after = float(syn.weights.data.mean())
-        assert after < before, \
-            "Homeostasis should pull saturated weights down when not starving"
+        assert after < before, "Homeostasis should pull saturated weights down when not starving"
 
     def test_neuromodulation_gates_eligibility(self, net):
         """Neuromodulatory signals should gate eligibility trace application."""
         # Neuromodulation system should exist and have 4 channels
         nm = net.neuromodulation
-        assert hasattr(nm, 'da')
-        assert hasattr(nm, 'ach')
-        assert hasattr(nm, 'ne')
-        assert hasattr(nm, 'serotonin')
+        assert hasattr(nm, "da")
+        assert hasattr(nm, "ach")
+        assert hasattr(nm, "ne")
+        assert hasattr(nm, "serotonin")
         # After a step, neuromodulators should be positive
         net.step()
         assert nm.da > 0
@@ -658,7 +689,7 @@ class TestContinualLearning:
 
         # Pattern A: activates first half of sensory cortex
         pattern_a = np.zeros(net.sensory.n, dtype=np.float32)
-        pattern_a[:net.sensory.n // 2] = 40.0
+        pattern_a[: net.sensory.n // 2] = 40.0
 
         # Train on pattern A
         for _ in range(50):
@@ -667,7 +698,7 @@ class TestContinualLearning:
 
         # Pattern B: activates second half
         pattern_b = np.zeros(net.sensory.n, dtype=np.float32)
-        pattern_b[net.sensory.n // 2:] = 40.0
+        pattern_b[net.sensory.n // 2 :] = 40.0
 
         # Train on pattern B
         for _ in range(50):
@@ -678,8 +709,9 @@ class TestContinualLearning:
         # Catastrophic forgetting would give near-zero correlation
         if len(weights_after_a) > 0 and weights_after_a.std() > 0:
             corr = np.corrcoef(weights_after_a, weights_after_b)[0, 1]
-            assert corr > 0.3, \
-                f"Pattern A should be partially retained after B training (corr={corr:.3f})"
+            assert (
+                corr > 0.3
+            ), f"Pattern A should be partially retained after B training (corr={corr:.3f})"
 
 
 class TestRSTDP:
@@ -710,21 +742,26 @@ class TestRSTDP:
         # These groups always have R-STDP regardless of motor feedback config
         for name in ["association_predictive", "predictive_recurrent"]:
             syn = net.synapses[name]
-            assert syn.rstdp_params is not None, \
-                f"{name} must have rstdp_params for prediction error gating"
-            assert syn.rstdp_params.modulation_mismatch > syn.rstdp_params.modulation_match, \
-                "Surprise (mismatch) should produce stronger learning than match"
+            assert (
+                syn.rstdp_params is not None
+            ), f"{name} must have rstdp_params for prediction error gating"
+            assert (
+                syn.rstdp_params.modulation_mismatch > syn.rstdp_params.modulation_match
+            ), "Surprise (mismatch) should produce stronger learning than match"
 
     def test_rstdp_weight_change_with_modulation(self):
         """R-STDP weight changes should scale with prediction error modulation."""
+        from neuromorphic.config import RSTDPParams
         from neuromorphic.synapses import SynapseGroup
-        from neuromorphic.config import STDPParams, RSTDPParams
 
         # Dense enough that spike overlap is guaranteed
         rstdp = RSTDPParams()
         syn = SynapseGroup(
-            n_pre=50, n_post=30, sparsity=0.5,
-            init_weight=0.5, plastic=True,
+            n_pre=50,
+            n_post=30,
+            sparsity=0.5,
+            init_weight=0.5,
+            plastic=True,
             rstdp_params=rstdp,
             rng=np.random.default_rng(42),
         )
@@ -738,8 +775,12 @@ class TestRSTDP:
 
         # High modulation (surprise) should produce weight change
         syn.update_weights_rstdp(
-            pre_spikes, post_spikes, pre_times, post_times,
-            current_time=7.0, modulation=3.0,
+            pre_spikes,
+            post_spikes,
+            pre_times,
+            post_times,
+            current_time=7.0,
+            modulation=3.0,
         )
         high_change = np.abs(syn.weights.data - w_before).sum()
 
@@ -748,12 +789,17 @@ class TestRSTDP:
 
         # Low modulation (expected) should produce smaller weight change
         syn.update_weights_rstdp(
-            pre_spikes, post_spikes, pre_times, post_times,
-            current_time=7.0, modulation=0.5,
+            pre_spikes,
+            post_spikes,
+            pre_times,
+            post_times,
+            current_time=7.0,
+            modulation=0.5,
         )
         low_change = np.abs(syn.weights.data - w_before).sum()
 
         assert high_change > 0, "R-STDP should produce weight changes"
-        assert high_change > low_change, \
-            f"High modulation change ({high_change:.6f}) should exceed " \
+        assert high_change > low_change, (
+            f"High modulation change ({high_change:.6f}) should exceed "
             f"low modulation ({low_change:.6f})"
+        )

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Engram</title>
-    <link rel="stylesheet" href="/static/style.css?v=3">
+    <link rel="stylesheet" href="/static/style.css?v=4">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
 <body>
@@ -93,6 +93,39 @@
                 </div>
             </section>
 
+            <!-- Kernel Decision Rates — governance signal (issue #143 / M6) -->
+            <section class="panel" id="kernel-rates-panel">
+                <h2><span class="panel-icon">⚖️</span> Kernel Governance</h2>
+                <div style="font-size:11px; color:var(--text-3); margin-bottom:8px;" id="kernel-rates-meta">
+                    No Kernel decisions logged yet
+                </div>
+                <div class="gauges" id="kernel-rates-gauges">
+                    <div class="gauge-row">
+                        <label>Allow</label>
+                        <div class="bar-track"><div class="bar-fill" id="kr-allow-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-allow-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Transform</label>
+                        <div class="bar-track"><div class="bar-fill" id="kr-transform-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-transform-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Deny</label>
+                        <div class="bar-track"><div class="bar-fill crit" id="kr-deny-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-deny-val">—</span>
+                    </div>
+                    <div class="gauge-row">
+                        <label>Defer</label>
+                        <div class="bar-track"><div class="bar-fill warn" id="kr-defer-bar" style="width:0%"></div></div>
+                        <span class="bar-val" id="kr-defer-val">—</span>
+                    </div>
+                </div>
+                <div style="font-size:11px; color:var(--text-2); margin-top:8px;" id="kernel-rates-mp">
+                    meta-programmer: <span id="kr-mp-summary">—</span>
+                </div>
+            </section>
+
             <!-- System Awareness -->
             <section class="panel">
                 <h2><span class="panel-icon">🔍</span> System Awareness</h2>
@@ -145,6 +178,23 @@
                 <div class="neuro-stdp" id="neuro-stdp">
                     <div class="sys-loading">Waiting for STDP data…</div>
                 </div>
+            </section>
+
+            <!-- Learning Evidence (M3 validation metrics) -->
+            <section class="panel" id="learning-evidence-panel">
+                <h2><span class="panel-icon">📈</span> Learning Evidence</h2>
+                <div class="le-summary" id="le-summary">
+                    <div class="sys-loading">Loading benchmark trends…</div>
+                </div>
+                <div class="le-chart-block">
+                    <div class="le-chart-label">Concept separability</div>
+                    <canvas id="le-chart-concept" class="le-chart" width="280" height="72" aria-label="Concept separability trend"></canvas>
+                </div>
+                <div class="le-chart-block">
+                    <div class="le-chart-label">Cross-modal binding accuracy</div>
+                    <canvas id="le-chart-binding" class="le-chart" width="280" height="72" aria-label="Binding accuracy trend"></canvas>
+                </div>
+                <div class="le-meta" id="le-meta"></div>
             </section>
 
             <!-- Sensory Gateway -->

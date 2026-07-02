@@ -1,7 +1,6 @@
 # Repo-wide Ruff configuration (matches the per-service [tool.ruff] settings).
-# CI enforces a small "real bug" subset as blocking (E9,F63,F7,F82) and runs the
-# full rule set as advisory until the legacy backlog is cleared. See
-# .github/workflows/test.yml and ROADMAP.md P0.5 / P5.
+# CI enforces two blocking gates: the "real bug" subset (E9,F63,F7,F82) and the
+# full rule set (E,F,I,N,W,UP). See .github/workflows/test.yml.
 line-length = 100
 target-version = "py311"
 

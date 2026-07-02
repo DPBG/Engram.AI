@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import logging
 import os
-import time
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from activelearning import current_timestamp
 
 from meta_programmer.staging import StagingManager, is_review_expired
 
@@ -35,7 +37,7 @@ class ApprovalConsumer:
         run_tests: Callable[..., Awaitable[dict]],
         deploy: Callable[[str, str, str], Awaitable[None]],
         publish_gap_result: Callable[[str, bool, str], Awaitable[None]],
-        log: Optional[logging.Logger] = None,
+        log: logging.Logger | None = None,
     ) -> None:
         """
         Args:
@@ -86,11 +88,9 @@ class ApprovalConsumer:
 
         # Fail-closed on TTL: if the dashboard answered too late, reject.
         metadata = self._staging.get_metadata(trace_id) or {}
-        now_ms = int(time.time() * 1000)
+        now_ms = current_timestamp()
         if is_review_expired(metadata, now_ms, self._defer_ttl_ms):
-            self._log.warning(
-                "Approval for %s arrived after TTL expiry — fail-closed", trace_id
-            )
+            self._log.warning("Approval for %s arrived after TTL expiry — fail-closed", trace_id)
             reason = "Approval arrived after TTL expiry (fail-closed)"
             self._staging.stage_rejected(trace_id, reason)
             await self._publish_gap_result(trace_id, False, reason)
@@ -144,9 +144,7 @@ class ApprovalConsumer:
                     trace_id, True, "Human approved, tested, and deployed"
                 )
             except Exception as e:
-                self._log.error(
-                    "Deploy failed for approved DEFER %s: %s", trace_id, e
-                )
+                self._log.error("Deploy failed for approved DEFER %s: %s", trace_id, e)
                 reason = f"Deploy failed after approval: {e}"
                 self._staging.stage_rejected(trace_id, reason)
                 await self._publish_gap_result(trace_id, False, reason)

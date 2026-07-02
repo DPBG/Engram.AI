@@ -1,22 +1,20 @@
 """Tests for plugin interfaces."""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
+from activelearning.core import ActionProposal
 from activelearning.plugins import (
-    SensorPlugin,
     ActuatorPlugin,
     PluginCapability,
     RiskClass,
-    register_sensor,
-    register_actuator,
-    get_sensor,
+    SensorPlugin,
     get_actuator,
-    list_sensors,
+    get_sensor,
     list_actuators,
+    list_sensors,
+    register_actuator,
+    register_sensor,
 )
-from activelearning.core import ActionProposal, KernelDecision, KernelDecisionType
 
 
 class MockSensor(SensorPlugin[dict]):

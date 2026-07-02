@@ -19,10 +19,11 @@ async def test_sdk_import():
     """Test that SDK modules can be imported."""
     try:
         from activelearning import core, nats_client
-        assert hasattr(core, 'Observation')
-        assert hasattr(core, 'ActionProposal')
-        assert hasattr(core, 'KernelDecision')
-        assert hasattr(nats_client, 'EventBus')
+
+        assert hasattr(core, "Observation")
+        assert hasattr(core, "ActionProposal")
+        assert hasattr(core, "KernelDecision")
+        assert hasattr(nats_client, "EventBus")
     except ImportError as e:
         pytest.skip(f"SDK not installed: {e}")
 
@@ -98,7 +99,7 @@ async def test_observation_dataclass():
         provenance="sensor.test",
         data={"test": "data"},
         confidence=0.95,
-        tags=["test"]
+        tags=["test"],
     )
 
     assert obs.trace_id == trace_id
@@ -124,7 +125,7 @@ async def test_action_proposal_dataclass():
         action={"type": "test", "value": 100},
         priority=5,
         requires_approval=False,
-        metadata={"source": "test"}
+        metadata={"source": "test"},
     )
 
     assert proposal.trace_id == trace_id
@@ -141,8 +142,8 @@ async def test_kernel_decision_dataclass():
         from activelearning.core import (
             KernelDecision,
             KernelDecisionType,
+            current_timestamp,
             generate_trace_id,
-            current_timestamp
         )
     except ImportError:
         pytest.skip("SDK not installed")
@@ -157,7 +158,7 @@ async def test_kernel_decision_dataclass():
         reason="Test approval",
         risk_score=0.15,
         issued_at=issued_at,
-        expires_at=expires_at
+        expires_at=expires_at,
     )
 
     assert decision.trace_id == trace_id
@@ -172,11 +173,7 @@ async def test_kernel_decision_dataclass():
 async def test_belief_node_dataclass():
     """Test BeliefNode dataclass."""
     try:
-        from activelearning.core import (
-            BeliefNode,
-            BeliefNodeType,
-            generate_trace_id
-        )
+        from activelearning.core import BeliefNode, BeliefNodeType, generate_trace_id
     except ImportError:
         pytest.skip("SDK not installed")
 
@@ -186,7 +183,7 @@ async def test_belief_node_dataclass():
         content="Safety is paramount",
         confidence=0.95,
         source="human_teaching",
-        metadata={"priority": "high"}
+        metadata={"priority": "high"},
     )
 
     assert node.type == BeliefNodeType.VALUE
@@ -200,11 +197,7 @@ async def test_belief_node_dataclass():
 async def test_belief_edge_dataclass():
     """Test BeliefEdge dataclass."""
     try:
-        from activelearning.core import (
-            BeliefEdge,
-            BeliefEdgeType,
-            generate_trace_id
-        )
+        from activelearning.core import BeliefEdge, BeliefEdgeType, generate_trace_id
     except ImportError:
         pytest.skip("SDK not installed")
 
@@ -217,7 +210,7 @@ async def test_belief_edge_dataclass():
         source_id=source_id,
         target_id=target_id,
         strength=0.8,
-        evidence="Observed in 50 cases"
+        evidence="Observed in 50 cases",
     )
 
     assert edge.type == BeliefEdgeType.SUPPORTS
@@ -231,8 +224,8 @@ async def test_belief_edge_dataclass():
 async def test_event_bus_wait_for_decision(nats_url: str):
     """Test EventBus wait_for_decision helper."""
     try:
-        from activelearning.nats_client import EventBus
         from activelearning.core import generate_trace_id
+        from activelearning.nats_client import EventBus
     except ImportError:
         pytest.skip("SDK not installed")
 
@@ -249,7 +242,7 @@ async def test_event_bus_wait_for_decision(nats_url: str):
                 "trace_id": trace_id,
                 "type": "ALLOW",
                 "reason": "Test",
-                "risk_score": 0.1
+                "risk_score": 0.1,
             }
             await bus.publish(f"decision.{trace_id}", decision_data)
 
@@ -280,28 +273,13 @@ async def test_observation_validation():
     trace_id = generate_trace_id()
 
     # Valid confidence
-    obs = Observation(
-        trace_id=trace_id,
-        provenance="test",
-        data={},
-        confidence=0.5
-    )
+    obs = Observation(trace_id=trace_id, provenance="test", data={}, confidence=0.5)
     assert obs.confidence == 0.5
 
     # Invalid confidence (too high)
     with pytest.raises(ValueError):
-        Observation(
-            trace_id=trace_id,
-            provenance="test",
-            data={},
-            confidence=1.5  # > 1.0
-        )
+        Observation(trace_id=trace_id, provenance="test", data={}, confidence=1.5)  # > 1.0
 
     # Invalid confidence (too low)
     with pytest.raises(ValueError):
-        Observation(
-            trace_id=trace_id,
-            provenance="test",
-            data={},
-            confidence=-0.1  # < 0.0
-        )
+        Observation(trace_id=trace_id, provenance="test", data={}, confidence=-0.1)  # < 0.0

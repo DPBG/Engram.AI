@@ -18,8 +18,7 @@ from collections import deque
 
 import numpy as np
 import sounddevice as sd
-
-from activelearning.plugins import SensorPlugin, PluginCapability, RiskClass
+from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +54,13 @@ class SpeechSensor(SensorPlugin[str]):
             maxlen=int(SAMPLE_RATE * buffer_seconds / 512) + 1
         )
 
-        self.add_capability(PluginCapability(
-            name="speech_recognition",
-            description="Transcribes speech to text via Whisper",
-            parameters={"model": model_size, "language": "auto"},
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="speech_recognition",
+                description="Transcribes speech to text via Whisper",
+                parameters={"model": model_size, "language": "auto"},
+            )
+        )
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         """PortAudio callback — buffer incoming audio."""
@@ -71,6 +72,7 @@ class SpeechSensor(SensorPlugin[str]):
         """Load Whisper model and start audio capture."""
         try:
             from faster_whisper import WhisperModel
+
             self._model = WhisperModel(
                 self._model_size,
                 device="cpu",
@@ -79,8 +81,7 @@ class SpeechSensor(SensorPlugin[str]):
             logger.info(f"Whisper model '{self._model_size}' loaded")
         except ImportError:
             logger.error(
-                "faster-whisper not installed. "
-                "Install with: pip install sensory-gateway[stt]"
+                "faster-whisper not installed. " "Install with: pip install sensory-gateway[stt]"
             )
             raise
 
@@ -129,7 +130,7 @@ class SpeechSensor(SensorPlugin[str]):
         audio = np.concatenate(chunks)
 
         # Skip if silence (no point running Whisper on nothing)
-        rms = np.sqrt(np.mean(audio ** 2))
+        rms = np.sqrt(np.mean(audio**2))
         if rms < SILENCE_THRESHOLD:
             return ""
 

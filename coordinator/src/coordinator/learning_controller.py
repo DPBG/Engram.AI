@@ -9,18 +9,20 @@ Pipeline phases:
 5. Save - Store learned task
 """
 
-import asyncio
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
 from enum import Enum
+from typing import Any
+
+from activelearning import current_timestamp, generate_trace_id
 
 logger = logging.getLogger(__name__)
 
 
 class LearningPhase(Enum):
     """Phases of the demonstration learning pipeline."""
+
     IDLE = "idle"
     WATCH = "watch"
     IMITATE = "imitate"
@@ -48,8 +50,8 @@ class LearningController:
         self.tasks_root = tasks_root
 
         self._current_phase = LearningPhase.IDLE
-        self._current_task: Optional[Dict] = None
-        self._observation_buffer: List[Dict] = []
+        self._current_task: dict | None = None
+        self._observation_buffer: list[dict] = []
 
     async def start_demonstration(self, task_name: str, description: str) -> str:
         """
@@ -63,7 +65,9 @@ class LearningController:
             trace_id for tracking
         """
         import uuid
+
         trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
 
         logger.info(f"Starting demonstration learning: {task_name}")
 
@@ -86,11 +90,13 @@ class LearningController:
         # Notify system
         await self.nats_client.publish(
             "learning.started",
-            json.dumps({
-                "trace_id": trace_id,
-                "task_name": task_name,
-                "phase": self._current_phase.value,
-            }).encode(),
+            json.dumps(
+                {
+                    "trace_id": trace_id,
+                    "task_name": task_name,
+                    "phase": self._current_phase.value,
+                }
+            ).encode(),
         )
 
         return trace_id
@@ -98,16 +104,12 @@ class LearningController:
     async def _activate_learning_sensors(self) -> None:
         """Activate sensors for learning."""
         # Activate camera if available
-        camera = self.sensor_manager.get_primary_sensor(
-            self.sensor_manager.SensorType.CAMERA
-        )
+        camera = self.sensor_manager.get_primary_sensor(self.sensor_manager.SensorType.CAMERA)
         if camera:
             self.sensor_manager.activate_sensor(camera.sensor_id)
 
         # Activate microphone if available
-        mic = self.sensor_manager.get_primary_sensor(
-            self.sensor_manager.SensorType.MICROPHONE
-        )
+        mic = self.sensor_manager.get_primary_sensor(self.sensor_manager.SensorType.MICROPHONE)
         if mic:
             self.sensor_manager.activate_sensor(mic.sensor_id)
 
@@ -140,9 +142,11 @@ class LearningController:
 
         self._observation_buffer.append(observation)
 
-        logger.debug(f"Recorded observation from {sensor_id} (buffer size: {len(self._observation_buffer)})")
+        logger.debug(
+            f"Recorded observation from {sensor_id} (buffer size: {len(self._observation_buffer)})"
+        )
 
-    async def finish_demonstration(self) -> Dict:
+    async def finish_demonstration(self) -> dict:
         """
         Finish the demonstration and process observations.
 
@@ -184,7 +188,7 @@ class LearningController:
             "trace_id": self._current_task["trace_id"],
         }
 
-    async def _process_observations(self) -> Dict:
+    async def _process_observations(self) -> dict:
         """
         Process observations to extract task parameters and trajectory.
 
@@ -228,7 +232,7 @@ class LearningController:
 
         return task_data
 
-    async def _save_task(self, task_data: Dict) -> str:
+    async def _save_task(self, task_data: dict) -> str:
         """
         Save learned task to filesystem and vector DB.
 
@@ -253,7 +257,7 @@ class LearningController:
         metadata = {
             "task_name": task_name,
             "description": task_data["description"],
-            "learned_at": int(__import__('time').time() * 1000),
+            "learned_at": current_timestamp(),
             "observation_count": len(self._observation_buffer),
             "sensor_fusion": task_data["sensor_fusion"],
             "success_rate": 0.0,  # Will be updated after executions
@@ -274,19 +278,21 @@ class LearningController:
         # Publish knowledge gap for Meta-Programmer to generate proper implementation
         await self.nats_client.publish(
             "knowledge.gap",
-            json.dumps({
-                "trace_id": self._current_task["trace_id"],
-                "description": f"Implement learned task: {task_name}",
-                "context": {
-                    "task_data": task_data,
-                    "task_path": task_path,
-                },
-            }).encode(),
+            json.dumps(
+                {
+                    "trace_id": self._current_task["trace_id"],
+                    "description": f"Implement learned task: {task_name}",
+                    "context": {
+                        "task_data": task_data,
+                        "task_path": task_path,
+                    },
+                }
+            ).encode(),
         )
 
         return task_name
 
-    def _generate_task_placeholder(self, task_data: Dict) -> str:
+    def _generate_task_placeholder(self, task_data: dict) -> str:
         """Generate placeholder task.py code."""
         return f'''"""
 {task_data["description"]}

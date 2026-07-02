@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from neuromorphic.config import NeuromorphicConfig
-from neuromorphic.decoding import SpikeDecoder, PredictionDecoder, PopulationVectorDecoder
+from neuromorphic.decoding import PopulationVectorDecoder, PredictionDecoder, SpikeDecoder
 from neuromorphic.mujoco_body import CHANNEL_ACTUATORS
 from neuromorphic.regions import MotorCortex, PredictiveLayer
 
@@ -163,6 +163,7 @@ class TestPredictionDecoder:
 
 # ── Population Vector Decoding ──────────────────────────────────────
 
+
 @pytest.fixture
 def pop_vec_config():
     """Config with population vector enabled and enough neurons for groups."""
@@ -233,14 +234,16 @@ class TestPopulationVectorDecoder:
         loc_sr = pop_vec_motor_cortex.get_subrange("locomotion")
         n_actuators = len(CHANNEL_ACTUATORS["locomotion"])
         group_size = loc_sr.size // n_actuators
-        history[:, loc_sr.start:loc_sr.start + group_size] = 1.0
+        history[:, loc_sr.start : loc_sr.start + group_size] = 1.0
         result = decoder.decode(pop_vec_motor_cortex, history, "locomotion")
         first_act = CHANNEL_ACTUATORS["locomotion"][0]
         last_act = CHANNEL_ACTUATORS["locomotion"][-1]
         assert result[first_act] > 0.5
         assert result[last_act] < 0.01
 
-    def test_spike_decoder_includes_actuator_intensities(self, pop_vec_config, pop_vec_motor_cortex):
+    def test_spike_decoder_includes_actuator_intensities(
+        self, pop_vec_config, pop_vec_motor_cortex
+    ):
         """SpikeDecoder includes actuator_intensities when population vector is on."""
         decoder = SpikeDecoder(pop_vec_config)
         for _ in range(25):

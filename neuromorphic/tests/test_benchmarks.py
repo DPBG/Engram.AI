@@ -1,22 +1,23 @@
 """Tests for the benchmarking framework (benchmarks.py).
 
-Verifies all 4 benchmarks produce valid results on a small network.
+Verifies all 5 benchmarks produce valid results on a small network.
 """
 
 import numpy as np
 import pytest
 
+from neuromorphic.benchmarks import (
+    AssociationStrengthBenchmark,
+    BenchmarkSuite,
+    ConceptSeparabilityBenchmark,
+    CrossModalRecallBenchmark,
+    EnergyEfficiencyBenchmark,
+    NoveltyDetectionBenchmark,
+    _to_native,
+    generate_test_patterns,
+)
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
-from neuromorphic.benchmarks import (
-    BenchmarkSuite,
-    CrossModalRecallBenchmark,
-    NoveltyDetectionBenchmark,
-    AssociationStrengthBenchmark,
-    EnergyEfficiencyBenchmark,
-    generate_test_patterns,
-    _to_native,
-)
 
 
 @pytest.fixture
@@ -91,8 +92,9 @@ class TestNoveltyDetection:
         rng = np.random.default_rng(999)
         novel = generate_test_patterns(1, rng)[0]
         bench = NoveltyDetectionBenchmark(small_network)
-        result = bench.run(patterns[0], novel, familiarization_reps=2,
-                          steps_per_rep=4, test_steps=3)
+        result = bench.run(
+            patterns[0], novel, familiarization_reps=2, steps_per_rep=4, test_steps=3
+        )
         assert "familiar_pred_error" in result
         assert "novel_pred_error" in result
         assert "discrimination_ratio" in result
@@ -101,8 +103,9 @@ class TestNoveltyDetection:
     def test_pred_error_non_negative(self, small_network, patterns):
         novel = generate_test_patterns(1, np.random.default_rng(999))[0]
         bench = NoveltyDetectionBenchmark(small_network)
-        result = bench.run(patterns[0], novel, familiarization_reps=2,
-                          steps_per_rep=4, test_steps=3)
+        result = bench.run(
+            patterns[0], novel, familiarization_reps=2, steps_per_rep=4, test_steps=3
+        )
         assert result["familiar_pred_error"] >= 0.0
         assert result["novel_pred_error"] >= 0.0
 
@@ -168,5 +171,125 @@ class TestBenchmarkSuite:
         path = suite.save_results(results, str(tmp_path))
         assert path.exists()
         import json
+
         data = json.loads(path.read_text())
         assert "cross_modal_recall" in data
+
+    def test_run_all_includes_concept_separability(self, small_network):
+        """run_all() always includes concept_separability key (error or scores)."""
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=2, training_reps=1, steps_per_pattern=4)
+        assert "concept_separability" in results
+        cs = results["concept_separability"]
+        assert "silhouette_score" in cs
+        assert "linear_probe_accuracy" in cs
+
+
+@pytest.fixture
+def network_with_concept():
+    """Small network with an active concept layer for separability tests."""
+    cfg = NeuromorphicConfig.from_env()
+    cfg.populations.brainstem = 50
+    cfg.populations.reflex_arc = 30
+    cfg.populations.sensory_cortex = 200
+    cfg.populations.motor_cortex = 100
+    cfg.populations.cerebellum = 50
+    cfg.populations.association_cortex = 150
+    cfg.populations.predictive_layer = 80
+    cfg.populations.working_memory = 40
+    cfg.populations.feature_layer = 0
+    cfg.populations.concept_layer = 100
+    cfg.populations.pattern_separator = 0
+    cfg.populations.meta_controller = 0
+    cfg.concept_layer.k_winners = 10  # 10% sparsity for meaningful k-WTA
+    return NeuromorphicNetwork(cfg)
+
+
+class TestConceptSeparabilityBenchmark:
+
+    def test_no_concept_layer_returns_error(self, small_network, patterns):
+        bench = ConceptSeparabilityBenchmark(small_network)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" in result
+        assert result["silhouette_score"] == 0.0
+        assert result["linear_probe_accuracy"] == 0.0
+
+    def test_produces_all_metrics(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        for key in (
+            "silhouette_score",
+            "linear_probe_accuracy",
+            "mean_intra_class_distance",
+            "mean_inter_class_distance",
+            "separation_ratio",
+            "n_patterns",
+            "n_samples",
+            "concept_neurons",
+            "top_neurons_per_pattern",
+        ):
+            assert key in result, f"missing key: {key}"
+
+    def test_silhouette_in_range(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        assert -1.0 <= result["silhouette_score"] <= 1.0
+
+    def test_accuracy_in_range(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        assert 0.0 <= result["linear_probe_accuracy"] <= 1.0
+
+    def test_distances_non_negative(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        assert result["mean_intra_class_distance"] >= 0.0
+        assert result["mean_inter_class_distance"] >= 0.0
+
+    def test_separation_ratio_non_negative(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        assert result["separation_ratio"] >= 0.0
+
+    def test_sample_count_matches(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        probe_reps = 2
+        result = bench.run(patterns, training_reps=1, probe_reps=probe_reps, steps_per_rep=3)
+        assert "error" not in result
+        assert result["n_samples"] == len(patterns) * probe_reps
+        assert result["n_patterns"] == len(patterns)
+
+    def test_top_neurons_per_pattern(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        top = result["top_neurons_per_pattern"]
+        assert len(top) == len(patterns)
+        for row in top:
+            assert len(row) == 5
+            assert all(isinstance(n, int) for n in row)
+
+    def test_concept_neuron_count(self, network_with_concept, patterns):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        result = bench.run(patterns, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        assert result["concept_neurons"] == 100  # matches fixture population
+
+    def test_insufficient_patterns_returns_error(self, network_with_concept):
+        bench = ConceptSeparabilityBenchmark(network_with_concept)
+        # Only 1 pattern — can't compute inter-class distance
+        single = generate_test_patterns(1, np.random.default_rng(0))
+        result = bench.run(single, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" in result
+
+    def test_suite_summary_includes_concept_separability(self, network_with_concept):
+        suite = BenchmarkSuite(network_with_concept)
+        results = suite.run_all(n_patterns=3, training_reps=1, steps_per_pattern=4)
+        text = suite.summary(results)
+        assert "Concept Separability" in text
+        assert "Silhouette score" in text

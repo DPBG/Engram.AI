@@ -6,21 +6,20 @@ and manages the execution flow through the Kernel.
 """
 
 import asyncio
-import json
-from dataclasses import dataclass, field, asdict
-from typing import Any, Optional
-import uuid
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
-from activelearning import BaseService
+from activelearning import BaseService, generate_trace_id
 from activelearning.nats_client import serialize_message
 from nats.aio.msg import Msg
 
-from planner.scheduler import Scheduler, SchedulerMode, PendingAction
+from planner.scheduler import PendingAction, Scheduler, SchedulerMode
 
 
 @dataclass
 class ActionProposal:
     """A proposed action."""
+
     trace_id: str
     provenance: str
     action: dict[str, Any]
@@ -32,10 +31,11 @@ class ActionProposal:
 @dataclass
 class KernelDecision:
     """A decision from the Kernel."""
+
     trace_id: str
     type: str  # ALLOW, TRANSFORM, DENY, DEFER
-    reason: Optional[str] = None
-    transformations: Optional[list[dict]] = None
+    reason: str | None = None
+    transformations: list[dict] | None = None
     risk_score: float = 0.0
 
 
@@ -55,7 +55,7 @@ class PlannerService(BaseService):
         super().__init__("planner", use_database=False, use_event_bus=True)
         self._scheduler = Scheduler()
         self._pending_decisions: dict[str, asyncio.Future] = {}
-        self._process_task: Optional[asyncio.Task] = None
+        self._process_task: asyncio.Task | None = None
 
     async def _setup(self) -> None:
         """Service-specific setup."""
@@ -70,7 +70,9 @@ class PlannerService(BaseService):
 
         # Subscribe to status requests (request-reply)
         await self.event_bus.subscribe(
-            "planner.status", self._handle_status, is_request_handler=True,
+            "planner.status",
+            self._handle_status,
+            is_request_handler=True,
         )
 
         # Start action processor
@@ -96,7 +98,9 @@ class PlannerService(BaseService):
         try:
             # data is already deserialized by EventBus
             subject = data.get("subject", "observation.unknown")
-            self.logger.debug(f"Received observation on {subject}: {data.get('trace_id', 'unknown')}")
+            self.logger.debug(
+                f"Received observation on {subject}: {data.get('trace_id', 'unknown')}"
+            )
 
             # Generate action proposal from observation
             proposal = await self._generate_proposal(data, subject)
@@ -117,13 +121,13 @@ class PlannerService(BaseService):
         self,
         observation: dict[str, Any],
         subject: str,
-    ) -> Optional[ActionProposal]:
+    ) -> ActionProposal | None:
         """
         Generate an action proposal from an observation.
 
         This is a placeholder that should be extended with actual planning logic.
         """
-        trace_id = observation.get("trace_id", str(uuid.uuid4()))
+        trace_id = observation.get("trace_id", generate_trace_id())
         provenance = observation.get("provenance", subject)
         data = observation.get("data", {})
 
@@ -232,7 +236,7 @@ class PlannerService(BaseService):
                     try:
                         decision = await asyncio.wait_for(decision_future, timeout=30.0)
                         await self._handle_kernel_decision(decision, proposal)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.warning(f"Kernel decision timeout for {trace_id}")
                         self._pending_decisions.pop(trace_id, None)
 

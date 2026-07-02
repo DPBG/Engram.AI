@@ -18,8 +18,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-
-from activelearning.plugins import SensorPlugin, PluginCapability, RiskClass
+from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -68,16 +67,19 @@ class VideoFileSensor(SensorPlugin[list]):
         if cnn:
             try:
                 from sensors.cnn_preprocessor import get_shared_preprocessor
+
                 self._cnn = get_shared_preprocessor()
                 logger.info(f"CNN preprocessor enabled ({self._cnn.feature_dim} features)")
             except Exception as e:
                 logger.warning(f"CNN preprocessing unavailable, using raw pixels: {e}")
 
-        self.add_capability(PluginCapability(
-            name="video_file_capture",
-            description="Reads frames from a video file",
-            parameters={"resolution": "64x64", "format": "grayscale_float32"},
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="video_file_capture",
+                description="Reads frames from a video file",
+                parameters={"resolution": "64x64", "format": "grayscale_float32"},
+            )
+        )
 
     @property
     def loop_count(self) -> int:
@@ -118,9 +120,7 @@ class VideoFileSensor(SensorPlugin[list]):
 
         # CAP_PROP_N_THREADS=1: limit ffmpeg decoder threads per capture.
         # Without this, each capture spawns ~79 threads on a 64-core machine.
-        self._cap = cv2.VideoCapture(
-            self._filepath, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, 1]
-        )
+        self._cap = cv2.VideoCapture(self._filepath, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, 1])
         if not self._cap.isOpened():
             self._cap = None
             raise RuntimeError(f"Cannot open video file: {self._filepath}")

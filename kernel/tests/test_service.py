@@ -53,9 +53,7 @@ def test_code_proposal_publishes_fail_safe_deny_on_internal_error():
     # on the code-decision subject — instead of silently swallowing the error.
     svc = _make_service()
 
-    asyncio.run(
-        svc._handle_code_proposal({"trace_id": "t1", "source": "meta-programmer"})
-    )
+    asyncio.run(svc._handle_code_proposal({"trace_id": "t1", "source": "meta-programmer"}))
 
     assert len(svc.event_bus.published) == 1, "no decision published — fail-open"
     subject, payload = svc.event_bus.published[0]

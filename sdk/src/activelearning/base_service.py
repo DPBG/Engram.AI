@@ -8,7 +8,6 @@ signal handling, and service lifecycle management.
 import asyncio
 import logging
 import signal
-from typing import Optional
 
 from activelearning.config import ServiceConfig
 from activelearning.database import Database, get_database
@@ -73,8 +72,8 @@ class BaseService:
         self.logger = logging.getLogger(service_name)
 
         # Infrastructure components
-        self.event_bus: Optional[EventBus] = None
-        self.database: Optional[Database] = None
+        self.event_bus: EventBus | None = None
+        self.database: Database | None = None
         self._shutdown_event = asyncio.Event()
 
     async def start(self) -> None:

@@ -13,25 +13,26 @@ mirrors the real SDK's surface: ``docker.from_env``, ``docker.errors.*`` and
 import asyncio
 import os
 import sys
+import threading
 import types
 
 # ── fake `docker` SDK ────────────────────────────────────────────────────────
 
 
-class _ImageNotFound(Exception):
+class _ImageNotFoundError(Exception):
     pass
 
 
-class _DockerException(Exception):
+class _DockerError(Exception):
     pass
 
 
 def _install_fake_docker() -> types.ModuleType:
     docker = types.ModuleType("docker")
     errors = types.ModuleType("docker.errors")
-    errors.ImageNotFound = _ImageNotFound
-    errors.DockerException = _DockerException
-    errors.APIError = _DockerException
+    errors.ImageNotFound = _ImageNotFoundError
+    errors.DockerException = _DockerError
+    errors.APIError = _DockerError
     models = types.ModuleType("docker.models")
     containers = types.ModuleType("docker.models.containers")
 
@@ -82,7 +83,7 @@ class _FakeImages:
 
     def get(self, _image):
         if not self._found:
-            raise _ImageNotFound("no such image")
+            raise _ImageNotFoundError("no such image")
         return object()
 
 
@@ -107,7 +108,7 @@ class _FakeContainers:
 
     def run(self, **_kwargs):
         if self._spawn_error:
-            raise _DockerException("daemon refused spawn")
+            raise _DockerError("daemon refused spawn")
         return _FakeContainer(self._status_code)
 
 
@@ -119,7 +120,7 @@ class _FakeDockerClient:
 
     def ping(self):
         if not self._ping_ok:
-            raise _DockerException("daemon unreachable")
+            raise _DockerError("daemon unreachable")
         return True
 
 
@@ -173,6 +174,111 @@ def test_passing_tests_succeed():
     result = _run(mgr.run_tests("/staging/x/mod.py"))
     assert result["success"] is True
     assert result["sandbox_unavailable"] is False
+
+
+def test_container_timeout_is_test_failure():
+    """A container that hangs times out and is killed.
+
+    This is a TEST failure (the generated code is broken), NOT sandbox
+    unavailability — the sandbox itself launched successfully and enforced
+    the kill.  sandbox_unavailable must be False so the caller knows
+    containment ran and the code itself is the problem.
+    """
+    killed = threading.Event()
+
+    class _BlockingContainer(_FakeContainer):
+        def __init__(self):
+            super().__init__(0)
+
+        def wait(self):
+            killed.wait(timeout=5)  # unblocks when kill() is called
+            return {"StatusCode": 137}
+
+        def kill(self):
+            killed.set()
+
+        def logs(self):
+            return b""
+
+    class _BlockingContainers:
+        def run(self, **_kwargs):
+            return _BlockingContainer()
+
+    mgr = _manager(_FakeDockerClient())
+    mgr.docker_client.containers = _BlockingContainers()
+    mgr.timeout = 0.05  # trigger quickly
+
+    result = _run(mgr.run_tests("/staging/x/mod.py"))
+    assert result["success"] is False
+    assert result["sandbox_unavailable"] is False, (
+        "timeout is a test failure, not containment unavailability"
+    )
+    assert "timeout" in result["error"].lower()
+
+
+def test_oom_killed_exit_137_is_test_failure():
+    """OOM-killed container exits 137.
+
+    The sandbox resource limit worked correctly.  This is a test failure
+    (the generated code allocated too much memory), not sandbox
+    unavailability.
+    """
+    mgr = _manager(_FakeDockerClient(status_code=137))
+    result = _run(mgr.run_tests("/staging/x/mod.py"))
+    assert result["success"] is False
+    assert result["sandbox_unavailable"] is False, (
+        "OOM exit is a test failure, not containment unavailability"
+    )
+
+
+def test_unexpected_exception_fails_closed():
+    """An unexpected non-Docker exception in run_tests must fail closed.
+
+    If an exception we did not anticipate escapes the inner try blocks we
+    cannot confirm containment ran, so we must treat it as sandbox
+    unavailability (never deploy).
+    """
+    class _ExplodingContainers:
+        def run(self, **_kwargs):
+            raise RuntimeError("unexpected internal error")
+
+    mgr = _manager(_FakeDockerClient())
+    mgr.docker_client.containers = _ExplodingContainers()
+    result = _run(mgr.run_tests("/staging/x/mod.py"))
+    assert result["sandbox_unavailable"] is True, (
+        "unexpected exception must fail closed"
+    )
+    assert result["success"] is False
+
+
+def test_cleanup_tolerates_none_client():
+    """cleanup_old_containers must not crash when docker_client is None.
+
+    Docker init can fail at construction; callers may still invoke cleanup
+    in a shutdown path.
+    """
+    mgr = _manager(None)
+    mgr.cleanup_old_containers()  # must not raise
+
+
+def test_all_unavailable_paths_carry_remediation():
+    """Every sandbox-unavailable result must contain SANDBOX_REMEDIATION.
+
+    Operators need to see the fix instructions regardless of which failure
+    mode triggered the block.
+    """
+    cases = [
+        _manager(None),                                            # no client
+        _manager(_FakeDockerClient(ping_ok=False)),                # daemon down
+        _manager(_FakeDockerClient(image_found=False)),            # missing image
+        _manager(_FakeDockerClient(spawn_error=True)),             # spawn rejected
+    ]
+    for mgr in cases:
+        result = _run(mgr.run_tests("/staging/x/mod.py"))
+        assert result["sandbox_unavailable"] is True
+        assert SANDBOX_REMEDIATION in result["error"], (
+            f"SANDBOX_REMEDIATION missing for: {result['error'][:80]}"
+        )
 
 
 # ── service deploy path: unavailable sandbox blocks deploy ───────────────────
@@ -238,6 +344,7 @@ def _build_service():
     svc = MetaProgrammerService.__new__(MetaProgrammerService)
     svc.logger = _Logger()
     svc._gaps_processed = 0
+    svc._gaps_m1_blocked = 0
     svc._code_generated = 0
     svc._tests_passed = 0
     svc._tests_failed = 0
@@ -250,7 +357,9 @@ def _build_service():
     return svc
 
 
-def test_unavailable_sandbox_blocks_deploy():
+def test_unavailable_sandbox_blocks_deploy(monkeypatch):
+    monkeypatch.setenv("ENGRAM_DECISION_BUS_SIGNING_ENABLED", "1")
+    monkeypatch.setenv("ENGRAM_SANDBOX_FAIL_CLOSED_ENABLED", "1")
     svc = _build_service()
 
     deployed = []

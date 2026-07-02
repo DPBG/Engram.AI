@@ -40,15 +40,12 @@ class CNNPreprocessor:
         try:
             import onnxruntime as ort
         except ImportError:
-            raise ImportError(
-                "onnxruntime not installed. Run: pip install sensory-gateway[cnn]"
-            )
+            raise ImportError("onnxruntime not installed. Run: pip install sensory-gateway[cnn]")
 
         path = Path(model_path) if model_path else _MODEL_PATH
         if not path.exists():
             raise FileNotFoundError(
-                f"ONNX model not found at {path}. "
-                f"Run: python scripts/export_mobilenet.py"
+                f"ONNX model not found at {path}. " f"Run: python scripts/export_mobilenet.py"
             )
 
         # Limit ONNX internal thread pool to avoid CPU thrashing.
@@ -77,10 +74,7 @@ class CNNPreprocessor:
             self._feature_dim = out_shape[-1]
         else:
             self._feature_dim = 576
-        logger.info(
-            f"CNN preprocessor loaded: {path.name} "
-            f"({self._feature_dim} features)"
-        )
+        logger.info(f"CNN preprocessor loaded: {path.name} " f"({self._feature_dim} features)")
 
     @property
     def feature_dim(self) -> int:
@@ -110,7 +104,7 @@ class CNNPreprocessor:
             logger.warning(f"Unexpected ndim={gray_64x64.ndim}, flattening")
             img = gray_64x64.flatten()[:4096]
             padded = np.zeros(4096, dtype=np.float32)
-            padded[:len(img)] = img
+            padded[: len(img)] = img
             img = padded.reshape(64, 64)
 
         # Sanitize NaN/inf

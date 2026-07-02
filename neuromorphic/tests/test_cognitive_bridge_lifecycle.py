@@ -16,7 +16,7 @@ def _require_sdk():
 
 @pytest.mark.asyncio
 async def test_setup_subscribes_to_cognitive_subjects() -> None:
-    Subjects = _require_sdk()
+    Subjects = _require_sdk()  # noqa: N806
     from neuromorphic.cognitive_bridge import CognitiveBridgeService
 
     bridge = CognitiveBridgeService()
@@ -66,7 +66,7 @@ async def test_cleanup_idempotent_when_llm_uninitialized() -> None:
 
 def test_invalid_cognitive_execute_payload_fails_validation() -> None:
     """Wire-model gate rejects structurally invalid payloads before handlers run."""
-    Subjects = _require_sdk()
+    Subjects = _require_sdk()  # noqa: N806
     from activelearning.messages import MessageValidationError, validate_payload
 
     with pytest.raises(MessageValidationError):
@@ -79,8 +79,9 @@ def test_invalid_cognitive_execute_payload_fails_validation() -> None:
 @pytest.mark.asyncio
 async def test_invalid_cognitive_payload_does_not_reach_handle_query() -> None:
     """EventBus validates before invoking the registered handler."""
-    Subjects = _require_sdk()
+    Subjects = _require_sdk()  # noqa: N806
     from activelearning.messages import MessageValidationError, validate_payload
+
     from neuromorphic.cognitive_bridge import CognitiveBridgeService
 
     bridge = CognitiveBridgeService()

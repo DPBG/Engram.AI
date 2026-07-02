@@ -5,7 +5,6 @@ These mocks simulate hardware actuators without requiring physical devices.
 """
 
 import asyncio
-from typing import Optional
 
 
 class MockServo:
@@ -65,7 +64,7 @@ class MockLED:
     Simulates controlling an LED (on/off, brightness, RGB color).
     """
 
-    def __init__(self, pin: Optional[int] = None):
+    def __init__(self, pin: int | None = None):
         self.pin = pin
         self._on = False
         self._brightness = 1.0
