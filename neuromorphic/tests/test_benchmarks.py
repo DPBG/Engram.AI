@@ -1,6 +1,6 @@
 """Tests for the benchmarking framework (benchmarks.py).
 
-Verifies all 5 benchmarks produce valid results on a small network.
+Verifies all 6 benchmarks produce valid results on a small network.
 """
 
 import numpy as np
@@ -10,6 +10,7 @@ from neuromorphic.benchmarks import (
     AssociationStrengthBenchmark,
     BenchmarkSuite,
     ConceptSeparabilityBenchmark,
+    CrossModalBindingAccuracyBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
     NoveltyDetectionBenchmark,
@@ -153,6 +154,8 @@ class TestBenchmarkSuite:
         assert "novelty_detection" in results
         assert "association_strength" in results
         assert "energy_efficiency" in results
+        assert "concept_separability" in results
+        assert "cross_modal_binding_accuracy" in results
         assert "timestamp" in results
         assert results["total_neurons"] > 0
 
@@ -164,6 +167,18 @@ class TestBenchmarkSuite:
         assert "Novelty Detection" in text
         assert "Association Strength" in text
         assert "Energy Efficiency" in text
+        assert "Concept Separability" in text
+        assert "Cross-Modal Binding Accuracy" in text
+
+
+class TestCrossModalBindingAccuracyInSuite:
+    def test_run_all_includes_binding_accuracy(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=2, training_reps=1, steps_per_pattern=4)
+        ba = results["cross_modal_binding_accuracy"]
+        assert "precision" in ba
+        assert "recall" in ba
+        assert ba["pairs_tested"] == 2
 
     def test_save_results(self, small_network, tmp_path):
         suite = BenchmarkSuite(small_network)
@@ -183,6 +198,12 @@ class TestBenchmarkSuite:
         cs = results["concept_separability"]
         assert "silhouette_score" in cs
         assert "linear_probe_accuracy" in cs
+
+    def test_run_all_with_single_pattern(self, small_network):
+        """Binding benchmark clamps n_pairs to 2 when n_patterns=1."""
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=1, training_reps=1, steps_per_pattern=4)
+        assert results["cross_modal_binding_accuracy"]["pairs_tested"] == 2
 
 
 @pytest.fixture

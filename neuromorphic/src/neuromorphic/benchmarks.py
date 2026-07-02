@@ -1,12 +1,13 @@
 """
 Structured benchmarking framework for investor-ready metrics.
 
-Provides 5 benchmark tests that produce quantitative proof the brain learns:
+Provides 6 benchmark tests that produce quantitative proof the brain learns:
 1. CrossModalRecall — inject visual, measure auditory cortex activation (and vice versa)
 2. NoveltyDetection — present known vs unknown stimuli, measure response difference
 3. AssociationStrength — measure weight changes after paired multi-modal training
 4. EnergyEfficiency — compute energy per learned association vs baseline
 5. ConceptSeparability — silhouette score + linear-probe accuracy over concept-layer activations
+6. CrossModalBindingAccuracy — precision/recall of bound modality pairs vs ground truth
 
 Usage:
     from neuromorphic.benchmarks import BenchmarkSuite
@@ -28,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-
+from neuromorphic.binding_fixtures import generate_correlated_stimulus_fixtures
 from neuromorphic.cross_modal_probe import CrossModalProbe
 
 if TYPE_CHECKING:
@@ -500,10 +501,170 @@ class ConceptSeparabilityBenchmark:
 
 
 # ---------------------------------------------------------------------------
+# Benchmark 6: Cross-Modal Binding Accuracy
+# ---------------------------------------------------------------------------
+def _pair_coupling_score(
+    net: NeuromorphicNetwork,
+    visual: list[float] | np.ndarray,
+    auditory: list[float] | np.ndarray,
+    probe: CrossModalProbe,
+) -> float:
+    """Weight-based coupling between a visual and auditory pattern."""
+    net.inject_multimodal({
+        "sensor.videofile.bench": visual,
+        "sensor.audiofile.bench": auditory,
+    })
+    vis_range = net.allocator.current_ranges.get("visual", (0, 0))
+    aud_range = net.allocator.current_ranges.get("auditory", (0, 0))
+    if vis_range[1] <= vis_range[0] or aud_range[1] <= aud_range[0]:
+        return 0.0
+
+    vis_current = net.encoder.encode(
+        net.sensory, visual, "sensor.videofile.bench", net.allocator,
+    )
+    aud_current = net.encoder.encode(
+        net.sensory, auditory, "sensor.audiofile.bench", net.allocator,
+    )
+    vis_mask = vis_current[vis_range[0]:vis_range[1]]
+    aud_mask = aud_current[aud_range[0]:aud_range[1]]
+    if vis_mask.sum() > 0:
+        vis_mask = vis_mask / vis_mask.sum()
+    if aud_mask.sum() > 0:
+        aud_mask = aud_mask / aud_mask.sum()
+
+    sa = net.synapses.get("sensory_association")
+    if sa is None or sa.nnz == 0:
+        return 0.0
+
+    v2a_per = np.asarray(sa.weights[:, vis_range[0]:vis_range[1]] @ vis_mask).ravel()
+    a2v_per = np.asarray(sa.weights[:, aud_range[0]:aud_range[1]] @ aud_mask).ravel()
+    inputs = probe._extract_inputs(net)
+    if inputs is None:
+        return 0.0
+    probe.probe(inputs)
+
+    v2a = 0.0
+    if len(probe._auditory_assoc_idx) > 0:
+        v2a = float(v2a_per[probe._auditory_assoc_idx].mean())
+    a2v = 0.0
+    if len(probe._visual_assoc_idx) > 0:
+        a2v = float(a2v_per[probe._visual_assoc_idx].mean())
+    nonzero = (v2a > 0) + (a2v > 0)
+    return (v2a + a2v) / nonzero if nonzero else 0.0
+
+
+def _binding_precision_recall(
+    correlated_pairs: list[dict[str, Any]],
+    coupling_matrix: list[list[float]],
+    detection_threshold: float = 1e-6,
+) -> dict[str, float]:
+    """Compute precision/recall for top-1 pair binding predictions."""
+    n = len(correlated_pairs)
+    tp = fp = fn = 0
+    for i in range(n):
+        scores = coupling_matrix[i]
+        pred_j = int(np.argmax(scores))
+        best_score = scores[pred_j]
+        if best_score < detection_threshold:
+            fn += 1
+            continue
+        if pred_j == i:
+            tp += 1
+        else:
+            fp += 1
+            fn += 1
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (2.0 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "true_positives": tp,
+        "false_positives": fp,
+        "false_negatives": fn,
+    }
+
+
+class CrossModalBindingAccuracyBenchmark:
+    """Measure binding accuracy against ground-truth correlated stimulus pairs."""
+
+    def __init__(self, net: NeuromorphicNetwork) -> None:
+        self._net = net
+        self._probe = CrossModalProbe()
+
+    def run(
+        self,
+        n_pairs: int = 4,
+        training_reps: int = 30,
+        steps_per_pair: int = 25,
+        seed: int = 42,
+    ) -> dict[str, Any]:
+        net, probe = self._net, self._probe
+        n_pairs = max(2, n_pairs)
+        fixtures = generate_correlated_stimulus_fixtures(n_pairs, seed=seed)
+        correlated = fixtures["correlated_pairs"]
+        decoys = fixtures["decoy_pairs"]
+
+        pre = probe.probe_network(net).to_dict()
+        for _ in range(training_reps):
+            for pair in correlated:
+                _inject_multi_step(net, pair, steps_per_pair)
+        post = probe.probe_network(net).to_dict()
+
+        n = len(correlated)
+        raw_coupling_matrix: list[list[float]] = []
+        coupling_matrix: list[list[float]] = []
+        matched_scores: list[float] = []
+        decoy_scores: list[float] = []
+        for i, pair in enumerate(correlated):
+            row = [
+                _pair_coupling_score(net, pair["visual"], correlated[j]["auditory"], probe)
+                for j in range(n)
+            ]
+            raw_coupling_matrix.append(row)
+            coupling_matrix.append([round(s, 8) for s in row])
+            matched_scores.append(row[i])
+            for j, decoy in enumerate(decoys):
+                if decoy["visual_pair_id"] == pair["pair_id"]:
+                    decoy_scores.append(
+                        _pair_coupling_score(net, decoy["visual"], decoy["auditory"], probe),
+                    )
+
+        pr = _binding_precision_recall(correlated, raw_coupling_matrix)
+        matched_mean = float(np.mean(matched_scores)) if matched_scores else 0.0
+        decoy_mean = float(np.mean(decoy_scores)) if decoy_scores else 0.0
+        ratio = matched_mean / (decoy_mean + 1e-9)
+
+        return {
+            "precision": pr["precision"],
+            "recall": pr["recall"],
+            "f1": pr["f1"],
+            "true_positives": pr["true_positives"],
+            "false_positives": pr["false_positives"],
+            "false_negatives": pr["false_negatives"],
+            "binding_strength_before": pre.get("binding_strength", 0.0),
+            "binding_strength_after": post.get("binding_strength", 0.0),
+            "binding_strength_delta": round(
+                post.get("binding_strength", 0.0) - pre.get("binding_strength", 0.0), 6,
+            ),
+            "n_cross_modal_before": pre.get("n_cross_modal", 0),
+            "n_cross_modal_after": post.get("n_cross_modal", 0),
+            "matched_coupling_mean": round(matched_mean, 8),
+            "decoy_coupling_mean": round(decoy_mean, 8),
+            "matched_to_decoy_ratio": round(ratio, 4),
+            "pairs_tested": n_pairs,
+            "training_reps": training_reps,
+            "fixture_seed": seed,
+            "coupling_matrix": coupling_matrix,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Suite
 # ---------------------------------------------------------------------------
 class BenchmarkSuite:
-    """Runs all 5 benchmarks and produces a unified results dict."""
+    """Runs all 6 benchmarks and produces a unified results dict."""
 
     def __init__(self, network: NeuromorphicNetwork) -> None:
         self.network = network
@@ -519,25 +680,32 @@ class BenchmarkSuite:
         patterns = generate_test_patterns(n_patterns, rng)
         t0 = time.perf_counter()
         logger.info(
-            "Benchmark 1/5: CrossModalRecall (%d patterns x %d reps)", n_patterns, training_reps
+            "Benchmark 1/6: CrossModalRecall (%d patterns x %d reps)", n_patterns, training_reps
         )
         cm = CrossModalRecallBenchmark(self.network).run(patterns, training_reps, steps_per_pattern)
-        logger.info("Benchmark 2/5: NoveltyDetection")
+        logger.info("Benchmark 2/6: NoveltyDetection")
         nd = NoveltyDetectionBenchmark(self.network).run(
             patterns[0],
             generate_test_patterns(1, np.random.default_rng(seed + 999))[0],
             training_reps,
             steps_per_pattern,
         )
-        logger.info("Benchmark 3/5: AssociationStrength")
+        logger.info("Benchmark 3/6: AssociationStrength")
         ass = AssociationStrengthBenchmark(self.network).run(
             patterns, training_reps, steps_per_pattern
         )
-        logger.info("Benchmark 4/5: EnergyEfficiency")
+        logger.info("Benchmark 4/6: EnergyEfficiency")
         en = EnergyEfficiencyBenchmark(self.network).run(patterns, steps_per_pattern)
-        logger.info("Benchmark 5/5: ConceptSeparability")
+        logger.info("Benchmark 5/6: ConceptSeparability")
         cs = ConceptSeparabilityBenchmark(self.network).run(
             patterns, training_reps=training_reps, steps_per_rep=steps_per_pattern
+        )
+        logger.info("Benchmark 6/6: CrossModalBindingAccuracy")
+        ba = CrossModalBindingAccuracyBenchmark(self.network).run(
+            n_pairs=max(2, min(n_patterns, 8)),
+            training_reps=training_reps,
+            steps_per_pair=steps_per_pattern,
+            seed=seed,
         )
         return _to_native(
             {
@@ -550,6 +718,7 @@ class BenchmarkSuite:
                 "association_strength": ass,
                 "energy_efficiency": en,
                 "concept_separability": cs,
+                "cross_modal_binding_accuracy": ba,
             }
         )
 
@@ -620,6 +789,15 @@ class BenchmarkSuite:
                     f"   (skipped — {cs['error']})",
                     "",
                 ]
+        ba = results.get("cross_modal_binding_accuracy", {})
+        lines += [
+            "6. Cross-Modal Binding Accuracy",
+            f"   Precision: {ba.get('precision', 0):.4f}",
+            f"   Recall:    {ba.get('recall', 0):.4f}",
+            f"   F1:        {ba.get('f1', 0):.4f}",
+            f"   Matched/decoy ratio: {ba.get('matched_to_decoy_ratio', 0):.2f}x",
+            "",
+        ]
         lines.append("=" * 35)
         return "\n".join(lines)
 
