@@ -33,11 +33,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin, register_sensor
 
-
 # ---------------------------------------------------------------------------
 # 1. Define the data type your sensor produces.
 #    This can be any Python type — dict, dataclass, float, etc.
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class TemperatureReading:
@@ -49,6 +49,7 @@ class TemperatureReading:
 # ---------------------------------------------------------------------------
 # 2. Subclass SensorPlugin, parameterised with your data type.
 # ---------------------------------------------------------------------------
+
 
 class TemperatureSensor(SensorPlugin[TemperatureReading]):
     """Synthetic temperature / humidity sensor using a random walk.
@@ -80,18 +81,22 @@ class TemperatureSensor(SensorPlugin[TemperatureReading]):
 
         # Declare what this sensor can do. Capabilities are advisory metadata
         # used by the planner and dashboard — they don't affect data flow.
-        self.add_capability(PluginCapability(
-            name="temperature",
-            description="Ambient temperature in Celsius",
-            parameters={"celsius": "float", "range": "[-20, 60]"},
-            risk_class=RiskClass.LOW,
-        ))
-        self.add_capability(PluginCapability(
-            name="humidity",
-            description="Relative humidity as a percentage",
-            parameters={"humidity_pct": "float", "range": "[0, 100]"},
-            risk_class=RiskClass.LOW,
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="temperature",
+                description="Ambient temperature in Celsius",
+                parameters={"celsius": "float", "range": "[-20, 60]"},
+                risk_class=RiskClass.LOW,
+            )
+        )
+        self.add_capability(
+            PluginCapability(
+                name="humidity",
+                description="Relative humidity as a percentage",
+                parameters={"humidity_pct": "float", "range": "[0, 100]"},
+                risk_class=RiskClass.LOW,
+            )
+        )
 
         # Internal state: random walk starts at 22 °C / 50 % RH.
         self._temperature: float = 22.0
@@ -120,6 +125,7 @@ class TemperatureSensor(SensorPlugin[TemperatureReading]):
 #    The registry lets other parts of the system discover it at runtime.
 # ---------------------------------------------------------------------------
 
+
 def create_and_register() -> TemperatureSensor:
     """Instantiate the sensor and add it to the global plugin registry."""
     sensor = TemperatureSensor()
@@ -130,6 +136,7 @@ def create_and_register() -> TemperatureSensor:
 # ---------------------------------------------------------------------------
 # Standalone demo — no NATS needed.
 # ---------------------------------------------------------------------------
+
 
 async def _demo() -> None:
     sensor = TemperatureSensor()

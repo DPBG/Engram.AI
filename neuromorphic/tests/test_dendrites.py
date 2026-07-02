@@ -4,31 +4,25 @@ import numpy as np
 import pytest
 
 from neuromorphic.config import (
+    COMP_APICAL_DISTAL,
+    COMP_APICAL_PROXIMAL,
+    COMP_BASAL,
+    COMP_PERISOMATIC,
+    CompartmentAssignmentConfig,
+    ConceptLayerConfig,
+    DendriticCompartmentConfig,
+    LIFParams,
     NeuromorphicConfig,
     PopulationConfig,
-    LIFParams,
-    DendriticCompartmentConfig,
-    CompartmentAssignmentConfig,
-    InhibitoryConfig,
-    ConceptLayerConfig,
-    COMP_APICAL_DISTAL,
-    COMP_BASAL,
-    COMP_APICAL_PROXIMAL,
-    COMP_PERISOMATIC,
 )
+from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.neurons import NeuronPopulation
 from neuromorphic.regions import (
-    BrainRegion,
-    SensoryCortex,
-    MotorCortex,
-    AssociationCortex,
-    Brainstem,
-    ReflexArc,
     ConceptLayer,
+    SensoryCortex,
     create_all_regions,
 )
 from neuromorphic.synapses import SynapseGroup
-from neuromorphic.network import NeuromorphicNetwork
 
 
 def _dend_config(enabled=True) -> DendriticCompartmentConfig:
@@ -38,15 +32,24 @@ def _dend_config(enabled=True) -> DendriticCompartmentConfig:
 
 def _small_config(**overrides) -> NeuromorphicConfig:
     """Small network config with dendrites enabled for fast tests."""
-    pop = overrides.pop("populations", PopulationConfig(
-        brainstem=20, reflex_arc=20, sensory_cortex=100,
-        motor_cortex=50, cerebellum=50, association_cortex=100,
-        predictive_layer=50, working_memory=20,
-    ))
+    pop = overrides.pop(
+        "populations",
+        PopulationConfig(
+            brainstem=20,
+            reflex_arc=20,
+            sensory_cortex=100,
+            motor_cortex=50,
+            cerebellum=50,
+            association_cortex=100,
+            predictive_layer=50,
+            working_memory=20,
+        ),
+    )
     return NeuromorphicConfig(populations=pop, **overrides)
 
 
 # ── NeuronPopulation with dendrites ──────────────────────────────────────
+
 
 class TestNeuronPopulationDendrites:
     """Verify dendritic state initialization and step_dendrites() behavior."""
@@ -126,7 +129,7 @@ class TestNeuronPopulationDendrites:
         # Inject strong current into perisomatic (highest coupling = 0.8)
         pop.inject_compartment_current(COMP_PERISOMATIC, np.full(10, 50.0, dtype=np.float32))
         # Run step with zero somatic input — dendrites should drive the neuron
-        spikes_before = pop.spikes.copy()
+        _spikes_before = pop.spikes.copy()
         for _ in range(50):
             pop.inject_compartment_current(COMP_PERISOMATIC, np.full(10, 50.0, dtype=np.float32))
             spikes = pop.step(np.zeros(10, dtype=np.float32))
@@ -182,6 +185,7 @@ class TestNeuronPopulationDendrites:
 
 # ── BrainRegion dendrite integration ─────────────────────────────────────
 
+
 class TestBrainRegionDendrites:
     """Regions should pass dendrite_config through and support compartment injection."""
 
@@ -190,8 +194,14 @@ class TestBrainRegionDendrites:
         rng = np.random.default_rng(42)
         regions = create_all_regions(config, rng)
         # Cortical regions should have dendrites
-        for name in ["sensory_cortex", "motor_cortex", "cerebellum",
-                      "association_cortex", "predictive_layer", "working_memory"]:
+        for name in [
+            "sensory_cortex",
+            "motor_cortex",
+            "cerebellum",
+            "association_cortex",
+            "predictive_layer",
+            "working_memory",
+        ]:
             r = regions[name]
             assert r.population.v_dendrite is not None, f"{name} should have dendrites"
 
@@ -209,9 +219,7 @@ class TestBrainRegionDendrites:
         region = SensoryCortex(config, rng=np.random.default_rng(42))
         current = np.full(region.n, 5.0, dtype=np.float32)
         region.inject_compartment_current(COMP_APICAL_DISTAL, current)
-        np.testing.assert_allclose(
-            region.population._compartment_input[COMP_APICAL_DISTAL], 5.0
-        )
+        np.testing.assert_allclose(region.population._compartment_input[COMP_APICAL_DISTAL], 5.0)
 
     def test_dendrites_disabled_fallback(self):
         """With dendrites disabled, regions should be point neurons."""
@@ -222,6 +230,7 @@ class TestBrainRegionDendrites:
 
 
 # ── Backward compatibility ───────────────────────────────────────────────
+
 
 class TestBackwardCompatibility:
     """When dendrites are disabled, behavior should match original point neurons."""
@@ -236,7 +245,9 @@ class TestBackwardCompatibility:
         pop_original = NeuronPopulation(50, params, rng=np.random.default_rng(rng_seed))
         # With disabled dendrite config
         pop_disabled = NeuronPopulation(
-            50, params, rng=np.random.default_rng(rng_seed),
+            50,
+            params,
+            rng=np.random.default_rng(rng_seed),
             dendrite_config=DendriticCompartmentConfig(enabled=False),
         )
 
@@ -256,19 +267,26 @@ class TestBackwardCompatibility:
 
 # ── SynapseGroup compartment targeting ───────────────────────────────────
 
+
 class TestSynapseGroupCompartment:
     """SynapseGroup should carry target_compartment attribute."""
 
     def test_default_no_compartment(self):
         syn = SynapseGroup(
-            n_pre=20, n_post=30, sparsity=0.1, init_weight=0.5,
+            n_pre=20,
+            n_post=30,
+            sparsity=0.1,
+            init_weight=0.5,
             rng=np.random.default_rng(42),
         )
         assert syn.target_compartment is None
 
     def test_explicit_compartment(self):
         syn = SynapseGroup(
-            n_pre=20, n_post=30, sparsity=0.1, init_weight=0.5,
+            n_pre=20,
+            n_post=30,
+            sparsity=0.1,
+            init_weight=0.5,
             target_compartment=COMP_BASAL,
             rng=np.random.default_rng(42),
         )
@@ -276,16 +294,22 @@ class TestSynapseGroupCompartment:
 
     def test_compartment_activity_scales_stdp(self):
         """compartment_activity < 1.0 should reduce weight changes."""
-        rng = np.random.default_rng(42)
-        params = LIFParams(noise_std=0.0, threshold=-55.0)
+        _rng = np.random.default_rng(42)
+        _params = LIFParams(noise_std=0.0, threshold=-55.0)
 
         # Create two identical synapse groups
         syn_full = SynapseGroup(
-            n_pre=20, n_post=30, sparsity=0.3, init_weight=0.5,
+            n_pre=20,
+            n_post=30,
+            sparsity=0.3,
+            init_weight=0.5,
             rng=np.random.default_rng(42),
         )
         syn_half = SynapseGroup(
-            n_pre=20, n_post=30, sparsity=0.3, init_weight=0.5,
+            n_pre=20,
+            n_post=30,
+            sparsity=0.3,
+            init_weight=0.5,
             rng=np.random.default_rng(42),
         )
 
@@ -299,10 +323,12 @@ class TestSynapseGroupCompartment:
 
         w_before = syn_full.weights.data.copy()
 
-        syn_full.update_weights_stdp(pre_spikes, post_spikes, pre_times, post_times, 20.0,
-                                      compartment_activity=1.0)
-        syn_half.update_weights_stdp(pre_spikes, post_spikes, pre_times, post_times, 20.0,
-                                      compartment_activity=0.5)
+        syn_full.update_weights_stdp(
+            pre_spikes, post_spikes, pre_times, post_times, 20.0, compartment_activity=1.0
+        )
+        syn_half.update_weights_stdp(
+            pre_spikes, post_spikes, pre_times, post_times, 20.0, compartment_activity=0.5
+        )
 
         dw_full = np.abs(syn_full.weights.data - w_before).sum()
         dw_half = np.abs(syn_half.weights.data - w_before).sum()
@@ -315,6 +341,7 @@ class TestSynapseGroupCompartment:
 
 # ── Network routing ──────────────────────────────────────────────────────
 
+
 class TestNetworkRouting:
     """Network step() should route currents through compartments."""
 
@@ -324,8 +351,9 @@ class TestNetworkRouting:
         # Check that synapse groups got their compartment assignments
         for name, expected in config.compartment_assignments.assignments.items():
             if name in net.synapses:
-                assert net.synapses[name].target_compartment == expected, \
-                    f"{name} expected compartment {expected}, got {net.synapses[name].target_compartment}"
+                assert (
+                    net.synapses[name].target_compartment == expected
+                ), f"{name} expected compartment {expected}, got {net.synapses[name].target_compartment}"
 
     def test_route_current_to_compartment(self):
         """_route_current should inject into dendritic compartment when available."""
@@ -385,15 +413,21 @@ class TestNetworkRouting:
 
 # ── ConceptLayer k-WTA with dendrites ────────────────────────────────────
 
+
 class TestConceptLayerDendrites:
     """ConceptLayer k-WTA should use _pre_spike_drive (includes dendritic input)."""
 
     def test_concept_layer_has_dendrites(self):
         config = _small_config(
             populations=PopulationConfig(
-                brainstem=20, reflex_arc=20, sensory_cortex=100,
-                motor_cortex=50, cerebellum=50, association_cortex=100,
-                predictive_layer=50, working_memory=20,
+                brainstem=20,
+                reflex_arc=20,
+                sensory_cortex=100,
+                motor_cortex=50,
+                cerebellum=50,
+                association_cortex=100,
+                predictive_layer=50,
+                working_memory=20,
                 concept_layer=60,
             ),
             concept_layer=ConceptLayerConfig(n_neurons=60, k_winners=3),
@@ -406,9 +440,14 @@ class TestConceptLayerDendrites:
         """k-WTA ranking should consider dendritic contribution via _pre_spike_drive."""
         config = _small_config(
             populations=PopulationConfig(
-                brainstem=20, reflex_arc=20, sensory_cortex=100,
-                motor_cortex=50, cerebellum=50, association_cortex=100,
-                predictive_layer=50, working_memory=20,
+                brainstem=20,
+                reflex_arc=20,
+                sensory_cortex=100,
+                motor_cortex=50,
+                cerebellum=50,
+                association_cortex=100,
+                predictive_layer=50,
+                working_memory=20,
                 concept_layer=60,
             ),
             concept_layer=ConceptLayerConfig(n_neurons=60, k_winners=5),
@@ -424,6 +463,7 @@ class TestConceptLayerDendrites:
 
 
 # ── Compartment activity (STDP credit) ───────────────────────────────────
+
 
 class TestCompartmentActivity:
     """_compute_compartment_activity should return 0.5-1.0 scaling."""
@@ -468,6 +508,7 @@ class TestCompartmentActivity:
 
 # ── State persistence with dendrites ─────────────────────────────────────
 
+
 class TestDendritePersistence:
     """get_state / set_state should round-trip dendritic state."""
 
@@ -506,6 +547,7 @@ class TestDendritePersistence:
 
 
 # ── Config validation ────────────────────────────────────────────────────
+
 
 class TestDendriticConfig:
     """DendriticCompartmentConfig should validate parameter lengths."""

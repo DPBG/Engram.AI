@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 NUMBA_AVAILABLE: bool = False
 try:
     import numba  # type: ignore[import-untyped]  # noqa: F401
+
     NUMBA_AVAILABLE = True
 except ImportError:
     pass
@@ -349,7 +350,7 @@ def neuromod_decay_sparse(
     if plasticity_mask is not None:
         dw *= plasticity_mask[idx]
     data[idx] = np.clip(data[idx] + dw, w_min, w_max)
-    decay_total = np.float32(d_per_step ** interval)
+    decay_total = np.float32(d_per_step**interval)
     elig_slice *= decay_total
     eligibility[idx] = elig_slice
     return np.abs(elig_slice) > prune_threshold

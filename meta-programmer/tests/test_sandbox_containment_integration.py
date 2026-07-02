@@ -66,15 +66,23 @@ def _run(flags: list[str], payload: str) -> subprocess.CompletedProcess[str]:
 # ── Production hardening (mirrors sandbox_manager.py + smoke/run_smoke.sh) ───
 
 _ALL = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--memory-swap", "512m",   # same as --memory → zero swap, hard 512 MB limit
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--memory-swap",
+    "512m",  # same as --memory → zero swap, hard 512 MB limit
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # ── Per-test baselines: one guard removed or relaxed, all others kept ─────────
@@ -82,58 +90,91 @@ _ALL = [
 # Network test baseline: --network none removed → default bridge, outbound allowed.
 _WITHOUT_NETWORK = [
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # Read-only test baseline: --read-only removed → writable root filesystem.
 _WITHOUT_READONLY = [
-    "--network", "none",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--network",
+    "none",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # PIDs test baseline: limit raised to 500 → 200-process payload spawns freely.
 _RELAXED_PIDS = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "500",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "500",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # Memory test baseline: limit raised to 2g, swap unlimited → 600 MB allocation succeeds.
 _RELAXED_MEMORY = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "2g",
-    "--memory-swap", "-1",     # unlimited swap for baseline
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "2g",
+    "--memory-swap",
+    "-1",  # unlimited swap for baseline
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # Privilege test baseline: cap_drop and no-new-privileges both absent.
 _WITHOUT_PRIVDROP = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 
@@ -222,19 +263,40 @@ def _listener_on_bridge():
     )
     subprocess.run(
         ["docker", "network", "create", "--driver", "bridge", net],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
-        ["docker", "run", "-d", "--rm", "--network", net, "--name", cname,
-         IMAGE, "python", "-c", _srv],
-        check=True, capture_output=True,
+        [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--network",
+            net,
+            "--name",
+            cname,
+            IMAGE,
+            "python",
+            "-c",
+            _srv,
+        ],
+        check=True,
+        capture_output=True,
     )
     # Hyphens in the network name are invalid in Go template dot notation;
     # use the index function to look up the key by string.
     r = subprocess.run(
-        ["docker", "inspect", "-f",
-         '{{(index .NetworkSettings.Networks "' + net + '").IPAddress}}', cname],
-        check=True, capture_output=True, text=True,
+        [
+            "docker",
+            "inspect",
+            "-f",
+            '{{(index .NetworkSettings.Networks "' + net + '").IPAddress}}',
+            cname,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
     )
     ip = r.stdout.strip()
     time.sleep(1)  # let Python bind before the test container connects
@@ -256,21 +318,19 @@ def test_network_isolation_blocks_outbound():
     With guard (--network none):      no route to bridge IP (exit non-zero).
     """
     with _listener_on_bridge() as (net, ip, port):
-        payload = (
-            f"import socket; socket.create_connection(('{ip}', {port}), timeout=5)"
-        )
+        payload = f"import socket; socket.create_connection(('{ip}', {port}), timeout=5)"
 
         # Baseline: container joined to the same bridge → connection succeeds.
         baseline = _run(list(_WITHOUT_NETWORK) + ["--network", net], payload)
-        assert baseline.returncode == 0, (
-            "baseline: TCP must reach local listener when --network none is absent"
-        )
+        assert (
+            baseline.returncode == 0
+        ), "baseline: TCP must reach local listener when --network none is absent"
 
         # Guarded: --network none → no bridge interface → connection fails.
         guarded = _run(_ALL, payload)
-        assert guarded.returncode != 0, (
-            "guarded: --network none must block connection to local bridge listener"
-        )
+        assert (
+            guarded.returncode != 0
+        ), "guarded: --network none must block connection to local bridge listener"
 
 
 def test_readonly_filesystem_blocks_root_writes():
@@ -287,14 +347,12 @@ def test_readonly_filesystem_blocks_root_writes():
     payload = "open('/var/tmp/blocked.txt', 'w').write('x')"
 
     baseline = _run(_WITHOUT_READONLY, payload)
-    assert baseline.returncode == 0, (
-        "baseline: root-FS write must succeed when --read-only is absent"
-    )
+    assert (
+        baseline.returncode == 0
+    ), "baseline: root-FS write must succeed when --read-only is absent"
 
     guarded = _run(_ALL, payload)
-    assert guarded.returncode != 0, (
-        "guarded: --read-only must deny writes outside /tmp"
-    )
+    assert guarded.returncode != 0, "guarded: --read-only must deny writes outside /tmp"
 
 
 def test_pids_limit_caps_fork_bomb():
@@ -330,9 +388,7 @@ def test_memory_limit_oom_kills_over_budget():
     swap = 1024m total, enough to absorb the 600 MB allocation).
     """
     baseline = _run(_RELAXED_MEMORY, _PAYLOAD_MEMORY)
-    assert baseline.returncode == 0, (
-        "baseline: 600 MB allocation must succeed under --memory 2g"
-    )
+    assert baseline.returncode == 0, "baseline: 600 MB allocation must succeed under --memory 2g"
 
     guarded = _run(_ALL, _PAYLOAD_MEMORY)
     assert guarded.returncode != 0, (
@@ -350,8 +406,7 @@ def test_privilege_escalation_prevention():
     """
     baseline = _run(_WITHOUT_PRIVDROP, _PAYLOAD_PRIVILEGES)
     assert baseline.returncode != 0, (
-        "baseline: without cap_drop/no-new-privileges, "
-        "CapBnd must be non-zero or NoNewPrivs=0"
+        "baseline: without cap_drop/no-new-privileges, " "CapBnd must be non-zero or NoNewPrivs=0"
     )
 
     guarded = _run(_ALL, _PAYLOAD_PRIVILEGES)

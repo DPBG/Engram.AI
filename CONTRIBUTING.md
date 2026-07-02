@@ -72,12 +72,12 @@ cd neuromorphic && uv run --extra dev python -m pytest tests/ -v -p no:anchorpy 
 # SDK suite
 cd sdk && uv run --extra dev python -m pytest tests/ -v && cd ..
 
-# Lint — the BLOCKING "real bug" gate CI enforces (this must be clean)
-uvx ruff check --select E9,F63,F7,F82 .
+# Lint — ALL three gates are blocking in CI
+uvx ruff check --select E9,F63,F7,F82 .  # fast "real bug" gate
+uvx ruff check .                           # full style gate
+uvx black --check --line-length 100 .     # formatting gate
+cd sdk && .venv/bin/mypy src/activelearning/ --ignore-missing-imports  # type gate
 ```
-
-> `ruff check .` (full style), `black --check`, and `mypy` also run in CI but are
-> **advisory** for now — running them is encouraged, not required to merge.
 
 ### 6. Commit
 
@@ -190,11 +190,12 @@ On every pull request to `dev` (and `main`), the **`Tests`** workflow runs:
 
 - the **neuromorphic** test suite on **Python 3.11 and 3.12**,
 - the **SDK** test suite on **Python 3.11 and 3.12**,
-- a **blocking lint gate** (`ruff --select E9,F63,F7,F82` — catches real bugs like
-  undefined names), and
-- **advisory** full-`ruff`, `black --check`, and `mypy` checks.
+- a **blocking lint gate** (two ruff passes: `--select E9,F63,F7,F82` for real
+  bugs, then the full rule set),
+- a **blocking formatter gate** (`black --check --line-length 100`), and
+- a **blocking type gate** (`mypy` on `sdk/src/activelearning/`).
 
-Your PR can be merged once the blocking jobs are green.
+Your PR can be merged once **all** blocking jobs are green.
 
 ## Code Standards
 

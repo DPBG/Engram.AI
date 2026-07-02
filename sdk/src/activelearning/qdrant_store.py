@@ -15,8 +15,9 @@ Returning plain value objects (:class:`QdrantHit`) keeps callers decoupled from
 """
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
@@ -55,11 +56,11 @@ class QdrantStore:
 
     def __init__(
         self,
-        url: Optional[str] = None,
+        url: str | None = None,
         *,
         dimensions: int = DEFAULT_DIMENSIONS,
         distance: Distance = Distance.COSINE,
-        client: Optional[AsyncQdrantClient] = None,
+        client: AsyncQdrantClient | None = None,
     ):
         """Create a store.
 
@@ -76,7 +77,7 @@ class QdrantStore:
         self._dimensions = dimensions
         self._distance = distance
 
-    async def ensure_collection(self, collection: str, *, dimensions: Optional[int] = None) -> None:
+    async def ensure_collection(self, collection: str, *, dimensions: int | None = None) -> None:
         """Create ``collection`` if it does not already exist (idempotent)."""
         existing = await self._client.get_collections()
         if collection not in {c.name for c in existing.collections}:
@@ -94,7 +95,7 @@ class QdrantStore:
         vector: Sequence[float],
         *,
         limit: int = 10,
-        score_threshold: Optional[float] = None,
+        score_threshold: float | None = None,
     ) -> list[QdrantHit]:
         """Return the ``limit`` nearest points to ``vector`` as :class:`QdrantHit`."""
         response = await self._client.query_points(

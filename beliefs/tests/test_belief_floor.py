@@ -49,8 +49,11 @@ def test_readd_cannot_lower_existing_value():
     g = _seeded()
     before = g.get_node("value.human_safety").confidence
     assert before >= VALUE_CONFIDENCE_FLOOR
-    g.add_node(BeliefNode(id="value.human_safety", type=NodeType.VALUE,
-                          content="hijacked", confidence=0.01))
+    g.add_node(
+        BeliefNode(
+            id="value.human_safety", type=NodeType.VALUE, content="hijacked", confidence=0.01
+        )
+    )
     assert g.get_node("value.human_safety").confidence >= VALUE_CONFIDENCE_FLOOR
 
 
@@ -106,10 +109,16 @@ def test_floor_survives_db_load_path_with_tampering():
     g2 = BeliefGraph()
     for node in data["nodes"]:
         conf = 0.0 if node["type"] == NodeType.VALUE.value else node["confidence"]
-        g2.add_node(BeliefNode(
-            id=node["id"], type=NodeType(node["type"]), content=node["content"],
-            confidence=conf, source=node["source"], metadata=node.get("metadata", {}),
-        ))
+        g2.add_node(
+            BeliefNode(
+                id=node["id"],
+                type=NodeType(node["type"]),
+                content=node["content"],
+                confidence=conf,
+                source=node["source"],
+                metadata=node.get("metadata", {}),
+            )
+        )
     for v in g2.get_beliefs_by_type(NodeType.VALUE):
         assert v.confidence >= VALUE_CONFIDENCE_FLOOR
 
@@ -119,9 +128,18 @@ def test_floor_survives_db_load_path_with_tampering():
 
 def _add_conflicting(g: BeliefGraph, conf_a=0.9, conf_b=0.9, strength=0.9):
     g.add_node(BeliefNode(id="fact.a", type=NodeType.FACT, content="A is safe", confidence=conf_a))
-    g.add_node(BeliefNode(id="fact.b", type=NodeType.FACT, content="A is unsafe", confidence=conf_b))
-    g.add_edge(BeliefEdge(id="e.ab", type=EdgeType.CONTRADICTS,
-                          source_id="fact.a", target_id="fact.b", strength=strength))
+    g.add_node(
+        BeliefNode(id="fact.b", type=NodeType.FACT, content="A is unsafe", confidence=conf_b)
+    )
+    g.add_edge(
+        BeliefEdge(
+            id="e.ab",
+            type=EdgeType.CONTRADICTS,
+            source_id="fact.a",
+            target_id="fact.b",
+            strength=strength,
+        )
+    )
 
 
 def test_find_contradictions_flags_conflict():

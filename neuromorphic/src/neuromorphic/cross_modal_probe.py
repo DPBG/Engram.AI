@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ProbeInputs:
     """Decoupled inputs for the cross-modal probe.
@@ -122,6 +123,7 @@ class CrossModalMetrics:
 # ---------------------------------------------------------------------------
 # Probe
 # ---------------------------------------------------------------------------
+
 
 class CrossModalProbe:
     """Read-only probe for measuring cross-modal binding in the association cortex.
@@ -223,7 +225,8 @@ class CrossModalProbe:
             logger.warning(
                 "Association cortex size (%d) != sensory_association n_post (%d); "
                 "skipping cross-modal probe",
-                inputs.n_association, n_post,
+                inputs.n_association,
+                n_post,
             )
             return
 
@@ -257,9 +260,7 @@ class CrossModalProbe:
         if n_post > 0:
             metrics.association_overlap = len(self._cross_modal_idx) / n_post
             n_classified = (
-                metrics.n_visual_associated
-                + metrics.n_auditory_associated
-                + metrics.n_cross_modal
+                metrics.n_visual_associated + metrics.n_auditory_associated + metrics.n_cross_modal
             )
             metrics.modality_selectivity = n_classified / n_post
 
@@ -276,10 +277,12 @@ class CrossModalProbe:
             return
 
         metrics.recall_ratio_visual = self._recall_ratio(
-            assoc_spikes, self._auditory_assoc_idx,
+            assoc_spikes,
+            self._auditory_assoc_idx,
         )
         metrics.recall_ratio_auditory = self._recall_ratio(
-            assoc_spikes, self._visual_assoc_idx,
+            assoc_spikes,
+            self._visual_assoc_idx,
         )
 
     # -- Vectorised helpers -------------------------------------------------
@@ -304,12 +307,20 @@ class CrossModalProbe:
         n_post = weights.shape[0]
 
         # Column-slice: O(nnz) in C — the two expensive operations
-        self._vis_strength = np.asarray(
-            weights[:, vis_range[0]:vis_range[1]].sum(axis=1),
-        ).ravel().astype(np.float32)
-        self._aud_strength = np.asarray(
-            weights[:, aud_range[0]:aud_range[1]].sum(axis=1),
-        ).ravel().astype(np.float32)
+        self._vis_strength = (
+            np.asarray(
+                weights[:, vis_range[0] : vis_range[1]].sum(axis=1),
+            )
+            .ravel()
+            .astype(np.float32)
+        )
+        self._aud_strength = (
+            np.asarray(
+                weights[:, aud_range[0] : aud_range[1]].sum(axis=1),
+            )
+            .ravel()
+            .astype(np.float32)
+        )
 
         total = self._vis_strength + self._aud_strength
         has_input = total > 0.0
@@ -372,6 +383,8 @@ class CrossModalProbe:
         if len(valid) < len(target_indices):
             logger.warning(
                 "recall_ratio: %d/%d target indices out of bounds (n=%d)",
-                len(target_indices) - len(valid), len(target_indices), n,
+                len(target_indices) - len(valid),
+                len(target_indices),
+                n,
             )
         return float(association_spikes[valid].sum()) / len(valid)

@@ -19,7 +19,7 @@ def _make_frame(n_chunks: int = 5, base: float = 0.0) -> dict:
     delta_mfcc = np.zeros(13, dtype=np.float32)
     if n_chunks >= 2:
         delta_mfcc = (raw_stack[-1] - raw_stack[0]) / max(1, n_chunks - 1)
-    energy = np.sqrt((raw_stack ** 2).mean(axis=1))
+    energy = np.sqrt((raw_stack**2).mean(axis=1))
     return {
         "type": "temporal_audio_frame",
         "n_chunks": n_chunks,
@@ -98,10 +98,14 @@ class TestAuditorySTMFeatures:
 
     def test_decay_weighting(self):
         """Recent frames should have more influence than older ones."""
-        stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, decay_rate=0.5, normalize_output=False,
-            include_recent_raw=False,
-        ))
+        stm = AuditorySTM(
+            AuditorySTMConfig(
+                window_steps=4,
+                decay_rate=0.5,
+                normalize_output=False,
+                include_recent_raw=False,
+            )
+        )
         # Add a frame with low values, then one with high values
         stm.update(_make_frame(3, base=0.0))
         stm.update(_make_frame(3, base=5.0))
@@ -114,11 +118,16 @@ class TestAuditorySTMFeatures:
 
     def test_temporal_gradient(self):
         """Temporal gradient should detect transition from quiet to loud."""
-        stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, decay_rate=1.0,  # no decay for simpler test
-            normalize_output=False,
-            include_delta=False, include_energy=False, include_recent_raw=False,
-        ))
+        stm = AuditorySTM(
+            AuditorySTMConfig(
+                window_steps=4,
+                decay_rate=1.0,  # no decay for simpler test
+                normalize_output=False,
+                include_delta=False,
+                include_energy=False,
+                include_recent_raw=False,
+            )
+        )
         stm.update(_make_frame(3, base=0.0))
         stm.update(_make_frame(3, base=0.0))
         stm.update(_make_frame(3, base=1.0))
@@ -168,15 +177,15 @@ class TestAuditorySTMPersistence:
 
 class TestAuditorySTMConfig:
     def test_no_delta(self):
-        stm = AuditorySTM(AuditorySTMConfig(
-            include_delta=False, include_recent_raw=False, window_steps=4
-        ))
+        stm = AuditorySTM(
+            AuditorySTMConfig(include_delta=False, include_recent_raw=False, window_steps=4)
+        )
         stm.update(_make_frame(5, base=0.5))
         f_no_delta = stm.get_features()
 
-        stm2 = AuditorySTM(AuditorySTMConfig(
-            include_delta=True, include_recent_raw=False, window_steps=4
-        ))
+        stm2 = AuditorySTM(
+            AuditorySTMConfig(include_delta=True, include_recent_raw=False, window_steps=4)
+        )
         stm2.update(_make_frame(5, base=0.5))
         f_with_delta = stm2.get_features()
 
@@ -184,15 +193,15 @@ class TestAuditorySTMConfig:
         assert len(f_with_delta) == len(f_no_delta) + 13
 
     def test_no_energy(self):
-        stm = AuditorySTM(AuditorySTMConfig(
-            include_energy=False, include_recent_raw=False, window_steps=4
-        ))
+        stm = AuditorySTM(
+            AuditorySTMConfig(include_energy=False, include_recent_raw=False, window_steps=4)
+        )
         stm.update(_make_frame(5, base=0.5))
         f_no_energy = stm.get_features()
 
-        stm2 = AuditorySTM(AuditorySTMConfig(
-            include_energy=True, include_recent_raw=False, window_steps=4
-        ))
+        stm2 = AuditorySTM(
+            AuditorySTMConfig(include_energy=True, include_recent_raw=False, window_steps=4)
+        )
         stm2.update(_make_frame(5, base=0.5))
         f_with_energy = stm2.get_features()
 
@@ -205,9 +214,7 @@ class TestAuditorySTMEdgeCases:
 
     def test_fixed_length_feature_vector(self):
         """Feature vector length must be constant regardless of n_chunks in raw_stack."""
-        stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, max_recent_raw_chunks=5
-        ))
+        stm = AuditorySTM(AuditorySTMConfig(window_steps=4, max_recent_raw_chunks=5))
         # Frame with 2 chunks
         stm.update(_make_frame(2, base=0.1))
         f2 = stm.get_features()
@@ -224,10 +231,15 @@ class TestAuditorySTMEdgeCases:
 
     def test_raw_stack_padded_with_zeros(self):
         """When fewer chunks than max, raw portion should be zero-padded."""
-        stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, max_recent_raw_chunks=5, normalize_output=False,
-            include_delta=False, include_energy=False,
-        ))
+        stm = AuditorySTM(
+            AuditorySTMConfig(
+                window_steps=4,
+                max_recent_raw_chunks=5,
+                normalize_output=False,
+                include_delta=False,
+                include_energy=False,
+            )
+        )
         stm.update(_make_frame(2, base=1.0))
         features = stm.get_features()
         # features: 13 (mean) + 13 (gradient) + 5*13 (raw padded) = 91
@@ -240,9 +252,7 @@ class TestAuditorySTMEdgeCases:
 
     def test_nan_energy_handled(self):
         """NaN in energy data should not propagate to features."""
-        stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, include_recent_raw=False
-        ))
+        stm = AuditorySTM(AuditorySTMConfig(window_steps=4, include_recent_raw=False))
         frame = _make_frame(3, base=0.5)
         # Inject NaN into energy
         frame["energy"] = [float("nan"), 0.5, 0.5]
@@ -253,9 +263,7 @@ class TestAuditorySTMEdgeCases:
 
     def test_constant_energy_no_crash(self):
         """All-identical energy values should not crash np.polyfit."""
-        stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, include_recent_raw=False
-        ))
+        stm = AuditorySTM(AuditorySTMConfig(window_steps=4, include_recent_raw=False))
         frame = _make_frame(5, base=0.5)
         frame["energy"] = [1.0, 1.0, 1.0, 1.0, 1.0]
         stm.update(frame)
@@ -265,17 +273,13 @@ class TestAuditorySTMEdgeCases:
 
     def test_no_raw_stack_still_fixed_length(self):
         """Even without raw_stack in the frame, feature vector is fixed length."""
-        stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, max_recent_raw_chunks=5
-        ))
+        stm = AuditorySTM(AuditorySTMConfig(window_steps=4, max_recent_raw_chunks=5))
         frame = _make_frame(3, base=0.5)
         del frame["raw_stack"]  # simulate missing raw_stack
         stm.update(frame)
         f1 = stm.get_features()
 
-        stm2 = AuditorySTM(AuditorySTMConfig(
-            window_steps=4, max_recent_raw_chunks=5
-        ))
+        stm2 = AuditorySTM(AuditorySTMConfig(window_steps=4, max_recent_raw_chunks=5))
         stm2.update(_make_frame(3, base=0.5))  # with raw_stack
         f2 = stm2.get_features()
 

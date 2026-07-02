@@ -8,6 +8,7 @@ Tasks are body-agnostic: they use the body's dynamic _root_body_name and
 _joint_channel instead of hardcoded body/joint names. Tasks that require
 bodies or joints not present in the model are skipped by TaskCurriculum.
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,9 +44,10 @@ def _has_joint(body: MuJoCoBody, name: str) -> bool:
 @dataclass
 class TaskResult:
     """Outcome of a single task evaluation step."""
-    reward: float           # -1 to 1
-    success: bool           # task completed?
-    progress: float         # 0-1 toward goal
+
+    reward: float  # -1 to 1
+    success: bool  # task completed?
+    progress: float  # 0-1 toward goal
     info: dict[str, Any] = field(default_factory=dict)
 
 
@@ -54,7 +56,7 @@ class Task(ABC):
 
     def __init__(self, name: str, channel: str, max_steps: int) -> None:
         self.name = name
-        self.channel = channel          # "locomotion" | "manipulation" | "head"
+        self.channel = channel  # "locomotion" | "manipulation" | "head"
         self.max_steps = max_steps
         self._step_count: int = 0
         self._done: bool = False
@@ -116,8 +118,8 @@ class SupportedStandTask(Task):
         root_vz = float(body._data.body(body._root_body_name).cvel[5])
         error = self._initial_z - root_z
         # Spring-damper gains scaled by gravity compensation
-        kp = self._gravity_comp * 5.0   # stiff spring to target height
-        kd = self._gravity_comp * 1.0   # damping to prevent oscillation
+        kp = self._gravity_comp * 5.0  # stiff spring to target height
+        kd = self._gravity_comp * 1.0  # damping to prevent oscillation
         force = self._gravity_comp + kp * error - kd * root_vz
         return max(0.0, force)  # never push downward
 
@@ -130,12 +132,18 @@ class SupportedStandTask(Task):
         # body immediately.  Lying on the ground for minutes teaches nothing
         # -- a quick reset gives the brain more learning opportunities.
         if body.is_fallen():
-            logger.info("Fall detected at step %d (height=%.2f), resetting episode",
-                        self._step_count, root_z)
+            logger.info(
+                "Fall detected at step %d (height=%.2f), resetting episode",
+                self._step_count,
+                root_z,
+            )
             self._done = True
-            return TaskResult(-0.5, False, 1.0,
-                              {"root_z": root_z, "support_decay": self._decay,
-                               "fall_reset": True})
+            return TaskResult(
+                -0.5,
+                False,
+                1.0,
+                {"root_z": root_z, "support_decay": self._decay, "fall_reset": True},
+            )
 
         # Continuous reward: how upright is the body? (0.0-1.0 proportional)
         reward = float(np.clip(height_ratio, 0.0, 1.0)) - 0.5  # centered: -0.5 to +0.5
@@ -143,13 +151,15 @@ class SupportedStandTask(Task):
         # 30% full support, 50% linear decay, 20% unsupported evaluation.
         # The unsupported window gives the brain ~600 steps (at 3000 max)
         # where success can accumulate toward the advance threshold.
-        support_hold = int(self.max_steps * 0.3)   # full support ends
-        support_end = int(self.max_steps * 0.8)     # decay ends, unsupported begins
+        support_hold = int(self.max_steps * 0.3)  # full support ends
+        support_end = int(self.max_steps * 0.8)  # decay ends, unsupported begins
         if self._support_active:
             if self._step_count <= support_hold:
                 self._decay = 1.0  # full support
             elif self._step_count <= support_end:
-                decay_progress = (self._step_count - support_hold) / max(1, support_end - support_hold)
+                decay_progress = (self._step_count - support_hold) / max(
+                    1, support_end - support_hold
+                )
                 self._decay = max(0.0, 1.0 - decay_progress)
             else:
                 self._decay = 0.0
@@ -166,13 +176,18 @@ class SupportedStandTask(Task):
         success = height_ratio > 0.7 and not self._support_active
         if self._step_count >= self.max_steps:
             self._done = True
-        return TaskResult(reward, success, progress,
-                          {"root_z": root_z, "support_decay": self._decay})
+        return TaskResult(
+            reward, success, progress, {"root_z": root_z, "support_decay": self._decay}
+        )
 
     def get_state(self) -> dict[str, Any]:
         s = super().get_state()
-        s.update(initial_z=self._initial_z, support_active=self._support_active,
-                 gravity_comp=self._gravity_comp, decay=self._decay)
+        s.update(
+            initial_z=self._initial_z,
+            support_active=self._support_active,
+            gravity_comp=self._gravity_comp,
+            decay=self._decay,
+        )
         return s
 
     def apply_continuous_support(self, body: MuJoCoBody) -> None:
@@ -204,8 +219,7 @@ class SupportedStandTask(Task):
         self._initial_z = state.get("initial_z", 1.2)
         self._support_active = state.get("support_active", False)
         # backward compat: old states used "support_force" at 1.5x
-        self._gravity_comp = state.get("gravity_comp",
-                                       state.get("support_force", 600.0) / 1.5)
+        self._gravity_comp = state.get("gravity_comp", state.get("support_force", 600.0) / 1.5)
         self._decay = state.get("decay", 1.0)
 
 
@@ -236,8 +250,12 @@ class StandTask(Task):
         height_ratio = root_z / self._initial_z if self._initial_z > 0 else 0.0
         if body.is_fallen():
             self._done = True
-            return TaskResult(-1.0, False, self._steps_upright / self._hold_steps,
-                              {"root_z": root_z, "reason": "fallen"})
+            return TaskResult(
+                -1.0,
+                False,
+                self._steps_upright / self._hold_steps,
+                {"root_z": root_z, "reason": "fallen"},
+            )
         if root_z >= threshold:
             self._steps_upright += 1
         else:
@@ -248,13 +266,17 @@ class StandTask(Task):
             return TaskResult(1.0, True, 1.0, {"root_z": root_z})
         # Continuous reward: proportional to height (not binary +/-0.1)
         reward = float(np.clip(height_ratio - 0.5, -0.5, 0.5))
-        return TaskResult(reward, False, progress,
-                          {"root_z": root_z, "steps_upright": self._steps_upright})
+        return TaskResult(
+            reward, False, progress, {"root_z": root_z, "steps_upright": self._steps_upright}
+        )
 
     def get_state(self) -> dict[str, Any]:
         s = super().get_state()
-        s.update(steps_upright=self._steps_upright, initial_z=self._initial_z,
-                 hold_steps=self._hold_steps)
+        s.update(
+            steps_upright=self._steps_upright,
+            initial_z=self._initial_z,
+            hold_steps=self._hold_steps,
+        )
         return s
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -294,15 +316,23 @@ class BalanceTask(Task):
         root_z = float(body._data.body(body._root_body_name).xpos[2])
         if body.is_fallen():
             self._done = True
-            return TaskResult(-1.0, False, max(0.0, root_z / self._target_z),
-                              {"root_z": root_z, "reason": "fallen"})
+            return TaskResult(
+                -1.0,
+                False,
+                max(0.0, root_z / self._target_z),
+                {"root_z": root_z, "reason": "fallen"},
+            )
         height_ratio = root_z / self._initial_z
         progress = min(1.0, root_z / self._target_z)
         if root_z >= self._target_z:
             self._done = True
             return TaskResult(1.0, True, 1.0, {"root_z": root_z, "recovered": True})
-        return TaskResult(float(np.clip(height_ratio - 0.5, -0.5, 0.5)), False, progress,
-                          {"root_z": root_z, "height_ratio": height_ratio})
+        return TaskResult(
+            float(np.clip(height_ratio - 0.5, -0.5, 0.5)),
+            False,
+            progress,
+            {"root_z": root_z, "height_ratio": height_ratio},
+        )
 
     def get_state(self) -> dict[str, Any]:
         s = super().get_state()
@@ -322,15 +352,16 @@ class ReachTask(Task):
     the manipulation channel's kinematic chain.
     """
 
-    def __init__(self, reach_radius: float = 0.3, tolerance: float = 0.1,
-                 max_steps: int = 300) -> None:
+    def __init__(
+        self, reach_radius: float = 0.3, tolerance: float = 0.1, max_steps: int = 300
+    ) -> None:
         super().__init__("reach", "manipulation", max_steps)
         self._reach_radius = reach_radius
         self._tolerance = tolerance
         self._target: np.ndarray = np.zeros(3, dtype=np.float64)
         self._initial_dist: float = 1.0
-        self._ee_body: str = ""       # end-effector body name (discovered at reset)
-        self._anchor_body: str = ""   # shoulder/base body (discovered at reset)
+        self._ee_body: str = ""  # end-effector body name (discovered at reset)
+        self._anchor_body: str = ""  # shoulder/base body (discovered at reset)
 
     def is_compatible(self, body: MuJoCoBody) -> bool:
         return "manipulation" in body._channel_actuators
@@ -350,6 +381,7 @@ class ReachTask(Task):
                 chain_bodies.append(bid)
         if not chain_bodies:
             return "", ""
+
         # End-effector = deepest body (highest child depth).
         # Anchor = shallowest body (closest to root).
         def _depth(bid: int) -> int:
@@ -359,6 +391,7 @@ class ReachTask(Task):
                 cur = body._model.body_parentid[cur]
                 d += 1
             return d
+
         depths = [(bid, _depth(bid)) for bid in set(chain_bodies)]
         depths.sort(key=lambda x: x[1])
         anchor_id = depths[0][0]
@@ -400,14 +433,20 @@ class ReachTask(Task):
             self._done = True
             return TaskResult(1.0, True, 1.0, {"distance": dist})
         reward = float(np.clip(-dist / self._initial_dist, -1.0, 0.0))
-        return TaskResult(reward, False, progress,
-                          {"distance": dist, "target": self._target.tolist()})
+        return TaskResult(
+            reward, False, progress, {"distance": dist, "target": self._target.tolist()}
+        )
 
     def get_state(self) -> dict[str, Any]:
         s = super().get_state()
-        s.update(target=self._target.tolist(), initial_dist=self._initial_dist,
-                 reach_radius=self._reach_radius, tolerance=self._tolerance,
-                 ee_body=self._ee_body, anchor_body=self._anchor_body)
+        s.update(
+            target=self._target.tolist(),
+            initial_dist=self._initial_dist,
+            reach_radius=self._reach_radius,
+            tolerance=self._tolerance,
+            ee_body=self._ee_body,
+            anchor_body=self._anchor_body,
+        )
         return s
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -485,13 +524,13 @@ class HeadTrackTask(Task):
             self._done = True
             return TaskResult(1.0, True, 1.0, {"errors": errors})
         reward = float(np.clip(-total_error / self._initial_error, -1.0, 0.0))
-        return TaskResult(reward, False, progress,
-                          {"errors": errors, "targets": self._targets})
+        return TaskResult(reward, False, progress, {"errors": errors, "targets": self._targets})
 
     def get_state(self) -> dict[str, Any]:
         s = super().get_state()
-        s.update(targets=self._targets,
-                 initial_error=self._initial_error, tolerance=self._tolerance)
+        s.update(
+            targets=self._targets, initial_error=self._initial_error, tolerance=self._tolerance
+        )
         return s
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -526,8 +565,12 @@ class WalkTask(Task):
         if body.is_fallen():
             self._done = True
             d = cx - self._start_x
-            return TaskResult(-1.0, False, min(1.0, max(0.0, d / self._target_distance)),
-                              {"root_z": cz, "distance": d, "reason": "fallen"})
+            return TaskResult(
+                -1.0,
+                False,
+                min(1.0, max(0.0, d / self._target_distance)),
+                {"root_z": cz, "distance": d, "reason": "fallen"},
+            )
         d = cx - self._start_x
         progress = min(1.0, max(0.0, d / self._target_distance))
         fwd = cx - self._prev_x
@@ -536,13 +579,18 @@ class WalkTask(Task):
             self._done = True
             return TaskResult(1.0, True, 1.0, {"distance": d})
         reward = float(np.clip(fwd * 10.0, -0.5, 0.5))
-        return TaskResult(reward, False, progress,
-                          {"distance": d, "forward_delta": fwd, "root_z": cz})
+        return TaskResult(
+            reward, False, progress, {"distance": d, "forward_delta": fwd, "root_z": cz}
+        )
 
     def get_state(self) -> dict[str, Any]:
         s = super().get_state()
-        s.update(start_x=self._start_x, prev_x=self._prev_x,
-                 target_distance=self._target_distance, initial_z=self._initial_z)
+        s.update(
+            start_x=self._start_x,
+            prev_x=self._prev_x,
+            target_distance=self._target_distance,
+            initial_z=self._initial_z,
+        )
         return s
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -560,8 +608,12 @@ class TaskCurriculum:
         self._body = body
         # Build task list, filtering out tasks incompatible with this body
         all_tasks = [
-            SupportedStandTask(), StandTask(), HeadTrackTask(),
-            BalanceTask(), ReachTask(), WalkTask(),
+            SupportedStandTask(),
+            StandTask(),
+            HeadTrackTask(),
+            BalanceTask(),
+            ReachTask(),
+            WalkTask(),
         ]
         self._tasks: list[Task] = [t for t in all_tasks if t.is_compatible(body)]
         if not self._tasks:
@@ -574,7 +626,8 @@ class TaskCurriculum:
         self._tasks[0].reset(body)
         logger.info(
             "TaskCurriculum: %d tasks active: %s",
-            len(self._tasks), [t.name for t in self._tasks],
+            len(self._tasks),
+            [t.name for t in self._tasks],
         )
 
     @property
@@ -591,8 +644,9 @@ class TaskCurriculum:
         result = task.evaluate(self._body)
         if result.success:
             self._successes += 1
-            logger.debug("Task '%s' succeeded (%d/%d)",
-                         task.name, self._successes, self._advance_threshold)
+            logger.debug(
+                "Task '%s' succeeded (%d/%d)", task.name, self._successes, self._advance_threshold
+            )
         elif task.is_complete:
             # Decay instead of wipe -- one failed episode shouldn't erase
             # all progress.  Halving means ~7 consecutive failures to reach 0.
@@ -606,8 +660,9 @@ class TaskCurriculum:
             self._current_idx = (self._current_idx + 1) % len(self._tasks)
             self._successes = 0
             self._total_advances += 1
-            logger.info("Curriculum: '%s' -> '%s' (#%d)",
-                        prev, self.current_task.name, self._total_advances)
+            logger.info(
+                "Curriculum: '%s' -> '%s' (#%d)", prev, self.current_task.name, self._total_advances
+            )
             return True
         return False
 

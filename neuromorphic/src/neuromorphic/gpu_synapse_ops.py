@@ -113,9 +113,11 @@ def _jit_spmv(data, indices, spike_vec, n_post: int, n_pre: int):
     key = (n_post, n_pre)
     fn = _JIT_CACHE.get(key)
     if fn is None:
+
         def _mv(d, idx, s):
             m = jsparse.BCOO((d, idx), shape=(n_post, n_pre))
             return m @ s
+
         fn = jax.jit(_mv)
         _JIT_CACHE[key] = fn
     return fn(data, indices, spike_vec)

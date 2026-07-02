@@ -35,9 +35,7 @@ def download_video(url: str, output_dir: str | None = None) -> dict:
     try:
         import yt_dlp
     except ImportError:
-        raise RuntimeError(
-            "yt-dlp not installed. Install with: pip install yt-dlp"
-        )
+        raise RuntimeError("yt-dlp not installed. Install with: pip install yt-dlp")
 
     if output_dir is None:
         output_dir = tempfile.mkdtemp(prefix="activelearning_video_")
@@ -71,6 +69,7 @@ def download_video(url: str, output_dir: str | None = None) -> dict:
 async def download_video_async(url: str, output_dir: str | None = None) -> dict:
     """Async wrapper — runs download in thread pool."""
     import asyncio
+
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, download_video, url, output_dir)
 

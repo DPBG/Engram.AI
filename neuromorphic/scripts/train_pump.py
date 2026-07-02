@@ -20,8 +20,9 @@ import sys
 import time
 
 
-async def send_bulk(nats_url: str, corpus: list[str], reps: int, batch_size: int,
-                    stdp_interval: int | None) -> None:
+async def send_bulk(
+    nats_url: str, corpus: list[str], reps: int, batch_size: int, stdp_interval: int | None
+) -> None:
     try:
         import nats as nats_lib
     except ImportError:
@@ -32,7 +33,7 @@ async def send_bulk(nats_url: str, corpus: list[str], reps: int, batch_size: int
     print(f"Connected to NATS at {nats_url}")
 
     # Split corpus into batches
-    batches = [corpus[i:i + batch_size] for i in range(0, len(corpus), batch_size)]
+    batches = [corpus[i : i + batch_size] for i in range(0, len(corpus), batch_size)]
     total_items = len(corpus)
     total_steps = total_items * reps
 
@@ -67,19 +68,23 @@ async def send_bulk(nats_url: str, corpus: list[str], reps: int, batch_size: int
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Training pump for neuromorphic network"
-    )
+    parser = argparse.ArgumentParser(description="Training pump for neuromorphic network")
     parser.add_argument("--file", "-f", help="Text file with one sentence per line")
     parser.add_argument("--text", "-t", help="Single text string to train on")
-    parser.add_argument("--reps", "-r", type=int, default=5,
-                        help="Repetitions per item (default: 5, max: 20)")
-    parser.add_argument("--batch-size", "-b", type=int, default=20,
-                        help="Items per NATS message (default: 20)")
-    parser.add_argument("--stdp-interval", "-s", type=int, default=None,
-                        help="Override STDP update interval (lower = more learning)")
-    parser.add_argument("--nats-url", default="nats://localhost:4222",
-                        help="NATS server URL")
+    parser.add_argument(
+        "--reps", "-r", type=int, default=5, help="Repetitions per item (default: 5, max: 20)"
+    )
+    parser.add_argument(
+        "--batch-size", "-b", type=int, default=20, help="Items per NATS message (default: 20)"
+    )
+    parser.add_argument(
+        "--stdp-interval",
+        "-s",
+        type=int,
+        default=None,
+        help="Override STDP update interval (lower = more learning)",
+    )
+    parser.add_argument("--nats-url", default="nats://localhost:4222", help="NATS server URL")
     args = parser.parse_args()
 
     if not args.file and not args.text:

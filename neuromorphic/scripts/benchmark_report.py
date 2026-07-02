@@ -38,8 +38,12 @@ def compare(before: dict, after: dict) -> None:
     bc = before.get("config", {})
     ac = after.get("config", {})
     print("--- Configuration ---")
-    print(f"  Neurons:   {bc.get('total_neurons', '?'):>12,}  ->  {ac.get('total_neurons', '?'):>12,}")
-    print(f"  Synapses:  {bc.get('total_synapses', '?'):>12,}  ->  {ac.get('total_synapses', '?'):>12,}")
+    print(
+        f"  Neurons:   {bc.get('total_neurons', '?'):>12,}  ->  {ac.get('total_neurons', '?'):>12,}"
+    )
+    print(
+        f"  Synapses:  {bc.get('total_synapses', '?'):>12,}  ->  {ac.get('total_synapses', '?'):>12,}"
+    )
     print()
 
     # Speed

@@ -53,9 +53,7 @@ class DynamicSensoryAllocator:
         ``set_state()`` to protect learned representations.
         """
         self._frozen = True
-        self._frozen_modalities = {
-            mod for mod, (s, e) in self._current_ranges.items() if e > s
-        }
+        self._frozen_modalities = {mod for mod, (s, e) in self._current_ranges.items() if e > s}
         if self._frozen_modalities:
             logger.info(
                 "Sensory allocator frozen — locked modalities: %s",
@@ -113,8 +111,9 @@ class DynamicSensoryAllocator:
 
             # Use ALL unfrozen modality weights (not just active) to
             # pre-reserve space for modalities that haven't arrived yet.
-            all_unfrozen = {m: w for m, w in self._weights.items()
-                           if m not in self._frozen_modalities}
+            all_unfrozen = {
+                m: w for m, w in self._weights.items() if m not in self._frozen_modalities
+            }
             total_unfrozen_weight = sum(all_unfrozen.values()) or 1.0
             start = frozen_end
             for mod in self._MODALITY_ORDER:
@@ -176,6 +175,7 @@ class DynamicSensoryAllocator:
             self._pending_freeze = False
             self.freeze_existing_ranges()
 
+
 # Provenance → sensory sub-range mapping
 _PROVENANCE_MAP: dict[str, str] = {
     # Body camera — dedicated modality (must be before generic sensor.video)
@@ -197,8 +197,8 @@ _PROVENANCE_MAP: dict[str, str] = {
     "sensor.gyro": "proprioceptive",
     "sensor.joint": "proprioceptive",
     "sensor.motor": "proprioceptive",
-    "sensor.depth": "visual",       # depth camera — spatial, co-binds with RGB camera
-    "sensor.realsense": "visual",   # RealSense alias
+    "sensor.depth": "visual",  # depth camera — spatial, co-binds with RGB camera
+    "sensor.realsense": "visual",  # RealSense alias
     "sensor.videofile": "visual",
     "sensor.audiofile": "auditory",
     "sensor.transcript": "auditory",
@@ -348,7 +348,9 @@ class SpikeEncoder:
             if not data:
                 return None
             # Convert text to character ordinals normalized to [0, 1], clamped for unicode
-            return np.array([min(ord(c) / 127.0, 1.0) for c in data[:target_size]], dtype=np.float32)
+            return np.array(
+                [min(ord(c) / 127.0, 1.0) for c in data[:target_size]], dtype=np.float32
+            )
 
         if isinstance(data, (int, float)):
             return np.array([float(data)], dtype=np.float32)
@@ -399,7 +401,9 @@ class SpikeEncoder:
 
         # Add noise and clamp to non-negative
         if self._enc.noise_fraction > 0:
-            noise = self._rng.normal(0, self._enc.noise_fraction * self._enc.rate_gain, size=len(features))
+            noise = self._rng.normal(
+                0, self._enc.noise_fraction * self._enc.rate_gain, size=len(features)
+            )
             features = features + noise.astype(np.float32)
         np.maximum(features, np.float32(0.0), out=features)
 

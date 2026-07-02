@@ -12,7 +12,6 @@ real NATS server or nsc tool:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,7 +19,6 @@ import pytest
 
 from activelearning.config import ServiceConfig
 from activelearning.nats_client import EventBus
-
 
 # ---------------------------------------------------------------------------
 # ServiceConfig
@@ -33,16 +31,12 @@ class TestServiceConfigCredsLoading:
         cfg = ServiceConfig.from_env("kernel")
         assert cfg.nats_creds == "/run/secrets/kernel.creds"
 
-    def test_from_env_nats_creds_defaults_to_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_from_env_nats_creds_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("NATS_CREDS", raising=False)
         cfg = ServiceConfig.from_env("kernel")
         assert cfg.nats_creds is None
 
-    def test_from_env_empty_string_treated_as_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_from_env_empty_string_treated_as_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # An empty string (e.g. NATS_CREDS= in docker-compose before gen-creds
         # is run) must not be forwarded as a creds path.
         monkeypatch.setenv("NATS_CREDS", "")
@@ -65,9 +59,7 @@ class TestEventBusCredsInit:
         bus = EventBus()
         assert bus.nats_creds == "/run/secrets/planner.creds"
 
-    def test_explicit_creds_take_precedence_over_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_explicit_creds_take_precedence_over_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("NATS_CREDS", "/from/env.creds")
         bus = EventBus(nats_creds="/explicit/path.creds")
         assert bus.nats_creds == "/explicit/path.creds"
@@ -100,15 +92,15 @@ class TestEventBusConnect:
         return nc
 
     @pytest.mark.asyncio
-    async def test_connect_passes_user_credentials_when_file_exists(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_connect_passes_user_credentials_when_file_exists(self, tmp_path: Path) -> None:
         creds_file = tmp_path / "kernel.creds"
         creds_file.write_text("--- fake creds ---")
 
         mock_nc = self._make_mock_nc()
 
-        with patch("activelearning.nats_client.nats.connect", new=AsyncMock(return_value=mock_nc)) as mock_connect:
+        with patch(
+            "activelearning.nats_client.nats.connect", new=AsyncMock(return_value=mock_nc)
+        ) as mock_connect:
             bus = EventBus(nats_creds=str(creds_file))
             await bus.connect()
             call_kwargs = mock_connect.call_args[1]
@@ -116,13 +108,13 @@ class TestEventBusConnect:
             await bus.close()
 
     @pytest.mark.asyncio
-    async def test_connect_omits_user_credentials_when_file_missing(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_connect_omits_user_credentials_when_file_missing(self, tmp_path: Path) -> None:
         absent = str(tmp_path / "nonexistent.creds")
         mock_nc = self._make_mock_nc()
 
-        with patch("activelearning.nats_client.nats.connect", new=AsyncMock(return_value=mock_nc)) as mock_connect:
+        with patch(
+            "activelearning.nats_client.nats.connect", new=AsyncMock(return_value=mock_nc)
+        ) as mock_connect:
             bus = EventBus(nats_creds=absent)
             await bus.connect()
             call_kwargs = mock_connect.call_args[1]
@@ -136,7 +128,9 @@ class TestEventBusConnect:
     async def test_connect_without_creds_is_unauthenticated(self) -> None:
         mock_nc = self._make_mock_nc()
 
-        with patch("activelearning.nats_client.nats.connect", new=AsyncMock(return_value=mock_nc)) as mock_connect:
+        with patch(
+            "activelearning.nats_client.nats.connect", new=AsyncMock(return_value=mock_nc)
+        ) as mock_connect:
             bus = EventBus()
             bus.nats_creds = None
             await bus.connect()

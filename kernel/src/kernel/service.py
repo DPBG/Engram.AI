@@ -9,8 +9,7 @@ import asyncio
 import json
 import os
 import time
-import uuid
-from typing import Any, Optional
+from typing import Any
 
 from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
 from activelearning.nats_client import serialize_message
@@ -21,10 +20,10 @@ from activelearning.subjects import (
 )
 from nats.aio.msg import Msg
 
-from kernel.evaluator import KernelEvaluator, KernelDecision, RiskAnalysis, DecisionType
+from kernel.evaluator import DecisionType, KernelDecision, KernelEvaluator, RiskAnalysis
 from kernel.policy import (
-    PolicyRollbackManager,
     DecisionSequenceTracker,
+    PolicyRollbackManager,
     validate_cognitive_response,
     validate_policy_update,
 )
@@ -34,7 +33,11 @@ _DECISION_TYPES = ("ALLOW", "TRANSFORM", "DENY", "DEFER")
 
 def _empty_bucket() -> dict[str, Any]:
     """A zeroed decision-rate bucket: raw counts + normalized rates."""
-    return {"total": 0, "counts": {t: 0 for t in _DECISION_TYPES}, "rates": {t: 0.0 for t in _DECISION_TYPES}}
+    return {
+        "total": 0,
+        "counts": {t: 0 for t in _DECISION_TYPES},
+        "rates": {t: 0.0 for t in _DECISION_TYPES},
+    }
 
 
 def _accumulate(bucket: dict[str, Any], decision_type: str, count: int) -> None:
@@ -72,14 +75,14 @@ class KernelService(BaseService):
         self._defer_count = 0
 
         # Active body profile name (for audit logging)
-        self._body_profile: Optional[str] = None
+        self._body_profile: str | None = None
 
         # Policy management
         self._rollback = PolicyRollbackManager()
         self._deny_tracker = DecisionSequenceTracker()
 
         # Decision-rate governance signal (M6): periodic trend publish
-        self._decision_rates_task: Optional[asyncio.Task] = None
+        self._decision_rates_task: asyncio.Task | None = None
         self._decision_rates_interval_sec = float(
             os.environ.get("KERNEL_DECISION_RATES_INTERVAL_SEC", "300")
         )
@@ -90,6 +93,7 @@ class KernelService(BaseService):
         # A non-positive or non-finite interval would collapse the publish cadence,
         # so we validate and refuse to start with an invalid configuration.
         import math as _math
+
         _raw_hb = float(os.environ.get("KERNEL_HEARTBEAT_INTERVAL_S", "5.0"))
         if not (_math.isfinite(_raw_hb) and _raw_hb > 0.0):
             raise ValueError(
@@ -97,7 +101,7 @@ class KernelService(BaseService):
                 f"got {os.environ.get('KERNEL_HEARTBEAT_INTERVAL_S')!r}"
             )
         self._heartbeat_interval_s = _raw_hb
-        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: asyncio.Task | None = None
 
         # Load body profile from env if set
         self._load_body_profile()
@@ -116,14 +120,14 @@ class KernelService(BaseService):
 
         try:
             from beliefs.profiles import load_profile
+
             profile = load_profile(profile_name)
             self._body_profile = profile.name
             self._evaluator.set_body_profile(profile)
             self.logger.info(f"Kernel loaded body profile: {profile.name}")
         except FileNotFoundError:
             self.logger.error(
-                f"Body profile '{profile_name}' not found — "
-                f"running without profile constraints"
+                f"Body profile '{profile_name}' not found — " f"running without profile constraints"
             )
         except ValueError as e:
             self.logger.error(
@@ -131,10 +135,7 @@ class KernelService(BaseService):
                 f"running without profile constraints"
             )
         except ImportError:
-            self.logger.warning(
-                "beliefs.profiles not available — "
-                "running without body profile"
-            )
+            self.logger.warning("beliefs.profiles not available — " "running without body profile")
 
     async def _setup(self) -> None:
         """Service-specific setup."""
@@ -151,25 +152,34 @@ class KernelService(BaseService):
             durable="kernel-code-proposals",
         )
         await self.event_bus.subscribe(
-            Subjects.KERNEL_STATUS, self._handle_status, is_request_handler=True,
+            Subjects.KERNEL_STATUS,
+            self._handle_status,
+            is_request_handler=True,
         )
         await self.event_bus.subscribe(
-            Subjects.POLICY_LOAD_PROFILE, self._handle_load_profile,
+            Subjects.POLICY_LOAD_PROFILE,
+            self._handle_load_profile,
         )
         # Brain/dashboard may not publish policy.restrict directly (ADR 0001 §3).
         # They publish policy.restrict.request; the Kernel validates and re-publishes
         # as authoritative policy.restrict that consumers (planner, brain) act on.
         await self.event_bus.subscribe(
-            Subjects.POLICY_RESTRICT_REQUEST, self._handle_restrict_request,
+            Subjects.POLICY_RESTRICT,
+            self._handle_restrict,
+            Subjects.POLICY_RESTRICT_REQUEST,
+            self._handle_restrict_request,
         )
         await self.event_bus.subscribe(
-            Subjects.POLICY_ROLLBACK, self._handle_rollback,
+            Subjects.POLICY_ROLLBACK,
+            self._handle_rollback,
         )
         await self.event_bus.subscribe(
-            Subjects.POLICY_UPDATE, self._handle_policy_update,
+            Subjects.POLICY_UPDATE,
+            self._handle_policy_update,
         )
         await self.event_bus.subscribe(
-            Subjects.COGNITIVE_RESPONSE_VALIDATE, self._handle_cognitive_validate,
+            Subjects.COGNITIVE_RESPONSE_VALIDATE,
+            self._handle_cognitive_validate,
         )
         # SAFE_HALT kill switch (Phase 1.9)
         await self.event_bus.subscribe(Subjects.SAFETY_HALT, self._handle_safety_halt)
@@ -228,7 +238,9 @@ class KernelService(BaseService):
         # the sole publisher of policy.restrict (ADR 0001 §3) and no longer
         # subscribes to it.
         try:
-            await self.event_bus.publish(Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason})
+            await self.event_bus.publish(
+                Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason}
+            )
             restrict_data = {
                 "motor_limits": {
                     ch: {"max_intensity": 0.0}
@@ -242,9 +254,14 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"SAFE_HALT propagation error: {e}")
 
-        await self.event_bus.publish(Subjects.SAFETY_HALT_STATUS, {
-            "halted": True, "reason": reason, "operator_id": operator,
-        })
+        await self.event_bus.publish(
+            Subjects.SAFETY_HALT_STATUS,
+            {
+                "halted": True,
+                "reason": reason,
+                "operator_id": operator,
+            },
+        )
 
     async def _handle_safety_resume(self, data: dict) -> None:
         """Release the kill switch (operator action). Resumes evaluation.
@@ -256,9 +273,13 @@ class KernelService(BaseService):
         operator = data.get("operator_id", "unknown")
         self._evaluator.resume()
         self.logger.warning(f"SAFE_HALT released by {operator}")
-        await self.event_bus.publish(Subjects.SAFETY_HALT_STATUS, {
-            "halted": False, "operator_id": operator,
-        })
+        await self.event_bus.publish(
+            Subjects.SAFETY_HALT_STATUS,
+            {
+                "halted": False,
+                "operator_id": operator,
+            },
+        )
 
     async def _handle_load_profile(self, data: dict) -> None:
         """Handle runtime profile load/switch via NATS.
@@ -268,13 +289,18 @@ class KernelService(BaseService):
         """
         profile_name = data.get("profile_name", "")
         if not profile_name:
-            await self.event_bus.publish("policy.profile.status", {
-                "status": "error", "reason": "Missing profile_name",
-            })
+            await self.event_bus.publish(
+                "policy.profile.status",
+                {
+                    "status": "error",
+                    "reason": "Missing profile_name",
+                },
+            )
             return
 
         try:
             from beliefs.profiles import load_profile
+
             profile = load_profile(profile_name)
 
             # Ensure the OLD profile is in rollback history before switching.
@@ -291,21 +317,28 @@ class KernelService(BaseService):
             self._rollback.snapshot(profile, reason=f"Loaded {profile_name}")
 
             self.logger.info(f"Runtime profile switch: {profile.name}")
-            await self.event_bus.publish("policy.profile.status", {
-                "status": "loaded",
-                "profile": profile.name,
-                "version": profile.version,
-                "capabilities": profile.capabilities,
-                "motor_limits": {
-                    ch: {"max_intensity": lim.max_intensity}
-                    for ch, lim in profile.motor_limits.items()
+            await self.event_bus.publish(
+                "policy.profile.status",
+                {
+                    "status": "loaded",
+                    "profile": profile.name,
+                    "version": profile.version,
+                    "capabilities": profile.capabilities,
+                    "motor_limits": {
+                        ch: {"max_intensity": lim.max_intensity}
+                        for ch, lim in profile.motor_limits.items()
+                    },
                 },
-            })
+            )
         except (FileNotFoundError, ValueError, ImportError) as e:
             self.logger.error(f"Failed to load profile '{profile_name}': {e}")
-            await self.event_bus.publish("policy.profile.status", {
-                "status": "error", "reason": str(e),
-            })
+            await self.event_bus.publish(
+                "policy.profile.status",
+                {
+                    "status": "error",
+                    "reason": str(e),
+                },
+            )
 
     async def _handle_rollback(self, data: dict) -> None:
         """Revert to the last-known-good policy snapshot.
@@ -317,9 +350,13 @@ class KernelService(BaseService):
         """
         snap = self._rollback.rollback()
         if snap is None:
-            await self.event_bus.publish("policy.rollback.status", {
-                "status": "error", "reason": "No rollback history available",
-            })
+            await self.event_bus.publish(
+                "policy.rollback.status",
+                {
+                    "status": "error",
+                    "reason": "No rollback history available",
+                },
+            )
             return
 
         try:
@@ -327,19 +364,25 @@ class KernelService(BaseService):
             self._body_profile = profile.name
             self._evaluator.set_body_profile(profile)
             self.logger.info(
-                f"Policy rollback to '{snap.profile_name}' "
-                f"(snapshot from {snap.reason})"
+                f"Policy rollback to '{snap.profile_name}' " f"(snapshot from {snap.reason})"
             )
-            await self.event_bus.publish("policy.rollback.status", {
-                "status": "rolled_back",
-                "profile": snap.profile_name,
-                "snapshot_reason": snap.reason,
-            })
+            await self.event_bus.publish(
+                "policy.rollback.status",
+                {
+                    "status": "rolled_back",
+                    "profile": snap.profile_name,
+                    "snapshot_reason": snap.reason,
+                },
+            )
         except Exception as e:
             self.logger.error(f"Rollback failed: {e}")
-            await self.event_bus.publish("policy.rollback.status", {
-                "status": "error", "reason": str(e),
-            })
+            await self.event_bus.publish(
+                "policy.rollback.status",
+                {
+                    "status": "error",
+                    "reason": str(e),
+                },
+            )
 
     async def _handle_policy_update(self, data: dict) -> None:
         """Handle validated policy updates from cloud.
@@ -350,10 +393,14 @@ class KernelService(BaseService):
         valid, reason = validate_policy_update(data)
         if not valid:
             self.logger.warning(f"Policy update rejected: {reason}")
-            await self.event_bus.publish("policy.update.status", {
-                "status": "rejected", "reason": reason,
-                "operator_id": data.get("operator_id", "unknown"),
-            })
+            await self.event_bus.publish(
+                "policy.update.status",
+                {
+                    "status": "rejected",
+                    "reason": reason,
+                    "operator_id": data.get("operator_id", "unknown"),
+                },
+            )
             return
 
         # Apply profile switch if requested
@@ -379,28 +426,35 @@ class KernelService(BaseService):
         trace_id = data.get("trace_id", "")
 
         if not trace_id:
-            self.logger.warning("Cognitive validation: missing trace_id — response cannot be correlated")
+            self.logger.warning(
+                "Cognitive validation: missing trace_id — response cannot be correlated"
+            )
 
         valid, reason = validate_cognitive_response(
-            response_text, self._evaluator._body_profile,
+            response_text,
+            self._evaluator._body_profile,
         )
 
         if valid:
-            await self.event_bus.publish("cognitive.response.validated", {
-                "trace_id": trace_id,
-                "response_text": response_text,
-                "query_step": data.get("query_step", 0),
-                "prediction_error": data.get("prediction_error", 0.0),
-                "model": data.get("model", ""),
-            })
-        else:
-            self.logger.warning(
-                f"Cognitive response rejected (trace={trace_id}): {reason}"
+            await self.event_bus.publish(
+                "cognitive.response.validated",
+                {
+                    "trace_id": trace_id,
+                    "response_text": response_text,
+                    "query_step": data.get("query_step", 0),
+                    "prediction_error": data.get("prediction_error", 0.0),
+                    "model": data.get("model", ""),
+                },
             )
-            await self.event_bus.publish("cognitive.response.rejected", {
-                "trace_id": trace_id,
-                "reason": reason,
-            })
+        else:
+            self.logger.warning(f"Cognitive response rejected (trace={trace_id}): {reason}")
+            await self.event_bus.publish(
+                "cognitive.response.rejected",
+                {
+                    "trace_id": trace_id,
+                    "reason": reason,
+                },
+            )
 
     async def _apply_restriction(self, data: dict) -> bool:
         """Apply motor/capability restrictions to the kernel's body profile.
@@ -411,40 +465,56 @@ class KernelService(BaseService):
         Returns True if restrictions were applied, False if rejected/error.
         """
         if self._evaluator._body_profile is None:
-            await self.event_bus.publish("policy.restrict.status", {
-                "status": "error",
-                "reason": "No body profile loaded — cannot apply restrictions",
-            })
+            await self.event_bus.publish(
+                "policy.restrict.status",
+                {
+                    "status": "error",
+                    "reason": "No body profile loaded — cannot apply restrictions",
+                },
+            )
             return False
 
         try:
             from beliefs.profiles import apply_runtime_restrictions
+
             restricted = apply_runtime_restrictions(
-                self._evaluator._body_profile, data,
+                self._evaluator._body_profile,
+                data,
             )
             self._evaluator.set_body_profile(restricted)
             self.logger.info("Applied runtime restrictions to body profile")
-            await self.event_bus.publish("policy.restrict.status", {
-                "status": "applied",
-                "profile": restricted.name,
-                "motor_limits": {
-                    ch: {"max_intensity": lim.max_intensity}
-                    for ch, lim in restricted.motor_limits.items()
+            await self.event_bus.publish(
+                "policy.restrict.status",
+                {
+                    "status": "applied",
+                    "profile": restricted.name,
+                    "motor_limits": {
+                        ch: {"max_intensity": lim.max_intensity}
+                        for ch, lim in restricted.motor_limits.items()
+                    },
+                    "capabilities": restricted.capabilities,
                 },
-                "capabilities": restricted.capabilities,
-            })
+            )
             return True
         except ValueError as e:
             self.logger.warning(f"Runtime restriction rejected: {e}")
-            await self.event_bus.publish("policy.restrict.status", {
-                "status": "rejected", "reason": str(e),
-            })
+            await self.event_bus.publish(
+                "policy.restrict.status",
+                {
+                    "status": "rejected",
+                    "reason": str(e),
+                },
+            )
             return False
         except Exception as e:
             self.logger.error(f"Error applying restrictions: {e}")
-            await self.event_bus.publish("policy.restrict.status", {
-                "status": "error", "reason": str(e),
-            })
+            await self.event_bus.publish(
+                "policy.restrict.status",
+                {
+                    "status": "error",
+                    "reason": str(e),
+                },
+            )
             return False
 
     async def _handle_restrict_request(self, data: dict) -> None:
@@ -497,7 +567,10 @@ class KernelService(BaseService):
                     risk_score=1.0,
                 )
                 await self._publish_and_log_decision(
-                    trace_id, proposal_type, source, deny,
+                    trace_id,
+                    proposal_type,
+                    source,
+                    deny,
                 )
                 self._deny_count += 1
                 return
@@ -521,8 +594,12 @@ class KernelService(BaseService):
 
             # Log and publish (pass original proposal for forwarding on ALLOW)
             await self._publish_and_log_decision(
-                trace_id, proposal_type, source, decision,
-                flags=flags, norm_violations=norm_violations,
+                trace_id,
+                proposal_type,
+                source,
+                decision,
+                flags=flags,
+                norm_violations=norm_violations,
                 original_proposal=proposal,
             )
 
@@ -543,7 +620,10 @@ class KernelService(BaseService):
                     risk_score=1.0,
                 )
                 await self._publish_and_log_decision(
-                    trace_id, proposal_type, source, deny,
+                    trace_id,
+                    proposal_type,
+                    source,
+                    deny,
                 )
                 self._deny_count += 1
             except Exception:
@@ -551,14 +631,16 @@ class KernelService(BaseService):
 
     def _signed_code_decision(self, decision: KernelDecision) -> dict:
         """Build the signed wire payload for a code decision."""
-        return sign_decision({
-            "trace_id": decision.trace_id,
-            "type": decision.type.value,
-            "reason": decision.reason,
-            "risk_score": decision.risk_score,
-            "issued_at": decision.issued_at,
-            "expires_at": decision.expires_at,
-        })
+        return sign_decision(
+            {
+                "trace_id": decision.trace_id,
+                "type": decision.type.value,
+                "reason": decision.reason,
+                "risk_score": decision.risk_score,
+                "issued_at": decision.issued_at,
+                "expires_at": decision.expires_at,
+            }
+        )
 
     async def _handle_code_proposal(self, data: dict) -> None:
         """Handle code proposals from Meta-Programmer."""
@@ -581,61 +663,33 @@ class KernelService(BaseService):
 
             # Log and publish (code uses different NATS subject)
             await self._log_decision(
-                trace_id, "code", source, decision,
+                trace_id,
+                "code",
+                source,
+                decision,
                 flags=flags,
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
+                sign_decision(
+                    {
+                        "trace_id": decision.trace_id,
+                        "type": decision.type.value,
+                        "reason": decision.reason,
+                        "risk_score": decision.risk_score,
+                        "issued_at": decision.issued_at,
+                        "expires_at": decision.expires_at,
+                    }
+                ),
                 self._signed_code_decision(decision),
             )
 
             self.logger.info(
-                f"Code {trace_id}: {decision.type.value}"
-                f" (risk={decision.risk_score:.2f})"
+                f"Code {trace_id}: {decision.type.value}" f" (risk={decision.risk_score:.2f})"
             )
 
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
-
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status requests."""
-        try:
-            status = {
-                "status": "running",
-                "body_profile": self._body_profile,
-                "has_rollback": self._rollback.has_rollback,
-                "deny_sequences": self._deny_tracker.get_state(),
-                "metrics": {
-                    "allow_count": self._allow_count,
-                    "transform_count": self._transform_count,
-                    "deny_count": self._deny_count,
-                    "defer_count": self._defer_count,
-                },
-                "decision_rates": await self._compute_decision_rates(),
-            }
-
-            # Publish status response
-            await self.event_bus.publish("kernel.status.response", status)
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
-            # Always publish a decision so the Meta-Programmer's wait doesn't
-            # hang. Fail-safe: DENY on internal errors — the Kernel is the sole
-            # authority that may emit a decision and must fail closed
-            # (mirrors _handle_action_proposal).
-            try:
-                deny = KernelDecision(
-                    trace_id=trace_id,
-                    type=DecisionType.DENY,
-                    reason=f"Kernel internal error: {e}",
-                    risk_score=1.0,
-                )
-                await self.event_bus.publish(
-                    code_decision_subject(trace_id),
-                    self._signed_code_decision(deny),
-                )
-                self._deny_count += 1
-            except Exception:
-                pass  # best-effort — consumer will time out
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
@@ -717,20 +771,24 @@ class KernelService(BaseService):
         for row in all_time_rows:
             _accumulate(all_time_bucket, row["decision_type"], row["cnt"])
             source_bucket = by_source.setdefault(
-                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+                row["source"] or "unknown",
+                {"all_time": _empty_bucket(), "window": _empty_bucket()},
             )
             _accumulate(source_bucket["all_time"], row["decision_type"], row["cnt"])
 
         for row in window_rows:
             _accumulate(window_bucket, row["decision_type"], row["cnt"])
             source_bucket = by_source.setdefault(
-                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+                row["source"] or "unknown",
+                {"all_time": _empty_bucket(), "window": _empty_bucket()},
             )
             _accumulate(source_bucket["window"], row["decision_type"], row["cnt"])
 
-        for bucket in [all_time_bucket, window_bucket, *(
-            b for s in by_source.values() for b in s.values()
-        )]:
+        for bucket in [
+            all_time_bucket,
+            window_bucket,
+            *(b for s in by_source.values() for b in s.values()),
+        ]:
             _finalize_rates(bucket)
 
         return {
@@ -745,7 +803,7 @@ class KernelService(BaseService):
         self,
         proposal: dict,
         is_code: bool = False,
-    ) -> Optional[RiskAnalysis]:
+    ) -> RiskAnalysis | None:
         """Request risk analysis from Safety Supervisor."""
         try:
             # Request analysis from Safety Supervisor
@@ -805,31 +863,39 @@ class KernelService(BaseService):
 
                 # Check: gradual_motor — intensity jumps > max_intensity_delta
                 if norm_id == "norm.gradual_motor":
-                    max_delta = metadata.get("max_intensity_delta", 0.3)
+                    _max_delta = metadata.get("max_intensity_delta", 0.3)
                     # For now, flag high-intensity commands as potential violations.
                     # Future: track per-channel last intensity for delta checking.
                     if isinstance(intensity, (int, float)) and intensity > 0.85:
-                        violations.append({
-                            "norm_id": norm_id,
-                            "content": norm.get("content", ""),
-                            "risk_boost": 0.15,
-                        })
+                        violations.append(
+                            {
+                                "norm_id": norm_id,
+                                "content": norm.get("content", ""),
+                                "risk_boost": 0.15,
+                            }
+                        )
 
                 # Check: slow_novel — intensity cap in unfamiliar environments
                 if norm_id == "norm.slow_novel":
-                    max_novel = metadata.get("max_intensity_novel", 0.5)
+                    _max_novel = metadata.get("max_intensity_novel", 0.5)
                     # Future: check if environment is "novel" via beliefs.
                     # For now, this norm is advisory — no automatic violation.
 
                 # Check: force_limit — specific motor channels
                 if norm_id == "norm.force_limit":
                     limited_channels = metadata.get("motor_channels", [])
-                    if channel in limited_channels and isinstance(intensity, (int, float)) and intensity > 0.9:
-                        violations.append({
-                            "norm_id": norm_id,
-                            "content": norm.get("content", ""),
-                            "risk_boost": 0.2,
-                        })
+                    if (
+                        channel in limited_channels
+                        and isinstance(intensity, (int, float))
+                        and intensity > 0.9
+                    ):
+                        violations.append(
+                            {
+                                "norm_id": norm_id,
+                                "content": norm.get("content", ""),
+                                "risk_boost": 0.2,
+                            }
+                        )
 
             return violations
         except Exception as e:
@@ -842,9 +908,9 @@ class KernelService(BaseService):
         proposal_type: str,
         source: str,
         decision: KernelDecision,
-        flags: Optional[list[str]] = None,
-        norm_violations: Optional[list[dict[str, Any]]] = None,
-        original_proposal: Optional[dict[str, Any]] = None,
+        flags: list[str] | None = None,
+        norm_violations: list[dict[str, Any]] | None = None,
+        original_proposal: dict[str, Any] | None = None,
     ) -> None:
         """Publish decision to NATS and log to SQLite audit trail.
 
@@ -853,15 +919,17 @@ class KernelService(BaseService):
         For cognitive/speech proposals that are ALLOWED, forwards to
         the appropriate execution channel.
         """
-        decision_payload = sign_decision({
-            "trace_id": decision.trace_id,
-            "type": decision.type.value,
-            "reason": decision.reason,
-            "transformations": decision.transformations,
-            "risk_score": decision.risk_score,
-            "issued_at": decision.issued_at,
-            "expires_at": decision.expires_at,
-        })
+        decision_payload = sign_decision(
+            {
+                "trace_id": decision.trace_id,
+                "type": decision.type.value,
+                "reason": decision.reason,
+                "transformations": decision.transformations,
+                "risk_score": decision.risk_score,
+                "issued_at": decision.issued_at,
+                "expires_at": decision.expires_at,
+            }
+        )
 
         # Publish decision (signed) — caller is waiting on this and will
         # reject it unless the signature verifies.
@@ -873,30 +941,40 @@ class KernelService(BaseService):
             channel = original_proposal.get("action", {}).get("channel", "")
         if channel:
             escalation = self._deny_tracker.record_decision(
-                channel, decision.type.value,
+                channel,
+                decision.type.value,
             )
             if escalation == "disable":
                 await self._auto_disable_channel(channel)
             elif escalation == "escalate":
-                await self.event_bus.publish("safety.deny_escalation", {
-                    "channel": channel,
-                    "deny_count": self._deny_tracker._sequences[channel].count,
-                    "action": "escalate",
-                    "operator_id": "system:deny_tracker",
-                })
+                await self.event_bus.publish(
+                    "safety.deny_escalation",
+                    {
+                        "channel": channel,
+                        "deny_count": self._deny_tracker._sequences[channel].count,
+                        "action": "escalate",
+                        "operator_id": "system:deny_tracker",
+                    },
+                )
 
         # On ALLOW: forward cognitive/speech to their execution channels.
         # This keeps the Kernel as the single gatekeeper — downstream services
         # subscribe to Kernel-gated subjects, not raw brain output.
         if decision.type == DecisionType.ALLOW and original_proposal:
             await self._forward_allowed_proposal(
-                proposal_type, trace_id, original_proposal,
+                proposal_type,
+                trace_id,
+                original_proposal,
             )
 
         # Log to audit trail (best-effort, don't block on failure)
         await self._log_decision(
-            trace_id, proposal_type, source, decision,
-            flags=flags, norm_violations=norm_violations,
+            trace_id,
+            proposal_type,
+            source,
+            decision,
+            flags=flags,
+            norm_violations=norm_violations,
         )
 
     async def _forward_allowed_proposal(
@@ -913,25 +991,29 @@ class KernelService(BaseService):
         try:
             if proposal_type == "cognitive":
                 metadata = proposal.get("metadata", {})
-                await self.event_bus.publish("cognitive.execute", {
-                    "trace_id": trace_id,
-                    "prediction_error": proposal.get("action", {}).get(
-                        "prediction_error", 0.0
-                    ),
-                    "intensity": proposal.get("action", {}).get("intensity", 0.0),
-                    "step": metadata.get("step", 0),
-                    "drives": metadata.get("drives", {}),
-                })
+                await self.event_bus.publish(
+                    "cognitive.execute",
+                    {
+                        "trace_id": trace_id,
+                        "prediction_error": proposal.get("action", {}).get("prediction_error", 0.0),
+                        "intensity": proposal.get("action", {}).get("intensity", 0.0),
+                        "step": metadata.get("step", 0),
+                        "drives": metadata.get("drives", {}),
+                    },
+                )
             elif proposal_type == "speech":
                 action = proposal.get("action", {})
-                await self.event_bus.publish("speech.execute", {
-                    "trace_id": trace_id,
-                    "token_idx": action.get("token_idx", 0),
-                    "confidence": action.get("confidence", 0.0),
-                    "intensity": action.get("intensity", 0.0),
-                    "step": proposal.get("metadata", {}).get("step", 0),
-                    "output_number": action.get("output_number", 0),
-                })
+                await self.event_bus.publish(
+                    "speech.execute",
+                    {
+                        "trace_id": trace_id,
+                        "token_idx": action.get("token_idx", 0),
+                        "confidence": action.get("confidence", 0.0),
+                        "intensity": action.get("intensity", 0.0),
+                        "step": proposal.get("metadata", {}).get("step", 0),
+                        "output_number": action.get("output_number", 0),
+                    },
+                )
         except Exception as e:
             self.logger.warning(f"Failed to forward {proposal_type} proposal: {e}")
 
@@ -941,8 +1023,8 @@ class KernelService(BaseService):
         proposal_type: str,
         source: str,
         decision: KernelDecision,
-        flags: Optional[list[str]] = None,
-        norm_violations: Optional[list[dict[str, Any]]] = None,
+        flags: list[str] | None = None,
+        norm_violations: list[dict[str, Any]] | None = None,
     ) -> None:
         """Log decision to SQLite audit trail."""
         try:
@@ -957,9 +1039,11 @@ class KernelService(BaseService):
                     "reason": decision.reason,
                     "risk_score": decision.risk_score,
                     "flags": json.dumps(flags) if flags else None,
-                    "norm_violations": json.dumps(
-                        [v.get("norm_id", "") for v in norm_violations]
-                    ) if norm_violations else None,
+                    "norm_violations": (
+                        json.dumps([v.get("norm_id", "") for v in norm_violations])
+                        if norm_violations
+                        else None
+                    ),
                     "body_profile": self._body_profile,
                     "issued_at": decision.issued_at,
                     "expires_at": decision.expires_at,
@@ -998,6 +1082,23 @@ class KernelService(BaseService):
             f"{DecisionSequenceTracker.DISABLE_THRESHOLD} consecutive DENYs"
         )
         try:
+            await self.event_bus.publish(
+                Subjects.POLICY_RESTRICT,
+                {
+                    "motor_limits": {channel: {"max_intensity": 0.0}},
+                    "reason": f"Auto-disable: {channel} consecutive DENY threshold",
+                    "operator_id": "system:deny_tracker",
+                },
+            )
+            await self.event_bus.publish(
+                "safety.deny_escalation",
+                {
+                    "channel": channel,
+                    "action": "auto_disabled",
+                    "deny_count": self._deny_tracker._sequences[channel].count,
+                    "operator_id": "system:deny_tracker",
+                },
+            )
             restrict_data = {
                 "motor_limits": {channel: {"max_intensity": 0.0}},
                 "reason": f"Auto-disable: {channel} consecutive DENY threshold",
@@ -1007,12 +1108,15 @@ class KernelService(BaseService):
             # publisher so it cannot rely on a subscription round-trip).
             await self._apply_restriction(restrict_data)
             await self.event_bus.publish(Subjects.POLICY_RESTRICT, restrict_data)
-            await self.event_bus.publish("safety.deny_escalation", {
-                "channel": channel,
-                "action": "auto_disabled",
-                "deny_count": self._deny_tracker._sequences[channel].count,
-                "operator_id": "system:deny_tracker",
-            })
+            await self.event_bus.publish(
+                "safety.deny_escalation",
+                {
+                    "channel": channel,
+                    "action": "auto_disabled",
+                    "deny_count": self._deny_tracker._sequences[channel].count,
+                    "operator_id": "system:deny_tracker",
+                },
+            )
         except Exception as e:
             self.logger.error(f"Failed to auto-disable channel '{channel}': {e}")
 

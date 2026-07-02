@@ -73,9 +73,7 @@ class _FakeClaude:
         self.messages = self
 
     async def create(self, **kwargs) -> object:
-        return types.SimpleNamespace(
-            content=[types.SimpleNamespace(text=self._text)]
-        )
+        return types.SimpleNamespace(content=[types.SimpleNamespace(text=self._text)])
 
 
 class _FakeOpenAI:
@@ -88,11 +86,7 @@ class _FakeOpenAI:
 
     async def create(self, **kwargs) -> object:
         return types.SimpleNamespace(
-            choices=[
-                types.SimpleNamespace(
-                    message=types.SimpleNamespace(content=self._text)
-                )
-            ]
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=self._text))]
         )
 
 
@@ -108,9 +102,14 @@ class _FakeMsg:
 
 
 class _Logger:
-    def info(self, *a, **k): pass
-    def warning(self, *a, **k): pass
-    def error(self, *a, **k): pass
+    def info(self, *a, **k):
+        pass
+
+    def warning(self, *a, **k):
+        pass
+
+    def error(self, *a, **k):
+        pass
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -302,18 +301,24 @@ def test_no_conflict_without_local_knowledge():
 
 def test_detect_conflict_true_when_zero_overlap():
     mgr = ExternalAPIManager(event_bus=_FakeBus(), db=_FakeDB())
-    assert mgr._detect_conflict(
-        "alpha beta gamma",
-        {"description": "zeta eta theta iota"},
-    ) is True
+    assert (
+        mgr._detect_conflict(
+            "alpha beta gamma",
+            {"description": "zeta eta theta iota"},
+        )
+        is True
+    )
 
 
 def test_detect_conflict_false_when_identical_words():
     mgr = ExternalAPIManager(event_bus=_FakeBus(), db=_FakeDB())
-    assert mgr._detect_conflict(
-        "the quick brown fox",
-        {"description": "the quick brown fox"},
-    ) is False
+    assert (
+        mgr._detect_conflict(
+            "the quick brown fox",
+            {"description": "the quick brown fox"},
+        )
+        is False
+    )
 
 
 def test_detect_conflict_false_when_empty_local_text():
@@ -331,9 +336,7 @@ def test_detect_conflict_false_when_no_description_key():
 
 def test_handle_query_success_updates_metrics():
     svc = _build_service()
-    svc._manager = _manager(
-        _FakeBus(decision={"type": "ALLOW"}), _FakeDB(), claude=_FakeClaude()
-    )
+    svc._manager = _manager(_FakeBus(decision={"type": "ALLOW"}), _FakeDB(), claude=_FakeClaude())
     _run(svc._handle_query({"query": "what?"}, _FakeMsg()))
     assert svc._queries_total == 1
     assert svc._queries_success == 1
@@ -352,9 +355,7 @@ def test_handle_query_failure_updates_failed_metric():
 def test_handle_query_conflict_increments_conflict_counter():
     svc = _build_service()
     bus = _FakeBus(decision={"type": "ALLOW"})
-    svc._manager = _manager(
-        bus, _FakeDB(), claude=_FakeClaude("alpha beta gamma delta")
-    )
+    svc._manager = _manager(bus, _FakeDB(), claude=_FakeClaude("alpha beta gamma delta"))
     _run(
         svc._handle_query(
             {
@@ -369,9 +370,7 @@ def test_handle_query_conflict_increments_conflict_counter():
 
 def test_handle_query_replies_when_reply_address_present():
     svc = _build_service()
-    svc._manager = _manager(
-        _FakeBus(decision={"type": "ALLOW"}), _FakeDB(), claude=_FakeClaude()
-    )
+    svc._manager = _manager(_FakeBus(decision={"type": "ALLOW"}), _FakeDB(), claude=_FakeClaude())
     msg = _FakeMsg(has_reply=True)
     _run(svc._handle_query({"query": "answer me"}, msg))
     assert msg.responded
@@ -379,9 +378,7 @@ def test_handle_query_replies_when_reply_address_present():
 
 def test_handle_query_no_reply_address_does_not_crash():
     svc = _build_service()
-    svc._manager = _manager(
-        _FakeBus(decision={"type": "ALLOW"}), _FakeDB(), claude=_FakeClaude()
-    )
+    svc._manager = _manager(_FakeBus(decision={"type": "ALLOW"}), _FakeDB(), claude=_FakeClaude())
     msg = _FakeMsg(has_reply=False)
     _run(svc._handle_query({"query": "silent"}, msg))
     assert msg.responded == []

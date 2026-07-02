@@ -13,8 +13,6 @@ import json
 import logging
 import os
 import shutil
-import time
-from typing import Optional
 
 from activelearning import current_timestamp
 

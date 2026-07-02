@@ -39,10 +39,13 @@ def build_chat_router(ctx: DashboardContext) -> APIRouter:
         if not ctx.nats.can_publish:
             return {"error": "NATS not connected", "ok": False}
         try:
-            await ctx.nats.publish(obs.provenance, {
-                "provenance": obs.provenance,
-                "data": obs.data,
-            })
+            await ctx.nats.publish(
+                obs.provenance,
+                {
+                    "provenance": obs.provenance,
+                    "data": obs.data,
+                },
+            )
             logger.info(f"Injected observation via {obs.provenance}")
             return {"ok": True, "provenance": obs.provenance}
         except Exception as e:

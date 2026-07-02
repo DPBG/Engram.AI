@@ -35,8 +35,8 @@ from neuromorphic.synapses import SynapseGroup
 # own adaptive-strategy thresholds (100K / 10M nnz) so results are meaningful
 # relative to the code being compared against, not arbitrary round numbers.
 SCALES = [
-    ("small", 2_000, 2_000, 0.02, 0.05),      # ~80K nnz — below the 100K CSC-gather threshold
-    ("medium", 20_000, 20_000, 0.01, 0.05),   # ~4M nnz — inside the CSC-gather range
+    ("small", 2_000, 2_000, 0.02, 0.05),  # ~80K nnz — below the 100K CSC-gather threshold
+    ("medium", 20_000, 20_000, 0.01, 0.05),  # ~4M nnz — inside the CSC-gather range
     ("large", 200_000, 200_000, 0.0005, 0.02),  # ~20M nnz — above the CSC-gather range
 ]
 
@@ -87,17 +87,22 @@ def main() -> None:
     print(f"jax available: {gpu_backend_available()}")
     if gpu_backend_available():
         import jax
+
         print(f"jax devices: {jax.devices()}")
     print()
 
     results = [run_scale(*scale, calls=args.calls) for scale in SCALES]
 
-    print(f"{'scale':<8} {'nnz':>10} {'scipy(ms)':>10} {'jax(ms)':>10} {'slowdown':>9} {'max|diff|':>10}")
+    print(
+        f"{'scale':<8} {'nnz':>10} {'scipy(ms)':>10} {'jax(ms)':>10} {'slowdown':>9} {'max|diff|':>10}"
+    )
     for r in results:
         jax_ms = f"{r['jax_ms_per_call']:.3f}" if r["jax_ms_per_call"] is not None else "n/a"
         slow = f"{r['slowdown_factor']:.1f}x" if r["slowdown_factor"] is not None else "n/a"
         diff = f"{r['max_abs_diff']:.2e}" if r["max_abs_diff"] is not None else "n/a"
-        print(f"{r['scale']:<8} {r['nnz']:>10} {r['cpu_ms_per_call']:>10.3f} {jax_ms:>10} {slow:>9} {diff:>10}")
+        print(
+            f"{r['scale']:<8} {r['nnz']:>10} {r['cpu_ms_per_call']:>10.3f} {jax_ms:>10} {slow:>9} {diff:>10}"
+        )
 
     output = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -112,6 +117,7 @@ def main() -> None:
     }
     if gpu_backend_available():
         import jax
+
         output["jax_version"] = jax.__version__
         output["jax_devices"] = [str(d) for d in jax.devices()]
 

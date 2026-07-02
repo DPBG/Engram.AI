@@ -8,7 +8,6 @@ with sensible defaults.
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 from activelearning.database import default_sqlite_path
 
@@ -39,7 +38,7 @@ class ServiceConfig:
 
     # Path to a per-service NATS .creds file (NKEY + signed JWT).
     # None → unauthenticated / URL-embedded token (dev mode).
-    nats_creds: Optional[str] = None
+    nats_creds: str | None = None
 
     @classmethod
     def from_env(cls, service_name: str) -> "ServiceConfig":
