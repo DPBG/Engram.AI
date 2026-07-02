@@ -25,6 +25,11 @@ dev = [
     # collection time in the neuromorphic-only CI environment.
     "networkx>=3.2.0",
 ]
+# Optional compiled kernels (M4 performance prototype).
+# Install with: uv run --extra compiled python -m pytest tests/test_compiled_stdp.py
+compiled = [
+    "numba>=0.59.0",
+]
 # Experimental GPU synapse-op backend (issue #135 research spike, see
 # gpu_synapse_ops.py / docs/GPU-SYNAPSE-BACKEND-FEASIBILITY.md). Not a
 # default dependency: jax/jaxlib add ~90MB and are lazy-imported, so the

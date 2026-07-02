@@ -7,6 +7,14 @@ import logging
 import numpy as np
 from scipy import sparse
 
+import logging
+
+from neuromorphic.compiled_kernels import (
+    COMPILED_STDP_ENABLED,
+    stdp_delta as _compiled_stdp_delta,
+    neuromod_decay_sparse as _compiled_neuromod_decay_sparse,
+    neuromod_decay_full as _compiled_neuromod_decay_full,
+)
 from neuromorphic.config import (
     BCMConfig,
     EligibilityTraceConfig,
@@ -425,10 +433,6 @@ class SynapseGroup:
         active_idx = active_idx[in_window]
         dt_spike = dt_spike[in_window]
 
-        # LTP: post fires after pre (dt > 0), or simultaneous (dt == 0, Hebbian coincidence)
-        ltp_mask = dt_spike >= 0
-        dw = np.zeros(len(active_idx), dtype=np.float32)
-
         # BCM scaling: modulate A_plus AND A_minus per postsynaptic neuron
         bcm_scale = self._get_bcm_scaling()
         if bcm_scale is not None and ltp_mask.any():
@@ -447,8 +451,21 @@ class SynapseGroup:
             dw[ltd_mask] = -a_minus_vec * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(
                 np.float32
             )
+        if bcm_scale is None:
+            # Compiled kernel (or NumPy fallback): single fused pass, no temp mask arrays
+            dw = _compiled_stdp_delta(dt_spike, p.a_plus, p.tau_plus, p.a_minus, p.tau_minus)
         else:
-            dw[ltd_mask] = -p.a_minus * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(np.float32)
+            # BCM-scaled path: per-neuron amplitude, vectorized NumPy
+            # H3: BCM modulates both LTP and LTD — active neurons resist both
+            ltp_mask = dt_spike >= 0
+            dw = np.zeros(len(active_idx), dtype=np.float32)
+            if ltp_mask.any():
+                a_plus_vec = np.float32(p.a_plus) * bcm_scale[rows[active_idx[ltp_mask]]]
+                dw[ltp_mask] = a_plus_vec * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
+            ltd_mask = dt_spike < 0
+            if ltd_mask.any():
+                a_minus_vec = np.float32(p.a_minus) * bcm_scale[rows[active_idx[ltd_mask]]]
+                dw[ltd_mask] = -a_minus_vec * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(np.float32)
 
         # Compartment-aware credit assignment: scale dw by compartment activity
         if compartment_activity < 1.0:
@@ -524,15 +541,8 @@ class SynapseGroup:
 
         dt_spike = post_spike_times[rows[active_idx]] - pre_spike_times[cols[active_idx]]
 
-        # LTP: post fires after pre or simultaneous (Hebbian coincidence)
-        ltp_mask = dt_spike >= 0
-        dw = np.zeros(len(active_idx), dtype=np.float32)
-        dw[ltp_mask] = p.a_plus * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
-
-        ltd_mask = dt_spike < 0
-        dw[ltd_mask] = -p.a_minus * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(np.float32)
-
-        # Modulate by reward signal
+        # Compiled kernel (or NumPy fallback): fused LTP/LTD, then reward modulation
+        dw = _compiled_stdp_delta(dt_spike, p.a_plus, p.tau_plus, p.a_minus, p.tau_minus)
         dw *= np.float32(modulation)
 
         # Compartment-aware credit assignment (before surprise bonus, which is global)
@@ -734,11 +744,18 @@ class SynapseGroup:
 
         # Full-array path: _elig_active abandoned (>80% active) or never initialized
         if self._elig_active is None:
-            dw = np.float32(modulator_signal) * self.eligibility * interval_gain
-            if plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility):
-                dw *= plasticity_mask
-            data[:] = np.clip(data + dw, p.w_min, p.w_max)
-            self.eligibility *= decay
+            _compiled_neuromod_decay_full(
+                self.eligibility,
+                data,
+                modulator_signal,
+                float(interval_gain),
+                float(decay),
+                p.w_min,
+                p.w_max,
+                plasticity_mask
+                if (plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility))
+                else None,
+            )
             return
 
         # Periodic sweep: must run even when _elig_active is empty, to clean
@@ -782,22 +799,22 @@ class SynapseGroup:
         # get_adolescent_plasticity_mask) scales identity synapses to 0.01,
         # satisfying Claim 2's "plasticity->1%" requirement.
 
-        elig_slice = self.eligibility[idx]
-
-        # Apply neuromodulation: dw = modulator * eligibility * geometric-gain * mask
-        # interval_gain restores every-step equivalence over the batched interval
-        # (see the comment where it is computed above).
-        dw = np.float32(modulator_signal) * elig_slice * interval_gain
-        if plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility):
-            dw *= plasticity_mask[idx]
-        data[idx] = np.clip(data[idx] + dw, p.w_min, p.w_max)
-
-        # Decay eligibility traces (compensated for interval)
-        elig_slice *= decay
-        self.eligibility[idx] = elig_slice
-
-        # Prune near-zero entries from active set
-        alive = np.abs(elig_slice) > self._elig_prune_threshold
+        # Fused: neuromod + decay + clip + prune in one pass over the active set.
+        # Per-entry effective gain handles mid-interval pruning correctly.
+        alive = _compiled_neuromod_decay_sparse(
+            self.eligibility,
+            data,
+            idx,
+            modulator_signal,
+            interval,
+            float(d),
+            p.w_min,
+            p.w_max,
+            float(self._elig_prune_threshold),
+            plasticity_mask
+            if (plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility))
+            else None,
+        )
         if not alive.all():
             self._elig_active = idx[alive]
 

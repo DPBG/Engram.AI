@@ -270,6 +270,12 @@ def create_sensor(device: DiscoveredDevice, args: argparse.Namespace):
             port=device.metadata["port"],
         )
 
+    elif device.device_type == "imu":
+        from sensors.imu import IMUSensor
+        return IMUSensor(
+            port=device.metadata["port"],
+        )
+
     return None
 
 

@@ -81,6 +81,20 @@ def discover_microphones() -> list[DiscoveredDevice]:
     return mics
 
 
+# Description substrings (lower-cased) that identify IMU devices on serial ports.
+# A matching serial port is classified as device_type="imu" so the gateway
+# instantiates IMUSensor instead of the generic SerialSensor.
+_IMU_KEYWORDS = (
+    "imu",
+    "mpu",  # MPU-6050 / MPU-9250
+    "bno",  # BNO055 / BNO085
+    "icm",  # ICM-42688 / ICM-20948
+    "lsm",  # LSM6DS0 / LSM9DS1
+    "inertial",
+    "gyro",
+    "accel",
+)
+
 _SERIAL_SKIP_PATTERNS = (
     "debug-console",
     "bluetooth",
@@ -116,6 +130,16 @@ def discover_serial_devices() -> list[DiscoveredDevice]:
             DiscoveredDevice(
                 device_type="serial",
                 device_id=f"serial:{port.device}",
+        # Classify as "imu" when the description matches known IMU keywords,
+        # so the gateway can instantiate IMUSensor instead of SerialSensor.
+        desc_lower = (port.description or "").lower()
+        device_type = "imu" if any(kw in desc_lower for kw in _IMU_KEYWORDS) else "serial"
+        device_id_prefix = "imu" if device_type == "imu" else "serial"
+
+        devices.append(
+            DiscoveredDevice(
+                device_type=device_type,
+                device_id=f"{device_id_prefix}:{port.device}",
                 name=port.description or port.device,
                 metadata={
                     "port": port.device,
@@ -169,7 +193,7 @@ def discover_all(
 
 
 # Device types the gateway knows how to handle natively.
-KNOWN_DEVICE_TYPES = {"camera", "mic", "serial"}
+KNOWN_DEVICE_TYPES = {"camera", "mic", "serial", "imu"}
 
 # Keywords that indicate a device is an actuator rather than a sensor.
 _ACTUATOR_KEYWORDS = ("motor", "servo", "actuator", "gripper")

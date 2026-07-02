@@ -197,6 +197,8 @@ _PROVENANCE_MAP: dict[str, str] = {
     "sensor.gyro": "proprioceptive",
     "sensor.joint": "proprioceptive",
     "sensor.motor": "proprioceptive",
+    "sensor.depth": "visual",       # depth camera — spatial, co-binds with RGB camera
+    "sensor.realsense": "visual",   # RealSense alias
     "sensor.videofile": "visual",
     "sensor.audiofile": "auditory",
     "sensor.transcript": "auditory",
