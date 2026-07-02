@@ -11,6 +11,7 @@ from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.benchmarks import (
     BenchmarkSuite,
     CrossModalRecallBenchmark,
+    CrossModalBindingAccuracyBenchmark,
     NoveltyDetectionBenchmark,
     AssociationStrengthBenchmark,
     EnergyEfficiencyBenchmark,
@@ -150,6 +151,7 @@ class TestBenchmarkSuite:
         assert "novelty_detection" in results
         assert "association_strength" in results
         assert "energy_efficiency" in results
+        assert "cross_modal_binding_accuracy" in results
         assert "timestamp" in results
         assert results["total_neurons"] > 0
 
@@ -161,6 +163,17 @@ class TestBenchmarkSuite:
         assert "Novelty Detection" in text
         assert "Association Strength" in text
         assert "Energy Efficiency" in text
+        assert "Cross-Modal Binding Accuracy" in text
+
+
+class TestCrossModalBindingAccuracyInSuite:
+    def test_run_all_includes_binding_accuracy(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=2, training_reps=1, steps_per_pattern=4)
+        ba = results["cross_modal_binding_accuracy"]
+        assert "precision" in ba
+        assert "recall" in ba
+        assert ba["pairs_tested"] <= 2
 
     def test_save_results(self, small_network, tmp_path):
         suite = BenchmarkSuite(small_network)
