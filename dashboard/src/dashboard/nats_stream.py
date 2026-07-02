@@ -18,20 +18,22 @@ from dashboard.state import DashboardState
 from dashboard.util import now_iso
 
 # Subjects handled by dedicated callbacks — skipped by the ``>`` wildcard handler.
-DEDICATED_SUBJECTS = frozenset({
-    "neuromorphic.metrics",
-    "proposal.new",
-    "sensory.gateway.status",
-    "video.training.status",
-    "approval.request",
-    "mujoco.body.state",
-    "neuromorphic.concept.result",
-    "safety.watchdog.status",
-    "safety.deny_escalation",
-    "speech.execute",
-    "observation.visual.body",
-    "safety.halt.status",
-})
+DEDICATED_SUBJECTS = frozenset(
+    {
+        "neuromorphic.metrics",
+        "proposal.new",
+        "sensory.gateway.status",
+        "video.training.status",
+        "approval.request",
+        "mujoco.body.state",
+        "neuromorphic.concept.result",
+        "safety.watchdog.status",
+        "safety.deny_escalation",
+        "speech.execute",
+        "observation.visual.body",
+        "safety.halt.status",
+    }
+)
 
 
 class NatsStreamManager:
@@ -40,14 +42,14 @@ class NatsStreamManager:
     def __init__(self, state: DashboardState):
         self._state = state
         self.logger = logging.getLogger("dashboard.nats")
-        self.nc = None            # NATS connection handle (None until connected)
-        self._connected = False   # health flag (see `connected` vs `can_publish`)
+        self.nc = None  # NATS connection handle (None until connected)
+        self._connected = False  # health flag (see `connected` vs `can_publish`)
 
         # Throttle high-rate observation.* subjects in the feed.
         self._obs_last_broadcast: dict[str, float] = {}  # subject -> last broadcast time
-        self._obs_dropped: dict[str, int] = {}           # subject -> dropped since last broadcast
+        self._obs_dropped: dict[str, int] = {}  # subject -> dropped since last broadcast
         self._obs_throttle_interval = 0.5  # max 2 broadcasts/sec per observation subject
-        self._obs_max_tracked = 50         # cap tracked subjects to bound growth
+        self._obs_max_tracked = 50  # cap tracked subjects to bound growth
         self._last_proposal_broadcast = 0.0
         self._last_body_frame_ts = 0.0
 
@@ -87,10 +89,15 @@ class NatsStreamManager:
             self.logger.debug(f"Skip publish: nc={self.nc is not None}, text={bool(text)}")
             return
         try:
-            await self.nc.publish("observation.text", json.dumps({
-                "provenance": "observation.text",
-                "data": text,
-            }).encode())
+            await self.nc.publish(
+                "observation.text",
+                json.dumps(
+                    {
+                        "provenance": "observation.text",
+                        "data": text,
+                    }
+                ).encode(),
+            )
             self.logger.info(f"Published observation.text ({len(text)} chars)")
         except Exception as e:
             self.logger.warning(f"Failed to publish text observation: {e}")
@@ -99,12 +106,15 @@ class NatsStreamManager:
     async def connect(self) -> None:
         try:
             import nats as nats_lib
+
             nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
             nc = await nats_lib.connect(nats_url, name="activelearning-dashboard")
             self.nc = nc
             self._connected = True
             self._state.skills.record_call("bus.nats", 0)
-            self._state.knowledge.learn("deployment", "connectivity", "Connected to NATS message bus")
+            self._state.knowledge.learn(
+                "deployment", "connectivity", "Connected to NATS message bus"
+            )
             self.logger.info("Connected to NATS")
 
             await nc.subscribe(">", cb=self._handle_msg)
@@ -189,11 +199,14 @@ class NatsStreamManager:
             data = json.loads(msg.data.decode())
             svc = data.get("service", "?")
             self._state.service_status[svc] = {
-                "name": svc, "status": "running",
+                "name": svc,
+                "status": "running",
                 "uptime": data.get("uptime"),
                 "last_seen": now_iso(),
             }
-            await self._broadcast({"type": "service_status", "data": self._state.service_status[svc]})
+            await self._broadcast(
+                {"type": "service_status", "data": self._state.service_status[svc]}
+            )
         except Exception:
             pass
 
@@ -201,7 +214,9 @@ class NatsStreamManager:
         try:
             data = json.loads(msg.data.decode())
             self._state.neuro_metrics = data
-            self._state.knowledge.learn("simulation", "neural_simulation", f"step={data.get('step_count', '?')}")
+            self._state.knowledge.learn(
+                "simulation", "neural_simulation", f"step={data.get('step_count', '?')}"
+            )
             await self._broadcast({"type": "neuro_update", "data": data})
         except Exception:
             pass
@@ -215,11 +230,16 @@ class NatsStreamManager:
             provenance = data.get("provenance", "")
             if provenance.startswith("neuromorphic."):
                 self._last_proposal_broadcast = now
-                await self._broadcast({"type": "neuro_response", "data": {
-                    "action": data.get("action", {}),
-                    "provenance": provenance,
-                    "metadata": data.get("metadata", {}),
-                }})
+                await self._broadcast(
+                    {
+                        "type": "neuro_response",
+                        "data": {
+                            "action": data.get("action", {}),
+                            "provenance": provenance,
+                            "metadata": data.get("metadata", {}),
+                        },
+                    }
+                )
         except Exception:
             pass
 
@@ -251,7 +271,9 @@ class NatsStreamManager:
             if not isinstance(channel, str) or len(channel) > 128:
                 return
             intensity = data.get("intensity")
-            if intensity is not None and (not isinstance(intensity, (int, float)) or intensity < 0 or intensity > 1):
+            if intensity is not None and (
+                not isinstance(intensity, (int, float)) or intensity < 0 or intensity > 1
+            ):
                 data["intensity"] = None  # sanitize invalid
             reason = str(data.get("reason", ""))[:500]
             data["reason"] = reason
@@ -285,10 +307,12 @@ class NatsStreamManager:
             # Convert [0,1] floats to uint8 bytes, then base64.
             raw = bytes(min(255, max(0, int(v * 255))) for v in pixels)
             b64 = base64.b64encode(raw).decode("ascii")
-            await self._broadcast({
-                "type": "visual_body_frame",
-                "data": {"pixels_b64": b64, "width": 64, "height": 64},
-            })
+            await self._broadcast(
+                {
+                    "type": "visual_body_frame",
+                    "data": {"pixels_b64": b64, "width": 64, "height": 64},
+                }
+            )
         except Exception:
             pass
 
@@ -314,8 +338,7 @@ class NatsStreamManager:
             data = json.loads(msg.data.decode())
             self._state.deny_escalations.append(data)
             self.logger.warning(
-                f"Deny escalation: channel={data.get('channel')}, "
-                f"action={data.get('action')}"
+                f"Deny escalation: channel={data.get('channel')}, " f"action={data.get('action')}"
             )
             await self._broadcast({"type": "deny_escalation", "data": data})
         except Exception as e:

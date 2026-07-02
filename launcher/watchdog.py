@@ -9,6 +9,7 @@ never auto-resumes.
 Run as a subprocess:
     python -m launcher.watchdog        # reads NATS_URL, KERNEL_WATCHDOG_TIMEOUT_S
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -121,6 +122,7 @@ class KernelWatchdog:
 # Production wiring (NATS transport)
 # ---------------------------------------------------------------------------
 
+
 async def run_watchdog(
     nats_url: str,
     timeout_s: float = 15.0,
@@ -132,7 +134,9 @@ async def run_watchdog(
     watchdog = KernelWatchdog(timeout_s=timeout_s, check_interval_s=check_interval_s)
     log.info(
         "Kernel watchdog starting — timeout=%.1fs check=%.1fs nats=%s",
-        timeout_s, check_interval_s, nats_url,
+        timeout_s,
+        check_interval_s,
+        nats_url,
     )
 
     nc = await _nats.connect(nats_url)

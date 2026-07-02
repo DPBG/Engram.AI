@@ -97,11 +97,13 @@ class DashboardState:
     # ── chat history ──────────────────────────────────────────────────────
     def append_chat(self, role: str, content: str) -> None:
         """Append a chat turn and trim to the most recent ``MAX_CHAT_HISTORY``."""
-        self.chat_history.append({
-            "role": role,
-            "content": content,
-            "timestamp": now_iso(),
-        })
+        self.chat_history.append(
+            {
+                "role": role,
+                "content": content,
+                "timestamp": now_iso(),
+            }
+        )
         if len(self.chat_history) > MAX_CHAT_HISTORY:
             self.chat_history[:] = self.chat_history[-MAX_CHAT_HISTORY:]
 
@@ -124,9 +126,10 @@ class DashboardState:
         self.video_sessions[sid] = data
         if len(self.video_sessions) > MAX_VIDEO_SESSIONS:
             removable = [
-                (k, v) for k, v in self.video_sessions.items()
+                (k, v)
+                for k, v in self.video_sessions.items()
                 if v.get("status") in ("stopped", "completed", "error")
             ]
             removable.sort(key=lambda x: x[1].get("created_at", 0))
-            for k, _ in removable[:len(self.video_sessions) - MAX_VIDEO_SESSIONS]:
+            for k, _ in removable[: len(self.video_sessions) - MAX_VIDEO_SESSIONS]:
                 self.video_sessions.pop(k, None)

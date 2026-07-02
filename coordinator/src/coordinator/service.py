@@ -73,7 +73,9 @@ class CoordinatorService(BaseService):
         await self.event_bus.subscribe("demo.observation", self._handle_observation)
         await self.event_bus.subscribe("demo.finish", self._handle_demo_finish)
         await self.event_bus.subscribe(
-            Subjects.COORDINATOR_STATUS, self._handle_status, is_request_handler=True,
+            Subjects.COORDINATOR_STATUS,
+            self._handle_status,
+            is_request_handler=True,
         )
         await self.event_bus.subscribe("device.unknown", self._handle_unknown_device)
 

@@ -9,6 +9,7 @@ not after a fixed wall-clock slice. This eliminates CI-jitter flakiness.
 Tests that verify a halt does NOT fire use generous heartbeat rates
 (beat_interval << timeout) so even a slow CI host cannot trigger a false halt.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,14 +24,15 @@ from launcher.watchdog import KernelWatchdog
 #   _CHECK        — watchdog polls this often
 #   _SAFE_WAIT    — upper bound we allow the halt event to arrive (very generous)
 # ---------------------------------------------------------------------------
-_HB_TIMEOUT = 1.0    # large enough that spurious delays don't accidentally fire
-_CHECK = 0.05        # 50 ms — responsive without being tight
-_SAFE_WAIT = 10.0    # we expect the halt in < 0.1 s; 10 s is a CI safety net
+_HB_TIMEOUT = 1.0  # large enough that spurious delays don't accidentally fire
+_CHECK = 0.05  # 50 ms — responsive without being tight
+_SAFE_WAIT = 10.0  # we expect the halt in < 0.1 s; 10 s is a CI safety net
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _expire(wdog: KernelWatchdog, extra: float = 1.0) -> None:
     """Back-date last_heartbeat so the watchdog appears already timed out."""
@@ -72,6 +74,7 @@ async def _run_for(
     duration: float,
 ) -> None:
     """Run the watchdog for exactly *duration* seconds (used by no-halt tests)."""
+
     async def _publish(subject: str, payload: dict) -> None:
         published.append((subject, payload))
 
@@ -84,6 +87,7 @@ async def _run_for(
 # ---------------------------------------------------------------------------
 # Startup grace period (sync — no NATS needed)
 # ---------------------------------------------------------------------------
+
 
 def test_freshly_constructed_watchdog_is_not_timed_out():
     """Constructor seeds last_heartbeat to now — not immediately timed out."""
@@ -110,6 +114,7 @@ def test_record_heartbeat_resets_timeout():
 # ---------------------------------------------------------------------------
 # Core behaviour: halt on timeout
 # ---------------------------------------------------------------------------
+
 
 def test_halt_published_on_timeout():
     """No heartbeat → safety.halt is published (event-driven, not time-bounded)."""
@@ -145,6 +150,7 @@ def test_halt_message_reason_mentions_kernel_loss():
 # ---------------------------------------------------------------------------
 # No halt while heartbeats arrive
 # ---------------------------------------------------------------------------
+
 
 def test_no_halt_while_heartbeats_live():
     """Heartbeats arriving well within the timeout must prevent any halt.
@@ -182,6 +188,7 @@ def test_no_halt_while_heartbeats_live():
 # One halt per loss event (no duplicate spam)
 # ---------------------------------------------------------------------------
 
+
 def test_halt_fires_only_once_per_loss_event():
     """A single loss event must produce exactly one safety.halt (no spam)."""
     published: list = []
@@ -202,6 +209,7 @@ def test_halt_fires_only_once_per_loss_event():
 # ---------------------------------------------------------------------------
 # No auto-resume
 # ---------------------------------------------------------------------------
+
 
 def test_no_auto_resume_when_heartbeat_returns():
     """Watchdog must never publish safety.resume — resuming is operator-gated."""
@@ -249,6 +257,7 @@ def test_no_auto_resume_when_heartbeat_returns():
 # Second loss event fires another halt
 # ---------------------------------------------------------------------------
 
+
 def test_second_kernel_loss_fires_second_halt():
     """After the kernel restarts and then dies again, a second halt must fire."""
     published: list = []
@@ -277,6 +286,7 @@ def test_second_kernel_loss_fires_second_halt():
 # ---------------------------------------------------------------------------
 # halt_count metric
 # ---------------------------------------------------------------------------
+
 
 def test_halt_count_increments():
     """_halt_count must increment once per triggered halt."""

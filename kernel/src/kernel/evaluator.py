@@ -498,10 +498,7 @@ class KernelEvaluator:
             flags.append("PROFILE_DENY:cognitive")
             return {
                 "type": DecisionType.DENY,
-                "reason": (
-                    f"Body profile '{profile.name}' disallows "
-                    f"cognitive queries"
-                ),
+                "reason": (f"Body profile '{profile.name}' disallows " f"cognitive queries"),
                 "risk_score": 1.0,
             }
 
