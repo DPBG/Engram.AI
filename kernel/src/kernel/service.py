@@ -195,6 +195,8 @@ class KernelService(BaseService):
 
         # Decision-rate governance signal (M6): periodic trend publish
         self._decision_rates_task = asyncio.create_task(self._decision_rates_loop())
+        # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
@@ -204,13 +206,12 @@ class KernelService(BaseService):
                 await self._decision_rates_task
             except asyncio.CancelledError:
                 pass
-        # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-
-    async def _cleanup(self) -> None:
-        """Service-specific cleanup."""
-        if self._heartbeat_task:
+        if self._heartbeat_task and not self._heartbeat_task.done():
             self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
     async def _heartbeat_loop(self) -> None:
         """Publish kernel.heartbeat every KERNEL_HEARTBEAT_INTERVAL_S seconds (E1.9.3)."""
@@ -679,16 +680,6 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
-                sign_decision(
-                    {
-                        "trace_id": decision.trace_id,
-                        "type": decision.type.value,
-                        "reason": decision.reason,
-                        "risk_score": decision.risk_score,
-                        "issued_at": decision.issued_at,
-                        "expires_at": decision.expires_at,
-                    }
-                ),
                 self._signed_code_decision(decision),
             )
 
@@ -698,6 +689,23 @@ class KernelService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
+            # Always publish a decision so the meta-programmer's Future doesn't hang.
+            # Fail-safe: DENY on internal errors.
+            try:
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=f"Kernel internal error: {e}",
+                    risk_score=1.0,
+                )
+                await self._log_decision(trace_id, "code", source, deny)
+                await self.event_bus.publish(
+                    code_decision_subject(trace_id),
+                    self._signed_code_decision(deny),
+                )
+                self._deny_count += 1
+            except Exception:
+                pass  # best-effort — caller will timeout
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
