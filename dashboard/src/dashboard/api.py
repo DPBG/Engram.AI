@@ -1,42 +1,40 @@
 """
-Engram Dashboard — API.
+Engram Dashboard — composition root.
 
-Dashboard for the Engram neuromorphic brain. The LLM chat is a
-communication interface for the spiking neural network, not the
-intelligence itself. The brain learns through STDP on sensory
-experience; the LLM provides a natural-language window into its state.
-
-FastAPI backend with WebSocket, system detection, skill registry,
-knowledge base, conversational AI, and self-improvement loop.
+The LLM chat is a communication interface for the spiking neural network, not
+the intelligence itself — it provides a natural-language window into the brain's
+state. This module only assembles the app: it builds the shared state and the
+focused components (NATS, chat, metrics) and wires the router groups onto
+FastAPI. The behaviour lives in those modules.
 """
 
 import asyncio
-import base64
-import json
 import logging
 import os
-import platform
-import re
-import shutil
-import subprocess
 import time
-import uuid
-from collections import deque
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
-import aiohttp
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel
 
-from dashboard.auth import install_auth_middleware, authorize_websocket
-from dashboard.safe_halt import (
-    get_halt_state, update_halt_state,
-    sanitize_halt_payload, sanitize_resume_payload,
+from dashboard.auth import install_auth_middleware
+from dashboard.chat import ChatEngine
+from dashboard.context import DashboardContext
+from dashboard.knowledge import KnowledgeBase
+from dashboard.metrics import MetricsMonitor
+from dashboard.models import ChatMessage, ObservationPayload
+from dashboard.nats_stream import NatsStreamManager
+from dashboard.routers import (
+    build_chat_router,
+    build_control_router,
+    build_introspection_router,
+    build_stream_router,
+    build_system_router,
 )
+from dashboard.skills import SkillRegistry
+from dashboard.state import DashboardState
+from dashboard.system import detect_system_info, get_live_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +68,10 @@ _video_sessions: dict[str, dict] = {}  # session_id -> status dict
 # Safety / watchdog state (updated via NATS)
 _watchdog_status: dict[str, Any] = {}
 _deny_escalations: deque = deque(maxlen=50)
+
+# Kernel decision-rate governance signal — ALLOW/TRANSFORM/DENY/DEFER trend
+# (updated via NATS, kernel.decision_rates; see kernel/src/kernel/service.py)
+_kernel_decision_rates: dict[str, Any] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -439,165 +441,23 @@ def detect_system_info() -> dict[str, Any]:
 
     # ─── Available APIs ──────────────────────────────────────────
     info["apis"] = _detect_available_apis()
+# The dashboard's public surface. ``SkillRegistry``/``KnowledgeBase``/the models
+# and ``detect_system_info``/``get_live_metrics`` now live in focused modules but
+# are re-exported here for backwards compatibility with anything importing them
+# from ``dashboard.api``.
+__all__ = [
+    "DashboardService",
+    "app",
+    "main",
+    "service",
+    "SkillRegistry",
+    "KnowledgeBase",
+    "ChatMessage",
+    "ObservationPayload",
+    "detect_system_info",
+    "get_live_metrics",
+]
 
-    # ─── Capabilities ────────────────────────────────────────────
-    info["capabilities"] = _detect_capabilities()
-
-    _system_info = info
-    return info
-
-
-def _detect_running_services() -> list[dict]:
-    """Detect running services / listening ports."""
-    services = []
-    try:
-        # Check listening TCP ports
-        if platform.system() == "Linux":
-            r = subprocess.run(
-                ["ss", "-tlnp"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if r.returncode == 0:
-                for line in r.stdout.strip().split("\n")[1:]:  # skip header
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        local = parts[3]
-                        # Extract port
-                        port_match = re.search(r':(\d+)$', local)
-                        if port_match:
-                            port = int(port_match.group(1))
-                            proc = parts[-1] if len(parts) > 5 else ""
-                            # Map well-known ports
-                            name = _port_to_service_name(port, proc)
-                            services.append({
-                                "port": port,
-                                "name": name,
-                                "address": local,
-                            })
-    except Exception:
-        pass
-
-    return services
-
-
-def _port_to_service_name(port: int, proc_info: str = "") -> str:
-    """Map port number to known service names."""
-    known = {
-        4222: "NATS (client)",
-        8222: "NATS (monitoring)",
-        6333: "Qdrant (HTTP)",
-        6334: "Qdrant (gRPC)",
-        8080: "Dashboard",
-        11434: "Ollama (LLM)",
-        7777: "Custom Service",
-        5432: "PostgreSQL",
-        3306: "MySQL",
-        6379: "Redis",
-        9090: "Prometheus",
-        3000: "Grafana",
-        443: "HTTPS",
-        80: "HTTP",
-    }
-    return known.get(port, f"port-{port}")
-
-
-def _detect_available_apis() -> list[dict]:
-    """Detect what APIs are reachable from this container."""
-    apis = []
-    checks = [
-        ("NATS", os.environ.get("NATS_URL", "nats://nats:4222"), "nats"),
-        ("Ollama", os.environ.get("OLLAMA_URL", "http://ollama:11434"), "llm"),
-        ("Qdrant", os.environ.get("QDRANT_URL", "http://qdrant:6333"), "vector_db"),
-    ]
-    for name, url, api_type in checks:
-        apis.append({
-            "name": name,
-            "url": url,
-            "type": api_type,
-            "configured": True,
-        })
-    return apis
-
-
-def _detect_capabilities() -> list[str]:
-    """What can this system do?"""
-    caps = [
-        "system_monitoring",
-        "resource_tracking",
-        "container_management",
-        "conversational_ai",
-        "nats_messaging",
-        "self_improvement",
-    ]
-    # Check for Docker socket
-    if os.path.exists("/var/run/docker.sock"):
-        caps.append("docker_orchestration")
-    # Check for Ollama env
-    if os.environ.get("OLLAMA_URL"):
-        caps.append("local_llm")
-    return caps
-
-
-def get_live_metrics() -> dict[str, Any]:
-    """Get live resource usage metrics."""
-    metrics: dict[str, Any] = {}
-    try:
-        if platform.system() == "Linux":
-            with open("/proc/loadavg") as f:
-                loadavg = f.read().split()
-            metrics["load_average"] = {
-                "1min": float(loadavg[0]),
-                "5min": float(loadavg[1]),
-                "15min": float(loadavg[2]),
-            }
-            with open("/proc/meminfo") as f:
-                meminfo = f.read()
-            mem_total = mem_avail = 0
-            for line in meminfo.split("\n"):
-                if line.startswith("MemTotal:"):
-                    mem_total = int(line.split()[1]) * 1024
-                elif line.startswith("MemAvailable:"):
-                    mem_avail = int(line.split()[1]) * 1024
-            metrics["memory"] = {
-                "total_gb": round(mem_total / (1024**3), 2),
-                "available_gb": round(mem_avail / (1024**3), 2),
-                "used_percent": round(((mem_total - mem_avail) / mem_total) * 100, 1) if mem_total > 0 else 0,
-            }
-        disk = shutil.disk_usage("/")
-        metrics["disk"] = {
-            "used_percent": round((disk.used / disk.total) * 100, 1),
-            "free_gb": round(disk.free / (1024**3), 2),
-        }
-        try:
-            with open("/proc/uptime") as f:
-                secs = float(f.read().split()[0])
-            metrics["uptime"] = f"{int(secs // 3600)}h {int((secs % 3600) // 60)}m"
-        except Exception:
-            metrics["uptime"] = "unknown"
-    except Exception as e:
-        metrics["error"] = str(e)
-    metrics["timestamp"] = datetime.now(timezone.utc).isoformat()
-    return metrics
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# PYDANTIC MODELS
-# ═══════════════════════════════════════════════════════════════════════
-
-class ChatMessage(BaseModel):
-    message: str
-    context: Optional[str] = None
-
-
-class ObservationPayload(BaseModel):
-    """Inject a sensory observation directly into the brain via NATS."""
-    provenance: str  # e.g. "observation.text", "sensor.image"
-    data: Any  # text string, or list of floats for image features
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# DASHBOARD SERVICE
-# ═══════════════════════════════════════════════════════════════════════
 
 class DashboardService:
     """
@@ -605,32 +465,32 @@ class DashboardService:
 
     Monitors the spiking neural network, provides a chat interface
     (LLM as communication layer), and manages the deployment
-    environment.
+    environment. Owns the shared state and the focused components, and wires
+    the routers + lifecycle onto the FastAPI app.
     """
 
     def __init__(self):
         self.app = FastAPI(title="Engram")
         self.logger = logging.getLogger("dashboard")
-        self._nats_connected = False
-        self._nc = None  # NATS connection for publishing
-        self._service_status: dict[str, dict] = {}
-        self._ollama_url = os.environ.get("OLLAMA_URL", "http://ollama:11434")
-        self._openai_url = os.environ.get("OPENAI_API_URL", "")
-        self._openai_key = os.environ.get("OPENAI_API_KEY", "")
-        self._llm_model = os.environ.get("LLM_MODEL", "llama3.2")
+
+        # Shared state + focused components (the former god-class concerns).
+        self.state = DashboardState()
+        self.nats = NatsStreamManager(self.state)
+        self.chat = ChatEngine(self.state, self.nats)
+        self.metrics = MetricsMonitor(self.state)
+        self.ctx = DashboardContext(
+            state=self.state, nats=self.nats, chat=self.chat, metrics=self.metrics,
+        )
+
         self._self_monitor_task: Optional[asyncio.Task] = None
         self._metrics_task: Optional[asyncio.Task] = None
-        self._concept_probe_results: list[dict] = []
-        self._MAX_PROBE_RESULTS = 200
 
-        # Core components
-        self.skills = SkillRegistry()
-        self.knowledge = KnowledgeBase()
+        self._configure_app()
 
-        self._setup_routes()
+    def _configure_app(self):
+        app = self.app
 
-    def _setup_routes(self):
-        self.app.add_middleware(
+        app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"], allow_credentials=True,
             allow_methods=["*"], allow_headers=["*"],
@@ -639,7 +499,7 @@ class DashboardService:
         # Authenticate the control plane: when ENGRAM_DASHBOARD_TOKEN is set,
         # every state-mutating request (POST/PUT/DELETE) must present it. No-op
         # in dev when the token is unset (logs a one-time warning). See auth.py.
-        install_auth_middleware(self.app)
+        install_auth_middleware(app)
 
         static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")
 
@@ -650,24 +510,44 @@ class DashboardService:
         if not os.path.exists(brain_viz_dir):
             brain_viz_dir = "/app/brain-viz"
         if os.path.exists(brain_viz_dir):
-            self.app.mount("/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz")
+            app.mount("/brain-viz", StaticFiles(directory=brain_viz_dir, html=True), name="brain-viz")
 
         if os.path.exists(static_dir):
-            self.app.mount("/static", StaticFiles(directory=static_dir), name="static")
+            app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-        @self.app.on_event("startup")
+        # Routers, grouped by area (replaces the old monolithic _setup_routes).
+        app.include_router(build_system_router(self.ctx, static_dir))
+        app.include_router(build_introspection_router(self.ctx))
+        app.include_router(build_control_router(self.ctx))
+        app.include_router(build_chat_router(self.ctx))
+        app.include_router(build_stream_router(self.ctx))
+
+        self._register_lifecycle()
+
+    def _register_lifecycle(self):
+        app = self.app
+
+        @app.on_event("startup")
         async def on_startup():
             t0 = time.time()
-            detect_system_info()
-            self.skills.record_call("env.detect", (time.time() - t0) * 1000)
-            self.knowledge.learn("deployment", "system", f"Engram deployed on: {_system_info.get('os', {}).get('system', '?')} {_system_info.get('os', {}).get('machine', '?')}")
-            self.knowledge.learn("deployment", "system", f"Capabilities: {', '.join(_system_info.get('capabilities', []))}")
-            self._self_monitor_task = asyncio.create_task(self._self_improvement_loop())
-            self._metrics_task = asyncio.create_task(self._metrics_broadcast_loop())
-            asyncio.create_task(self._connect_nats())
+            self.state.system_info = detect_system_info()
+            self.state.skills.record_call("env.detect", (time.time() - t0) * 1000)
+            info = self.state.system_info
+            self.state.knowledge.learn(
+                "deployment", "system",
+                f"Engram deployed on: {info.get('os', {}).get('system', '?')} "
+                f"{info.get('os', {}).get('machine', '?')}",
+            )
+            self.state.knowledge.learn(
+                "deployment", "system",
+                f"Capabilities: {', '.join(info.get('capabilities', []))}",
+            )
+            self._self_monitor_task = asyncio.create_task(self.metrics.self_improvement_loop())
+            self._metrics_task = asyncio.create_task(self.metrics.metrics_broadcast_loop())
+            asyncio.create_task(self.nats.connect())
             self.logger.info("Engram Dashboard started")
 
-        @self.app.on_event("shutdown")
+        @app.on_event("shutdown")
         async def on_shutdown():
             if self._self_monitor_task:
                 self._self_monitor_task.cancel()
@@ -799,6 +679,20 @@ class DashboardService:
                 return {"results": results}
             except Exception as e:
                 return {"error": str(e), "results": []}
+
+        # ── API: Kernel Decision Rates (governance signal, issue #143) ─
+
+        @self.app.get("/api/kernel/decision-rates")
+        async def get_kernel_decision_rates():
+            """Return the latest ALLOW/TRANSFORM/DENY/DEFER rates from the Kernel.
+
+            Populated from the periodic kernel.decision_rates NATS publish;
+            empty until the Kernel has sent its first update. Advisory only —
+            this never influences Kernel decisions, it just makes drift in
+            meta-programmer / brain proposal quality visible before autonomy
+            is expanded (see docs/META-PROGRAMMER.md).
+            """
+            return _kernel_decision_rates
 
         # ── API: Sensory Gateway ──────────────────────────────────────
 
@@ -1190,6 +1084,7 @@ class DashboardService:
                         "gateway": _gateway_status,
                         "video_sessions": list(_video_sessions.values()),
                         "halt_state": get_halt_state(),
+                        "kernel_decision_rates": _kernel_decision_rates,
                     },
                 })
 
@@ -1610,6 +1505,16 @@ class DashboardService:
                 except Exception as e:
                     self.logger.error(f"Error handling watchdog status: {e}")
 
+            async def handle_kernel_decision_rates(msg):
+                """Cache and broadcast the Kernel's periodic decision-rate trend."""
+                try:
+                    data = json.loads(msg.data.decode())
+                    global _kernel_decision_rates
+                    _kernel_decision_rates = data
+                    await self._broadcast({"type": "kernel_decision_rates", "data": data})
+                except Exception as e:
+                    self.logger.error(f"Error handling kernel decision rates: {e}")
+
             async def handle_deny_escalation(msg):
                 try:
                     data = json.loads(msg.data.decode())
@@ -1651,6 +1556,7 @@ class DashboardService:
             _dedicated_subjects.add("neuromorphic.concept.result")
             _dedicated_subjects.add("safety.watchdog.status")
             _dedicated_subjects.add("safety.deny_escalation")
+            _dedicated_subjects.add("kernel.decision_rates")
             _dedicated_subjects.add("speech.execute")
             _dedicated_subjects.add("observation.visual.body")
             _dedicated_subjects.add("safety.halt.status")
@@ -1666,6 +1572,7 @@ class DashboardService:
             await nc.subscribe("neuromorphic.concept.result", cb=handle_concept_result)
             await nc.subscribe("safety.watchdog.status", cb=handle_watchdog_status)
             await nc.subscribe("safety.deny_escalation", cb=handle_deny_escalation)
+            await nc.subscribe("kernel.decision_rates", cb=handle_kernel_decision_rates)
             await nc.subscribe("speech.execute", cb=handle_speech_execute)
             await nc.subscribe("observation.visual.body", cb=handle_visual_body)
             await nc.subscribe("safety.halt.status", cb=handle_safe_halt_status)
@@ -2062,7 +1969,6 @@ class DashboardService:
 # APPLICATION
 # ═══════════════════════════════════════════════════════════════════════
 
-_startup_time = time.time()
 service = DashboardService()
 app = service.app
 

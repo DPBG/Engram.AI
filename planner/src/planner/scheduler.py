@@ -9,7 +9,8 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
-import time
+
+from activelearning import current_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class PendingAction:
     trace_id: str
     priority: int
     proposal: dict[str, Any]
-    created_at: int = field(default_factory=lambda: int(time.time() * 1000))
+    created_at: int = field(default_factory=current_timestamp)
     expires_at: Optional[int] = None
 
 
@@ -120,7 +121,7 @@ class Scheduler:
             return None
 
         # Remove expired actions
-        now = int(time.time() * 1000)
+        now = current_timestamp()
         self._pending = [
             a for a in self._pending
             if a.expires_at is None or a.expires_at > now

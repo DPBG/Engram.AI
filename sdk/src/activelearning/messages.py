@@ -232,6 +232,7 @@ SUBJECT_SCHEMAS: dict[str, type[WireModel]] = {
     Subjects.PROPOSAL_NEW: ActionProposalMessage,
     Subjects.CODE_PROPOSAL: CodeProposalMessage,
     Subjects.POLICY_RESTRICT: PolicyRestrictMessage,
+    Subjects.POLICY_RESTRICT_REQUEST: PolicyRestrictMessage,
     Subjects.SAFETY_HALT: SafetyHaltMessage,
     Subjects.SAFETY_RESUME: OperatorActionMessage,
     Subjects.SAFETY_ANALYZE_ACTION: SafetyAnalyzeMessage,

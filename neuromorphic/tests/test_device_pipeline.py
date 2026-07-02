@@ -11,7 +11,9 @@ SDK dependencies that aren't installed in the neuromorphic venv.
 import importlib.util
 import os
 import sys
+import time
 import unittest
+import uuid
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -86,12 +88,16 @@ _mock_core.KernelDecision = _FakeDecision
 _mock_core.RiskAnalysis = _FakeRiskAnalysis
 _mock_core.ActionProposal = _FakeActionProposal
 _mock_core.generate_trace_id = _fake_generate_trace_id
+_mock_core.current_timestamp = lambda: int(time.time() * 1000)
+_mock_core.generate_trace_id = lambda: str(uuid.uuid4())
 
 # Mock the activelearning package so kernel.evaluator can import from it
 _mock_al = type(sys)("activelearning")
 _mock_al.KernelDecisionType = _FakeDecisionType
 _mock_al.KernelDecision = _FakeDecision
 _mock_al.RiskAnalysis = _FakeRiskAnalysis
+_mock_al.current_timestamp = _mock_core.current_timestamp
+_mock_al.generate_trace_id = _mock_core.generate_trace_id
 _mock_al.core = _mock_core
 sys.modules["activelearning"] = _mock_al
 sys.modules["activelearning.core"] = _mock_core

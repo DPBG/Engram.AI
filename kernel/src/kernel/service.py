@@ -8,15 +8,18 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 import asyncio
 import json
 import os
+import time
 import uuid
 from typing import Any, Optional
 
-from activelearning import BaseService, sign_decision
+from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
+from activelearning.nats_client import serialize_message
 from activelearning.subjects import (
     Subjects,
     code_decision_subject,
     decision_subject,
 )
+from nats.aio.msg import Msg
 
 from kernel.evaluator import KernelEvaluator, KernelDecision, RiskAnalysis, DecisionType
 from kernel.policy import (
@@ -25,6 +28,29 @@ from kernel.policy import (
     validate_cognitive_response,
     validate_policy_update,
 )
+
+_DECISION_TYPES = ("ALLOW", "TRANSFORM", "DENY", "DEFER")
+
+
+def _empty_bucket() -> dict[str, Any]:
+    """A zeroed decision-rate bucket: raw counts + normalized rates."""
+    return {"total": 0, "counts": {t: 0 for t in _DECISION_TYPES}, "rates": {t: 0.0 for t in _DECISION_TYPES}}
+
+
+def _accumulate(bucket: dict[str, Any], decision_type: str, count: int) -> None:
+    """Add a grouped SQL row's count into a bucket, ignoring unknown types."""
+    if decision_type not in bucket["counts"]:
+        return
+    bucket["counts"][decision_type] += count
+    bucket["total"] += count
+
+
+def _finalize_rates(bucket: dict[str, Any]) -> None:
+    """Convert accumulated counts into fractions of the bucket's total."""
+    total = bucket["total"]
+    if total <= 0:
+        return
+    bucket["rates"] = {t: round(c / total, 4) for t, c in bucket["counts"].items()}
 
 
 class KernelService(BaseService):
@@ -51,6 +77,27 @@ class KernelService(BaseService):
         # Policy management
         self._rollback = PolicyRollbackManager()
         self._deny_tracker = DecisionSequenceTracker()
+
+        # Decision-rate governance signal (M6): periodic trend publish
+        self._decision_rates_task: Optional[asyncio.Task] = None
+        self._decision_rates_interval_sec = float(
+            os.environ.get("KERNEL_DECISION_RATES_INTERVAL_SEC", "300")
+        )
+        self._decision_rates_window_hours = float(
+            os.environ.get("KERNEL_DECISION_RATES_WINDOW_HOURS", "24")
+        )
+        # Heartbeat (E1.9.3): publish kernel.heartbeat so the watchdog can detect loss.
+        # A non-positive or non-finite interval would collapse the publish cadence,
+        # so we validate and refuse to start with an invalid configuration.
+        import math as _math
+        _raw_hb = float(os.environ.get("KERNEL_HEARTBEAT_INTERVAL_S", "5.0"))
+        if not (_math.isfinite(_raw_hb) and _raw_hb > 0.0):
+            raise ValueError(
+                "KERNEL_HEARTBEAT_INTERVAL_S must be a positive finite number; "
+                f"got {os.environ.get('KERNEL_HEARTBEAT_INTERVAL_S')!r}"
+            )
+        self._heartbeat_interval_s = _raw_hb
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Load body profile from env if set
         self._load_body_profile()
@@ -103,12 +150,17 @@ class KernelService(BaseService):
             self._handle_code_proposal,
             durable="kernel-code-proposals",
         )
-        await self.event_bus.subscribe(Subjects.KERNEL_STATUS, self._handle_status)
+        await self.event_bus.subscribe(
+            Subjects.KERNEL_STATUS, self._handle_status, is_request_handler=True,
+        )
         await self.event_bus.subscribe(
             Subjects.POLICY_LOAD_PROFILE, self._handle_load_profile,
         )
+        # Brain/dashboard may not publish policy.restrict directly (ADR 0001 §3).
+        # They publish policy.restrict.request; the Kernel validates and re-publishes
+        # as authoritative policy.restrict that consumers (planner, brain) act on.
         await self.event_bus.subscribe(
-            Subjects.POLICY_RESTRICT, self._handle_restrict,
+            Subjects.POLICY_RESTRICT_REQUEST, self._handle_restrict_request,
         )
         await self.event_bus.subscribe(
             Subjects.POLICY_ROLLBACK, self._handle_rollback,
@@ -123,10 +175,38 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(Subjects.SAFETY_HALT, self._handle_safety_halt)
         await self.event_bus.subscribe(Subjects.SAFETY_RESUME, self._handle_safety_resume)
 
+        # Decision-rate governance signal (M6): periodic trend publish
+        self._decision_rates_task = asyncio.create_task(self._decision_rates_loop())
+
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
-        # No kernel-specific resources to cleanup
-        pass
+        if self._decision_rates_task and not self._decision_rates_task.done():
+            self._decision_rates_task.cancel()
+            try:
+                await self._decision_rates_task
+            except asyncio.CancelledError:
+                pass
+        # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def _cleanup(self) -> None:
+        """Service-specific cleanup."""
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+
+    async def _heartbeat_loop(self) -> None:
+        """Publish kernel.heartbeat every KERNEL_HEARTBEAT_INTERVAL_S seconds (E1.9.3)."""
+        while True:
+            try:
+                await asyncio.sleep(self._heartbeat_interval_s)
+                await self.event_bus.publish(
+                    Subjects.KERNEL_HEARTBEAT,
+                    {"status": "alive", "timestamp": current_timestamp()},
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.warning("Heartbeat publish error: %s", e)
 
     async def _handle_safety_halt(self, data: dict) -> None:
         """Engage the system-wide kill switch (Phase 1.9).
@@ -144,16 +224,21 @@ class KernelService(BaseService):
         self.logger.critical(f"SAFE_HALT engaged by {operator}: {reason}")
 
         # Propagate: stop the planner queue and zero all motor channels.
+        # Kernel applies restrictions directly (no NATS round-trip) because it is
+        # the sole publisher of policy.restrict (ADR 0001 §3) and no longer
+        # subscribes to it.
         try:
             await self.event_bus.publish(Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason})
-            await self.event_bus.publish(Subjects.POLICY_RESTRICT, {
+            restrict_data = {
                 "motor_limits": {
                     ch: {"max_intensity": 0.0}
                     for ch in ("locomotion", "manipulation", "head", "speech")
                 },
                 "reason": f"SAFE_HALT: {reason}",
                 "operator_id": operator,
-            })
+            }
+            await self._apply_restriction(restrict_data)
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, restrict_data)
         except Exception as e:
             self.logger.error(f"SAFE_HALT propagation error: {e}")
 
@@ -317,19 +402,20 @@ class KernelService(BaseService):
                 "reason": reason,
             })
 
-    async def _handle_restrict(self, data: dict) -> None:
-        """Handle runtime capability restrictions via NATS (cloud → edge).
+    async def _apply_restriction(self, data: dict) -> bool:
+        """Apply motor/capability restrictions to the kernel's body profile.
 
-        Expected payload: {"motor_limits": {...}, "capabilities": {...}}
-        Applies restrictions on top of the active body profile.
-        Rejects any override that attempts to expand beyond the profile.
+        Updates the evaluator's profile in-place so future proposals are checked
+        against the new limits. Publishes ``policy.restrict.status`` for the dashboard.
+
+        Returns True if restrictions were applied, False if rejected/error.
         """
         if self._evaluator._body_profile is None:
             await self.event_bus.publish("policy.restrict.status", {
                 "status": "error",
                 "reason": "No body profile loaded — cannot apply restrictions",
             })
-            return
+            return False
 
         try:
             from beliefs.profiles import apply_runtime_restrictions
@@ -347,16 +433,40 @@ class KernelService(BaseService):
                 },
                 "capabilities": restricted.capabilities,
             })
+            return True
         except ValueError as e:
             self.logger.warning(f"Runtime restriction rejected: {e}")
             await self.event_bus.publish("policy.restrict.status", {
                 "status": "rejected", "reason": str(e),
             })
+            return False
         except Exception as e:
             self.logger.error(f"Error applying restrictions: {e}")
             await self.event_bus.publish("policy.restrict.status", {
                 "status": "error", "reason": str(e),
             })
+            return False
+
+    async def _handle_restrict_request(self, data: dict) -> None:
+        """Relay a policy.restrict.request from brain/dashboard as authoritative policy.restrict.
+
+        The brain and dashboard may not publish ``policy.restrict`` directly (ADR 0001 §3);
+        they publish ``policy.restrict.request`` and the Kernel — as the sole
+        decision authority — validates, applies internally, and re-publishes the
+        authoritative ``policy.restrict`` that consumers (planner, brain) act on.
+        """
+        if await self._apply_restriction(data):
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, data)
+
+    async def _handle_restrict(self, data: dict) -> None:
+        """Apply a restriction coming from an internal Kernel operation.
+
+        Called by _handle_policy_update when the operator update contains
+        motor_limits or capabilities. Applies the restriction to the evaluator
+        and broadcasts the authoritative policy.restrict.
+        """
+        if await self._apply_restriction(data):
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, data)
 
     async def _handle_action_proposal(self, data: dict) -> None:
         """Handle action proposals from Planner or Neuromorphic brain."""
@@ -439,13 +549,23 @@ class KernelService(BaseService):
             except Exception:
                 pass  # best-effort — caller will timeout
 
+    def _signed_code_decision(self, decision: KernelDecision) -> dict:
+        """Build the signed wire payload for a code decision."""
+        return sign_decision({
+            "trace_id": decision.trace_id,
+            "type": decision.type.value,
+            "reason": decision.reason,
+            "risk_score": decision.risk_score,
+            "issued_at": decision.issued_at,
+            "expires_at": decision.expires_at,
+        })
+
     async def _handle_code_proposal(self, data: dict) -> None:
         """Handle code proposals from Meta-Programmer."""
+        proposal = data
+        trace_id = proposal.get("trace_id", "")
+        source = proposal.get("source", "meta-programmer")
         try:
-            proposal = data
-            trace_id = proposal.get("trace_id", "")
-            source = proposal.get("source", "meta-programmer")
-
             self.logger.debug(f"Evaluating code proposal: {trace_id}")
 
             # Get risk analysis from Safety Supervisor
@@ -466,14 +586,7 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
-                sign_decision({
-                    "trace_id": decision.trace_id,
-                    "type": decision.type.value,
-                    "reason": decision.reason,
-                    "risk_score": decision.risk_score,
-                    "issued_at": decision.issued_at,
-                    "expires_at": decision.expires_at,
-                }),
+                self._signed_code_decision(decision),
             )
 
             self.logger.info(
@@ -498,12 +611,135 @@ class KernelService(BaseService):
                     "deny_count": self._deny_count,
                     "defer_count": self._defer_count,
                 },
+                "decision_rates": await self._compute_decision_rates(),
             }
 
             # Publish status response
             await self.event_bus.publish("kernel.status.response", status)
         except Exception as e:
             self.logger.error(f"Error getting status: {e}")
+            # Always publish a decision so the Meta-Programmer's wait doesn't
+            # hang. Fail-safe: DENY on internal errors — the Kernel is the sole
+            # authority that may emit a decision and must fail closed
+            # (mirrors _handle_action_proposal).
+            try:
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=f"Kernel internal error: {e}",
+                    risk_score=1.0,
+                )
+                await self.event_bus.publish(
+                    code_decision_subject(trace_id),
+                    self._signed_code_decision(deny),
+                )
+                self._deny_count += 1
+            except Exception:
+                pass  # best-effort — consumer will time out
+
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = {
+            "status": "running",
+            "body_profile": self._body_profile,
+            "has_rollback": self._rollback.has_rollback,
+            "deny_sequences": self._deny_tracker.get_state(),
+            "metrics": {
+                "allow_count": self._allow_count,
+                "transform_count": self._transform_count,
+                "deny_count": self._deny_count,
+                "defer_count": self._defer_count,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
+
+    # ── Decision-rate governance signal (M6) ──────────────────────────────
+    #
+    # Longitudinal ALLOW/TRANSFORM/DENY/DEFER rates from the kernel_decisions
+    # audit trail, broken out by source (meta-programmer, neuromorphic,
+    # planner, ...). This is a *visibility* signal only — it never feeds back
+    # into evaluate_*_proposal, so it cannot weaken the gate (CLAUDE.md §3).
+    # It exists to catch drift in generated-code/action quality before any
+    # future work expands meta-programmer autonomy.
+
+    async def _decision_rates_loop(self) -> None:
+        """Periodically publish decision-rate stats to KERNEL_DECISION_RATES."""
+        while True:
+            try:
+                await asyncio.sleep(self._decision_rates_interval_sec)
+                rates = await self._compute_decision_rates()
+                await self.event_bus.publish(Subjects.KERNEL_DECISION_RATES, rates)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.logger.warning(f"Decision-rate publish failed: {e}")
+
+    async def _compute_decision_rates(self) -> dict[str, Any]:
+        """Aggregate kernel_decisions into all-time + windowed rates by source.
+
+        Best-effort: returns an empty-but-well-formed structure on any DB
+        error rather than raising, since this must never affect the
+        request/response path that calls it (status, periodic publish).
+        """
+        empty = {
+            "generated_at": int(time.time() * 1000),
+            "window_hours": self._decision_rates_window_hours,
+            "all_time": _empty_bucket(),
+            "window": _empty_bucket(),
+            "by_source": {},
+        }
+        if self.database is None:
+            return empty
+
+        try:
+            all_time_rows = await self.database.fetchall(
+                "SELECT decision_type, source, COUNT(*) as cnt "
+                "FROM kernel_decisions GROUP BY decision_type, source",
+            )
+            window_start_ms = int(time.time() * 1000) - int(
+                self._decision_rates_window_hours * 3600 * 1000
+            )
+            window_rows = await self.database.fetchall(
+                "SELECT decision_type, source, COUNT(*) as cnt "
+                "FROM kernel_decisions WHERE issued_at >= ? "
+                "GROUP BY decision_type, source",
+                (window_start_ms,),
+            )
+        except Exception as e:
+            self.logger.warning(f"Could not compute decision rates: {e}")
+            return empty
+
+        by_source: dict[str, Any] = {}
+        all_time_bucket = _empty_bucket()
+        window_bucket = _empty_bucket()
+
+        for row in all_time_rows:
+            _accumulate(all_time_bucket, row["decision_type"], row["cnt"])
+            source_bucket = by_source.setdefault(
+                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+            )
+            _accumulate(source_bucket["all_time"], row["decision_type"], row["cnt"])
+
+        for row in window_rows:
+            _accumulate(window_bucket, row["decision_type"], row["cnt"])
+            source_bucket = by_source.setdefault(
+                row["source"] or "unknown", {"all_time": _empty_bucket(), "window": _empty_bucket()},
+            )
+            _accumulate(source_bucket["window"], row["decision_type"], row["cnt"])
+
+        for bucket in [all_time_bucket, window_bucket, *(
+            b for s in by_source.values() for b in s.values()
+        )]:
+            _finalize_rates(bucket)
+
+        return {
+            "generated_at": int(time.time() * 1000),
+            "window_hours": self._decision_rates_window_hours,
+            "all_time": all_time_bucket,
+            "window": window_bucket,
+            "by_source": by_source,
+        }
 
     async def _get_risk_analysis(
         self,
@@ -713,7 +949,7 @@ class KernelService(BaseService):
             await self.database.insert(
                 "kernel_decisions",
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": generate_trace_id(),
                     "trace_id": trace_id,
                     "proposal_type": proposal_type,
                     "decision_type": decision.type.value,
@@ -762,11 +998,15 @@ class KernelService(BaseService):
             f"{DecisionSequenceTracker.DISABLE_THRESHOLD} consecutive DENYs"
         )
         try:
-            await self.event_bus.publish(Subjects.POLICY_RESTRICT, {
+            restrict_data = {
                 "motor_limits": {channel: {"max_intensity": 0.0}},
                 "reason": f"Auto-disable: {channel} consecutive DENY threshold",
                 "operator_id": "system:deny_tracker",
-            })
+            }
+            # Apply to kernel evaluator directly (Kernel is the sole policy.restrict
+            # publisher so it cannot rely on a subscription round-trip).
+            await self._apply_restriction(restrict_data)
+            await self.event_bus.publish(Subjects.POLICY_RESTRICT, restrict_data)
             await self.event_bus.publish("safety.deny_escalation", {
                 "channel": channel,
                 "action": "auto_disabled",
