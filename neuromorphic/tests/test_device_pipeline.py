@@ -30,7 +30,14 @@ def _load_module(name: str, path: str):
 # Pre-load modules that have SDK-free code
 sys.path.insert(0, os.path.join(_ROOT, "sensory-gateway"))
 
-# Kernel evaluator needs its SDK types — mock them before import
+# Kernel evaluator needs its SDK types — mock them before import.
+# Save existing sys.modules entries so tearDownModule() can restore them,
+# preventing this fake from leaking into other test modules.
+_prior_modules: dict = {
+    "activelearning": sys.modules.get("activelearning"),
+    "activelearning.core": sys.modules.get("activelearning.core"),
+}
+
 _mock_core = type(sys)("activelearning.core")
 
 
@@ -64,9 +71,23 @@ class _FakeRiskAnalysis:
         self.recommendations = []
 
 
+class _FakeActionProposal:
+    """Minimal ActionProposal stub — satisfies lazy imports in motor_feedback_adapter."""
+    def __init__(self, trace_id: str = "", provenance: str = "", action=None, **kw):
+        self.trace_id = trace_id
+        self.provenance = provenance
+        self.action = action or {}
+
+
+def _fake_generate_trace_id() -> str:
+    return "fake-trace-id"
+
+
 _mock_core.KernelDecisionType = _FakeDecisionType
 _mock_core.KernelDecision = _FakeDecision
 _mock_core.RiskAnalysis = _FakeRiskAnalysis
+_mock_core.ActionProposal = _FakeActionProposal
+_mock_core.generate_trace_id = _fake_generate_trace_id
 _mock_core.current_timestamp = lambda: int(time.time() * 1000)
 _mock_core.generate_trace_id = lambda: str(uuid.uuid4())
 
@@ -88,6 +109,21 @@ _evaluator_mod = _load_module(
 )
 KernelEvaluator = _evaluator_mod.KernelEvaluator
 DecisionType = _FakeDecisionType
+
+
+def tearDownModule() -> None:
+    """Restore sys.modules to the state before this file was imported.
+
+    The module-level fake install above runs at collection time and would
+    otherwise leave _mock_core in sys.modules for the rest of the pytest
+    session, causing ImportError in any test that lazily imports a symbol
+    (e.g. ActionProposal) that the fake doesn't define.
+    """
+    for key, prior in _prior_modules.items():
+        if prior is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = prior
 
 
 # ===== Discovery: KNOWN_DEVICE_TYPES =====
