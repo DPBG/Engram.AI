@@ -18,5 +18,4 @@ and the trade-offs that were accepted.
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-nats-authz.md) | NATS account & permission model | Proposed |
-</content>
-</invoke>
+| [0002](0002-neuromorphic-hotpath-profiling.md) | Neuromorphic hot-path profiling & optimization strategy | Proposed |
