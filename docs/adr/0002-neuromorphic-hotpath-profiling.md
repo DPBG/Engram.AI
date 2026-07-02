@@ -67,7 +67,7 @@ here.
 
 ## Findings
 
-### Top 5 bottlenecks by self time (% of 4.322s profiled step time)
+### Top 5 bottlenecks by self-time (% of 4.322s profiled step time)
 
 Numbers below are from the exact committed artifact
 (`neuromorphic/profiling/hotpath_20260701.pstats`) — reproduce with
