@@ -530,6 +530,7 @@ python run.py --only dashboard
 
 | Document | Content |
 |----------|---------|
+| [`ROADMAP.md`](ROADMAP.md) | Technical plan & current-state audit — phases M1–M7, tracking issues, status |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full system design, component relationships, NATS message schemas |
 | [`DESIGN-PRINCIPLES.md`](DESIGN-PRINCIPLES.md) | 6 core architecture invariants and implementation file map |
 | [`docs/SENSORY-GATEWAY.md`](docs/SENSORY-GATEWAY.md) | Gateway architecture, sensor types, discovery |
