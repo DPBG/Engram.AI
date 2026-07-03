@@ -70,6 +70,19 @@ SELF_REFERENTIAL_PATTERNS = [
     r"safety.?supervisor",
 ]
 
+# Fail-closed when Safety Supervisor is unavailable (timeout, crash, or error).
+_UNAVAILABLE_RISK_SCORE = 1.0
+_UNAVAILABLE_FLAG = "SAFETY_ANALYSIS_UNAVAILABLE"
+
+
+def unavailable_risk_analysis(trace_id: str = "") -> RiskAnalysis:
+    """Return a fail-closed risk analysis when Safety Supervisor cannot run."""
+    return RiskAnalysis(
+        trace_id=trace_id,
+        risk_score=_UNAVAILABLE_RISK_SCORE,
+        flags=[_UNAVAILABLE_FLAG],
+    )
+
 
 class KernelEvaluator:
     """
@@ -135,6 +148,22 @@ class KernelEvaluator:
         self._body_profile = profile
         logger.info(f"Evaluator loaded body profile: {profile.name}")
 
+    def _risk_from_analysis(
+        self,
+        risk_analysis: Optional[RiskAnalysis],
+    ) -> tuple[float, list[str]]:
+        """Map Safety Supervisor output to a clamped score and flags.
+
+        Missing analysis is treated as maximum risk so the Kernel fails closed
+        when the safety layer cannot run.
+        """
+        if risk_analysis is None:
+            return _UNAVAILABLE_RISK_SCORE, [_UNAVAILABLE_FLAG]
+        return (
+            max(0.0, min(risk_analysis.risk_score, 1.0)),
+            list(risk_analysis.flags),
+        )
+
     def evaluate_action_proposal(
         self,
         proposal: dict[str, Any],
@@ -161,8 +190,8 @@ class KernelEvaluator:
             return self._halt_decision(trace_id)
 
         # Initialize risk score — clamp external input to [0.0, 1.0]
-        risk_score = max(0.0, min(risk_analysis.risk_score, 1.0)) if risk_analysis else 0.0
-        flags = list(risk_analysis.flags) if risk_analysis else []
+        risk_score, flags = self._risk_from_analysis(risk_analysis)
+        reason = None
 
         # Apply norm violations from Beliefs system
         if norm_violations:
@@ -280,9 +309,8 @@ class KernelEvaluator:
         if self._halted:
             return self._halt_decision(trace_id)
 
-        # Initialize risk analysis
-        risk_score = risk_analysis.risk_score if risk_analysis else 0.0
-        flags = risk_analysis.flags.copy() if risk_analysis else []
+        # Initialize risk analysis — fail closed when Safety Supervisor is down.
+        risk_score, flags = self._risk_from_analysis(risk_analysis)
 
         # Check protected paths (always DENY)
         if self._is_protected_path(target_path):

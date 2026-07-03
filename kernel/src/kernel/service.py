@@ -7,6 +7,7 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 
 import asyncio
 import json
+import math
 import os
 import time
 from typing import Any
@@ -21,9 +22,16 @@ from activelearning.subjects import (
 from nats.aio.msg import Msg
 
 from kernel.evaluator import DecisionType, KernelDecision, KernelEvaluator, RiskAnalysis
+from kernel.evaluator import (
+    KernelEvaluator,
+    KernelDecision,
+    RiskAnalysis,
+    DecisionType,
+    unavailable_risk_analysis,
+)
 from kernel.policy import (
-    DecisionSequenceTracker,
     PolicyRollbackManager,
+    DecisionSequenceTracker,
     validate_cognitive_response,
     validate_policy_update,
 )
@@ -187,6 +195,8 @@ class KernelService(BaseService):
 
         # Decision-rate governance signal (M6): periodic trend publish
         self._decision_rates_task = asyncio.create_task(self._decision_rates_loop())
+        # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
@@ -196,13 +206,12 @@ class KernelService(BaseService):
                 await self._decision_rates_task
             except asyncio.CancelledError:
                 pass
-        # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-
-    async def _cleanup(self) -> None:
-        """Service-specific cleanup."""
-        if self._heartbeat_task:
+        if self._heartbeat_task and not self._heartbeat_task.done():
             self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
     async def _heartbeat_loop(self) -> None:
         """Publish kernel.heartbeat every KERNEL_HEARTBEAT_INTERVAL_S seconds (E1.9.3)."""
@@ -671,16 +680,6 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
-                sign_decision(
-                    {
-                        "trace_id": decision.trace_id,
-                        "type": decision.type.value,
-                        "reason": decision.reason,
-                        "risk_score": decision.risk_score,
-                        "issued_at": decision.issued_at,
-                        "expires_at": decision.expires_at,
-                    }
-                ),
                 self._signed_code_decision(decision),
             )
 
@@ -690,6 +689,23 @@ class KernelService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
+            # Always publish a decision so the meta-programmer's Future doesn't hang.
+            # Fail-safe: DENY on internal errors.
+            try:
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=f"Kernel internal error: {e}",
+                    risk_score=1.0,
+                )
+                await self._log_decision(trace_id, "code", source, deny)
+                await self.event_bus.publish(
+                    code_decision_subject(trace_id),
+                    self._signed_code_decision(deny),
+                )
+                self._deny_count += 1
+            except Exception:
+                pass  # best-effort — caller will timeout
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
@@ -805,6 +821,16 @@ class KernelService(BaseService):
         is_code: bool = False,
     ) -> RiskAnalysis | None:
         """Request risk analysis from Safety Supervisor."""
+        trace_id = proposal.get("trace_id", "")
+
+        def _unavailable(reason: str) -> RiskAnalysis:
+            self.logger.warning(
+                "Safety analysis unavailable for %s: %s — failing closed",
+                trace_id,
+                reason,
+            )
+            return unavailable_risk_analysis(trace_id)
+
         try:
             # Request analysis from Safety Supervisor
             subject = Subjects.SAFETY_ANALYZE_CODE if is_code else Subjects.SAFETY_ANALYZE_ACTION
@@ -817,17 +843,34 @@ class KernelService(BaseService):
 
             data = response
             if data.get("type") == "error":
-                self.logger.warning(f"Safety Supervisor error: {data.get('error', 'unknown')}")
-                return None
+                return _unavailable(data.get("error", "unknown"))
+
+            raw_score = data.get("risk_score")
+            if raw_score is None:
+                return _unavailable("missing risk_score")
+            try:
+                risk_score = float(raw_score)
+            except (TypeError, ValueError):
+                return _unavailable(f"invalid risk_score: {raw_score!r}")
+            if not math.isfinite(risk_score):
+                return _unavailable(f"non-finite risk_score: {raw_score!r}")
+
+            flags = data.get("flags", [])
+            if not isinstance(flags, list):
+                return _unavailable("invalid flags: expected list")
+
+            recommendations = data.get("recommendations", [])
+            if not isinstance(recommendations, list):
+                recommendations = []
+
             return RiskAnalysis(
-                trace_id=data.get("trace_id", ""),
-                risk_score=data.get("risk_score", 0.0),
-                flags=data.get("flags", []),
-                recommendations=data.get("recommendations", []),
+                trace_id=data.get("trace_id", trace_id),
+                risk_score=risk_score,
+                flags=flags,
+                recommendations=recommendations,
             )
         except Exception as e:
-            self.logger.warning(f"Could not get risk analysis: {e}")
-            return None
+            return _unavailable(str(e))
 
     async def _check_belief_norms(
         self,
