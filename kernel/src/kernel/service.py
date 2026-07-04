@@ -174,6 +174,8 @@ class KernelService(BaseService):
         await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT,
             self._handle_restrict,
+        )
+        await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT_REQUEST,
             self._handle_restrict_request,
         )
