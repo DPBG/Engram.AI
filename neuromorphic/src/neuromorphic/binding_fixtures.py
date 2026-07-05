@@ -3,6 +3,7 @@
 Provides synchronized visual+auditory pulse pairs with known pair IDs, plus
 decoy (uncorrelated) combinations for precision/recall evaluation.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,7 +41,6 @@ def generate_correlated_stimulus_fixtures(
     if n_pairs > auditory_size:
         raise ValueError("n_pairs must not exceed auditory_size for distinct signatures")
 
-    rng = np.random.default_rng(seed)
     y, x = np.mgrid[0:visual_size, 0:visual_size]
 
     correlated_pairs: list[dict[str, Any]] = []
@@ -55,24 +55,28 @@ def generate_correlated_stimulus_fixtures(
         auditory[i % auditory_size] = 1.0
         auditory[(i + 5) % auditory_size] = 0.3
 
-        correlated_pairs.append({
-            "pair_id": f"pair_{i:03d}",
-            "visual": visual.tolist(),
-            "auditory": auditory.tolist(),
-            "label": f"synchronized_pulse_{i:03d}",
-        })
+        correlated_pairs.append(
+            {
+                "pair_id": f"pair_{i:03d}",
+                "visual": visual.tolist(),
+                "auditory": auditory.tolist(),
+                "label": f"synchronized_pulse_{i:03d}",
+            }
+        )
 
     decoy_pairs: list[dict[str, Any]] = []
     for i in range(n_pairs):
         j = (i + 1) % n_pairs
-        decoy_pairs.append({
-            "pair_id": f"decoy_{i:03d}",
-            "visual_pair_id": correlated_pairs[i]["pair_id"],
-            "auditory_pair_id": correlated_pairs[j]["pair_id"],
-            "visual": correlated_pairs[i]["visual"],
-            "auditory": correlated_pairs[j]["auditory"],
-            "label": f"decoy_{i:03d}",
-        })
+        decoy_pairs.append(
+            {
+                "pair_id": f"decoy_{i:03d}",
+                "visual_pair_id": correlated_pairs[i]["pair_id"],
+                "auditory_pair_id": correlated_pairs[j]["pair_id"],
+                "visual": correlated_pairs[i]["visual"],
+                "auditory": correlated_pairs[j]["auditory"],
+                "label": f"decoy_{i:03d}",
+            }
+        )
 
     return {
         "correlated_pairs": correlated_pairs,

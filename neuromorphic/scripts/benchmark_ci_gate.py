@@ -8,6 +8,7 @@ Usage:
     cd neuromorphic && uv run python scripts/benchmark_ci_gate.py
     cd neuromorphic && uv run python scripts/benchmark_ci_gate.py --baseline benchmarks/ci_performance_baseline.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,11 +50,16 @@ def run_benchmark(
     cmd = [
         sys.executable,
         str(_SCRIPT_DIR / "benchmark.py"),
-        "--steps", str(steps),
-        "--patterns", str(patterns),
-        "--reps", str(reps),
-        "--steps-per-pattern", str(steps_per_pattern),
-        "--output", str(output_dir),
+        "--steps",
+        str(steps),
+        "--patterns",
+        str(patterns),
+        "--reps",
+        str(reps),
+        "--steps-per-pattern",
+        str(steps_per_pattern),
+        "--output",
+        str(output_dir),
     ]
     subprocess.run(cmd, check=True, cwd=_NEURO_DIR)
     files = sorted(output_dir.glob("benchmark_*.json"))

@@ -30,23 +30,22 @@ if _SDK_SRC not in sys.path:
 
 # ---------------------------------------------------------------------------
 
-import asyncio
-import time
-from typing import Any, Optional
-from unittest.mock import MagicMock, patch
+import asyncio  # noqa: E402
+import time  # noqa: E402
+from typing import Any  # noqa: E402
+from unittest.mock import MagicMock, patch  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
+from activelearning.core import ActionProposal  # noqa: E402
+from activelearning.plugins import RiskClass  # noqa: E402
 
-from activelearning.core import ActionProposal
-from activelearning.plugins import RiskClass
-from neuromorphic.actuators.mujoco_actuator import MuJoCoActuator
-from neuromorphic.actuators.serial_servo_actuator import (
+from neuromorphic.actuators.mujoco_actuator import MuJoCoActuator  # noqa: E402
+from neuromorphic.actuators.serial_servo_actuator import (  # noqa: E402
     NullServoDriver,
     SerialServoActuator,
     ServoDriver,
 )
-from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
-
+from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -221,7 +220,7 @@ class _RecordingDriver:
         self.calls.append((servo_id, angle, speed))
         return self._succeed
 
-    def get_position(self, servo_id: int) -> Optional[float]:
+    def get_position(self, servo_id: int) -> float | None:
         return None
 
 
@@ -311,8 +310,7 @@ class TestSerialServoActuator:
             # Manually invoke the heartbeat body (avoid running the full loop task)
             await bus.publish(
                 f"actuator.heartbeat.{act._channel}",
-                {"channel": act._channel, "actuator_id": act.actuator_id,
-                 "timestamp": time.time()},
+                {"channel": act._channel, "actuator_id": act.actuator_id, "timestamp": time.time()},
             )
 
         _run(_one_tick())
@@ -326,6 +324,7 @@ class TestSerialServoActuator:
 
 class _FakeMotorFeedbackConfig:
     """Minimal MotorFeedbackConfig substitute."""
+
     motor_rate_limit_hz: float = 0.0
     heartbeat_timeout_s: float = 30.0
     mujoco_continuous: bool = False
@@ -416,6 +415,7 @@ class TestMotorFeedbackAdapterPluginRouting:
 
     def test_register_plugin_logs_on_overwrite(self, caplog):
         import logging
+
         adapter, _ = self._make_adapter()
         p1 = _AlwaysSuccessPlugin()
         p2 = _AlwaysSuccessPlugin()

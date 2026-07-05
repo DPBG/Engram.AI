@@ -36,9 +36,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import struct
 import time
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from activelearning.plugins import ActuatorPlugin, PluginCapability, RiskClass
 
@@ -84,7 +83,7 @@ class ServoDriver(Protocol):
         """
         ...
 
-    def get_position(self, servo_id: int) -> Optional[float]:
+    def get_position(self, servo_id: int) -> float | None:
         """Read back the current servo position in degrees.
 
         Returns None if the hardware does not support read-back or an error
@@ -108,7 +107,7 @@ class NullServoDriver:
     def set_position(self, servo_id: int, angle: float, speed: float) -> bool:
         return True
 
-    def get_position(self, servo_id: int) -> Optional[float]:
+    def get_position(self, servo_id: int) -> float | None:
         return None
 
 
@@ -142,9 +141,7 @@ class SimpleSerialDriver:
                 "Install it with: pip install pyserial"
             ) from exc
         self._serial = serial.Serial(self._port, self._baud, timeout=self._timeout)
-        logger.info(
-            "SimpleSerialDriver: opened %s @ %d baud", self._port, self._baud
-        )
+        logger.info("SimpleSerialDriver: opened %s @ %d baud", self._port, self._baud)
 
     def disconnect(self) -> None:
         if self._serial is not None:
@@ -154,7 +151,7 @@ class SimpleSerialDriver:
     def set_position(self, servo_id: int, angle: float, speed: float) -> bool:
         if self._serial is None:
             return False
-        angle_cd = int(min(max(angle, 0.0), 180.0) * 100)   # centidegrees, 0–18000
+        angle_cd = int(min(max(angle, 0.0), 180.0) * 100)  # centidegrees, 0–18000
         speed_u8 = int(min(max(speed, 0.0), 1.0) * 255)
         body = bytes([servo_id & 0xFF, (angle_cd >> 8) & 0xFF, angle_cd & 0xFF, speed_u8])
         checksum = sum(body) & 0xFF
@@ -166,7 +163,7 @@ class SimpleSerialDriver:
             logger.error("SimpleSerialDriver write error: %s", exc)
             return False
 
-    def get_position(self, servo_id: int) -> Optional[float]:
+    def get_position(self, servo_id: int) -> float | None:
         return None  # read-back not in this minimal protocol
 
 
@@ -194,8 +191,8 @@ class SerialServoActuator(ActuatorPlugin[dict]):
         self,
         actuator_id: str,
         channel: str,
-        driver: Optional[ServoDriver] = None,
-        servo_ids: Optional[list[int]] = None,
+        driver: ServoDriver | None = None,
+        servo_ids: list[int] | None = None,
     ) -> None:
         """
         Args:
@@ -218,11 +215,9 @@ class SerialServoActuator(ActuatorPlugin[dict]):
         self._channel = channel
         self._driver: ServoDriver = driver if driver is not None else NullServoDriver()
         self._servo_ids: list[int] = (
-            servo_ids
-            if servo_ids is not None
-            else _DEFAULT_SERVO_IDS.get(channel, [0])
+            servo_ids if servo_ids is not None else _DEFAULT_SERVO_IDS.get(channel, [0])
         )
-        self._heartbeat_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+        self._heartbeat_task: asyncio.Task | None = None  # type: ignore[type-arg]
 
         self.add_capability(
             PluginCapability(
@@ -254,7 +249,9 @@ class SerialServoActuator(ActuatorPlugin[dict]):
             raise
         logger.info(
             "SerialServoActuator '%s' started (channel=%s, servos=%s)",
-            self.actuator_id, self._channel, self._servo_ids,
+            self.actuator_id,
+            self._channel,
+            self._servo_ids,
         )
 
     async def stop(self) -> None:
@@ -286,7 +283,9 @@ class SerialServoActuator(ActuatorPlugin[dict]):
                 logger.warning(
                     "SerialServoActuator '%s': all requested servo_ids %s are outside "
                     "configured set %s — command ignored",
-                    self.actuator_id, list(requested), self._servo_ids,
+                    self.actuator_id,
+                    list(requested),
+                    self._servo_ids,
                 )
                 return False
         else:
@@ -294,18 +293,20 @@ class SerialServoActuator(ActuatorPlugin[dict]):
 
         loop = asyncio.get_running_loop()
         results: list[bool] = list(
-            await asyncio.gather(*[
-                loop.run_in_executor(
-                    None, self._driver.set_position, sid, angle, speed
-                )
-                for sid in target_ids
-            ])
+            await asyncio.gather(
+                *[
+                    loop.run_in_executor(None, self._driver.set_position, sid, angle, speed)
+                    for sid in target_ids
+                ]
+            )
         )
         failed = sum(1 for r in results if not r)
         if failed:
             logger.warning(
                 "SerialServoActuator '%s': %d/%d servo(s) did not respond",
-                self.actuator_id, failed, len(results),
+                self.actuator_id,
+                failed,
+                len(results),
             )
         return failed == 0
 
@@ -329,6 +330,7 @@ class SerialServoActuator(ActuatorPlugin[dict]):
             except Exception as exc:
                 logger.debug(
                     "SerialServoActuator '%s' heartbeat error: %s",
-                    self.actuator_id, exc,
+                    self.actuator_id,
+                    exc,
                 )
             await asyncio.sleep(_HEARTBEAT_INTERVAL_S)

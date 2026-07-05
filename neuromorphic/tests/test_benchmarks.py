@@ -10,7 +10,6 @@ from neuromorphic.benchmarks import (
     AssociationStrengthBenchmark,
     BenchmarkSuite,
     ConceptSeparabilityBenchmark,
-    CrossModalBindingAccuracyBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
     NoveltyDetectionBenchmark,

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from activelearning.plugins import ActuatorPlugin, PluginCapability, RiskClass
 
@@ -80,7 +80,9 @@ class MuJoCoActuator(ActuatorPlugin[dict]):
         except Exception as exc:
             logger.error(
                 "MuJoCoActuator '%s' error on channel '%s': %s",
-                self.actuator_id, self._channel, exc,
+                self.actuator_id,
+                self._channel,
+                exc,
             )
             return False
 

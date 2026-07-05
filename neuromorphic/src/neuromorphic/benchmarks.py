@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
 from neuromorphic.binding_fixtures import generate_correlated_stimulus_fixtures
 from neuromorphic.cross_modal_probe import CrossModalProbe
 
@@ -510,23 +511,31 @@ def _pair_coupling_score(
     probe: CrossModalProbe,
 ) -> float:
     """Weight-based coupling between a visual and auditory pattern."""
-    net.inject_multimodal({
-        "sensor.videofile.bench": visual,
-        "sensor.audiofile.bench": auditory,
-    })
+    net.inject_multimodal(
+        {
+            "sensor.videofile.bench": visual,
+            "sensor.audiofile.bench": auditory,
+        }
+    )
     vis_range = net.allocator.current_ranges.get("visual", (0, 0))
     aud_range = net.allocator.current_ranges.get("auditory", (0, 0))
     if vis_range[1] <= vis_range[0] or aud_range[1] <= aud_range[0]:
         return 0.0
 
     vis_current = net.encoder.encode(
-        net.sensory, visual, "sensor.videofile.bench", net.allocator,
+        net.sensory,
+        visual,
+        "sensor.videofile.bench",
+        net.allocator,
     )
     aud_current = net.encoder.encode(
-        net.sensory, auditory, "sensor.audiofile.bench", net.allocator,
+        net.sensory,
+        auditory,
+        "sensor.audiofile.bench",
+        net.allocator,
     )
-    vis_mask = vis_current[vis_range[0]:vis_range[1]]
-    aud_mask = aud_current[aud_range[0]:aud_range[1]]
+    vis_mask = vis_current[vis_range[0] : vis_range[1]]
+    aud_mask = aud_current[aud_range[0] : aud_range[1]]
     if vis_mask.sum() > 0:
         vis_mask = vis_mask / vis_mask.sum()
     if aud_mask.sum() > 0:
@@ -536,8 +545,8 @@ def _pair_coupling_score(
     if sa is None or sa.nnz == 0:
         return 0.0
 
-    v2a_per = np.asarray(sa.weights[:, vis_range[0]:vis_range[1]] @ vis_mask).ravel()
-    a2v_per = np.asarray(sa.weights[:, aud_range[0]:aud_range[1]] @ aud_mask).ravel()
+    v2a_per = np.asarray(sa.weights[:, vis_range[0] : vis_range[1]] @ vis_mask).ravel()
+    a2v_per = np.asarray(sa.weights[:, aud_range[0] : aud_range[1]] @ aud_mask).ravel()
     inputs = probe._extract_inputs(net)
     if inputs is None:
         return 0.0
@@ -646,7 +655,8 @@ class CrossModalBindingAccuracyBenchmark:
             "binding_strength_before": pre.get("binding_strength", 0.0),
             "binding_strength_after": post.get("binding_strength", 0.0),
             "binding_strength_delta": round(
-                post.get("binding_strength", 0.0) - pre.get("binding_strength", 0.0), 6,
+                post.get("binding_strength", 0.0) - pre.get("binding_strength", 0.0),
+                6,
             ),
             "n_cross_modal_before": pre.get("n_cross_modal", 0),
             "n_cross_modal_after": post.get("n_cross_modal", 0),

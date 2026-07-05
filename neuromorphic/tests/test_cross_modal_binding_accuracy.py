@@ -9,18 +9,17 @@ Verifies:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
-from neuromorphic.binding_fixtures import (
-    BINDING_ACCURACY_REGRESSION_THRESHOLDS,
-    generate_correlated_stimulus_fixtures,
-)
 from neuromorphic.benchmarks import (
     BenchmarkSuite,
     CrossModalBindingAccuracyBenchmark,
     _binding_precision_recall,
+)
+from neuromorphic.binding_fixtures import (
+    BINDING_ACCURACY_REGRESSION_THRESHOLDS,
+    generate_correlated_stimulus_fixtures,
 )
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
@@ -95,8 +94,13 @@ class TestCrossModalBindingAccuracyBenchmark:
         bench = CrossModalBindingAccuracyBenchmark(small_network)
         result = bench.run(n_pairs=3, training_reps=5, steps_per_pair=10, seed=42)
         for key in (
-            "precision", "recall", "f1", "binding_strength_after",
-            "matched_coupling_mean", "decoy_coupling_mean", "matched_to_decoy_ratio",
+            "precision",
+            "recall",
+            "f1",
+            "binding_strength_after",
+            "matched_coupling_mean",
+            "decoy_coupling_mean",
+            "matched_to_decoy_ratio",
             "coupling_matrix",
         ):
             assert key in result
@@ -104,13 +108,19 @@ class TestCrossModalBindingAccuracyBenchmark:
 
     def test_clamps_n_pairs_to_minimum(self, small_network):
         result = CrossModalBindingAccuracyBenchmark(small_network).run(
-            n_pairs=1, training_reps=2, steps_per_pair=6, seed=42,
+            n_pairs=1,
+            training_reps=2,
+            steps_per_pair=6,
+            seed=42,
         )
         assert result["pairs_tested"] == 2
 
     def test_results_json_serializable(self, small_network):
         result = CrossModalBindingAccuracyBenchmark(small_network).run(
-            n_pairs=2, training_reps=2, steps_per_pair=6, seed=42,
+            n_pairs=2,
+            training_reps=2,
+            steps_per_pair=6,
+            seed=42,
         )
         serialized = json.dumps(result)
         loaded = json.loads(serialized)
@@ -151,7 +161,9 @@ class TestBindingAccuracyRegression:
         assert benchmark_result["matched_to_decoy_ratio"] >= threshold
 
     def test_precision_recall_reported(self, benchmark_result):
-        assert benchmark_result["precision"] >= BINDING_ACCURACY_REGRESSION_THRESHOLDS["precision_min"]
+        assert (
+            benchmark_result["precision"] >= BINDING_ACCURACY_REGRESSION_THRESHOLDS["precision_min"]
+        )
         assert benchmark_result["recall"] >= BINDING_ACCURACY_REGRESSION_THRESHOLDS["recall_min"]
         assert benchmark_result["f1"] >= BINDING_ACCURACY_REGRESSION_THRESHOLDS["f1_min"]
 

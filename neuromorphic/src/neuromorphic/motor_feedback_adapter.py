@@ -143,9 +143,7 @@ class MotorFeedbackAdapter:
             plugin:  The ActuatorPlugin instance to use for that channel.
         """
         self._actuator_plugins[channel] = plugin
-        logger.info(
-            "ActuatorPlugin registered for channel '%s': %s", channel, plugin.actuator_id
-        )
+        logger.info("ActuatorPlugin registered for channel '%s': %s", channel, plugin.actuator_id)
         if self._started:
             asyncio.create_task(self._launch_plugin(channel, plugin))
 
@@ -154,11 +152,14 @@ class MotorFeedbackAdapter:
         try:
             await plugin.start(self._bus)
             logger.info(
-                "Started ActuatorPlugin for channel '%s' (registered post-start)", channel,
+                "Started ActuatorPlugin for channel '%s' (registered post-start)",
+                channel,
             )
         except Exception as exc:
             logger.error(
-                "Failed to start ActuatorPlugin for channel '%s': %s", channel, exc,
+                "Failed to start ActuatorPlugin for channel '%s': %s",
+                channel,
+                exc,
             )
 
     def is_real(self, channel: str) -> bool:
@@ -204,6 +205,7 @@ class MotorFeedbackAdapter:
                 # Dispatch directly through the ActuatorPlugin interface.
                 # Lazy import so the module loads without the activelearning SDK.
                 from activelearning.core import ActionProposal, generate_trace_id  # noqa: PLC0415
+
                 action: dict[str, Any] = {"channel": channel, "intensity": intensity}
                 if actuator_intensities:
                     action["actuator_intensities"] = actuator_intensities

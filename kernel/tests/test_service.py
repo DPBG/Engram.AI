@@ -10,6 +10,7 @@ import logging
 
 from activelearning import KernelDecisionType as DecisionType
 from activelearning.subjects import code_decision_subject
+
 from kernel.evaluator import unavailable_risk_analysis
 from kernel.service import KernelService
 
@@ -81,9 +82,7 @@ def _make_risk_service(response):
 
 def _run_risk_analysis(response, proposal=None):
     svc = _make_risk_service(response)
-    return asyncio.run(
-        svc._get_risk_analysis(proposal or {"trace_id": "t1"})
-    )
+    return asyncio.run(svc._get_risk_analysis(proposal or {"trace_id": "t1"}))
 
 
 def test_malformed_nan_risk_score_fails_closed():

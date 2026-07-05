@@ -73,6 +73,7 @@ class _FakeRiskAnalysis:
 
 class _FakeActionProposal:
     """Minimal ActionProposal stub — satisfies lazy imports in motor_feedback_adapter."""
+
     def __init__(self, trace_id: str = "", provenance: str = "", action=None, **kw):
         self.trace_id = trace_id
         self.provenance = provenance

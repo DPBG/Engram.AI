@@ -21,17 +21,16 @@ from activelearning.subjects import (
 )
 from nats.aio.msg import Msg
 
-from kernel.evaluator import DecisionType, KernelDecision, KernelEvaluator, RiskAnalysis
 from kernel.evaluator import (
-    KernelEvaluator,
-    KernelDecision,
-    RiskAnalysis,
     DecisionType,
+    KernelDecision,
+    KernelEvaluator,
+    RiskAnalysis,
     unavailable_risk_analysis,
 )
 from kernel.policy import (
-    PolicyRollbackManager,
     DecisionSequenceTracker,
+    PolicyRollbackManager,
     validate_cognitive_response,
     validate_policy_update,
 )
