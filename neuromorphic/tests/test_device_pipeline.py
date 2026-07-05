@@ -226,7 +226,10 @@ class TestKernelEnvelopeExtension(unittest.TestCase):
             "trace_id": "test-123",
             "action": {"intensity": 0.5, "channel": "locomotion"},
         }
-        decision = self.evaluator.evaluate_action_proposal(proposal)
+        # Missing risk_analysis fails closed at max risk (Safety Supervisor
+        # unavailable); pass a clean one to isolate envelope/profile behavior.
+        clean_risk = _FakeRiskAnalysis(risk_score=0.0)
+        decision = self.evaluator.evaluate_action_proposal(proposal, risk_analysis=clean_risk)
         assert decision.type.value == "ALLOW"
 
     def test_full_proposal_deny_bad_channel(self):

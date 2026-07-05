@@ -20,6 +20,11 @@ import sys
 import types as _types
 
 _SDK_SRC = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "sdk", "src"))
+# Save the pre-existing sys.modules entry so tearDownModule() can restore it —
+# otherwise this path-only stub (no BaseService, etc.) permanently replaces the
+# real `activelearning` package for the rest of the pytest session, breaking
+# any later test module that does `from activelearning import BaseService`.
+_prior_activelearning = sys.modules.get("activelearning")
 if "activelearning" not in sys.modules:
     _al_pkg = _types.ModuleType("activelearning")
     _al_pkg.__path__ = [os.path.join(_SDK_SRC, "activelearning")]  # type: ignore[attr-defined]
@@ -27,6 +32,15 @@ if "activelearning" not in sys.modules:
     sys.modules["activelearning"] = _al_pkg
 if _SDK_SRC not in sys.path:
     sys.path.insert(0, _SDK_SRC)
+
+
+def tearDownModule() -> None:
+    """Restore sys.modules["activelearning"] to the state before this file ran."""
+    if _prior_activelearning is None:
+        sys.modules.pop("activelearning", None)
+    else:
+        sys.modules["activelearning"] = _prior_activelearning
+
 
 # ---------------------------------------------------------------------------
 

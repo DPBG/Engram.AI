@@ -69,6 +69,16 @@ def _import_submodule(package_name: str, module_name: str):
 # beliefs.graph and kernel.evaluator both import names from activelearning, so
 # expose activelearning.core first. Import it directly to avoid the full
 # activelearning __init__ that pulls in aiohttp.
+#
+# Save the pre-existing sys.modules entries so tearDownModule() can restore
+# them — otherwise this stub permanently replaces the real `activelearning`
+# package for the rest of the pytest session, breaking any later test module
+# that does `from activelearning import BaseService` (e.g. cognitive_bridge).
+_prior_modules: dict = {
+    "activelearning": sys.modules.get("activelearning"),
+    "activelearning.core": sys.modules.get("activelearning.core"),
+}
+
 _al_core = _import_submodule("activelearning", "core")
 sys.modules.setdefault("activelearning", types.ModuleType("activelearning"))
 # Patch the names those modules need from activelearning
@@ -78,6 +88,16 @@ _al_ns.RiskAnalysis = _al_core.RiskAnalysis
 _al_ns.current_timestamp = _al_core.current_timestamp
 _al_ns.generate_trace_id = _al_core.generate_trace_id
 
+
+def tearDownModule() -> None:
+    """Restore sys.modules to the state before this file was imported."""
+    for key, prior in _prior_modules.items():
+        if prior is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = prior
+
+
 # Pre-import the two modules we need, bypassing __init__.py
 _beliefs_graph = _import_submodule("beliefs", "graph")
 BeliefGraph = _beliefs_graph.BeliefGraph
@@ -85,6 +105,24 @@ NodeType = _beliefs_graph.NodeType
 
 _kernel_evaluator = _import_submodule("kernel", "evaluator")
 KernelEvaluator = _kernel_evaluator.KernelEvaluator
+
+
+class _FakeRiskAnalysis:
+    """Local, self-contained stand-in for activelearning.core.RiskAnalysis.
+
+    Other test modules in this suite also stub sys.modules["activelearning.core"]
+    at collection time, so _al_core.RiskAnalysis is not reliably the real class —
+    this avoids depending on that shared, mutable module cache.
+    """
+
+    def __init__(self, trace_id: str = "", risk_score: float = 0.0, flags=None):
+        self.trace_id = trace_id
+        self.risk_score = risk_score
+        self.flags = flags or []
+        self.recommendations = []
+
+
+RiskAnalysis = _FakeRiskAnalysis
 
 from neuromorphic.config import (  # noqa: E402
     MotorFeedbackConfig,
@@ -279,7 +317,12 @@ class TestKernelNormViolations:
             "trace_id": "test-123",
             "action": {"type": "motor_command", "channel": "locomotion", "intensity": 0.5},
         }
-        decision = ev.evaluate_action_proposal(proposal, norm_violations=[])
+        # Missing risk_analysis fails closed at max risk (Safety Supervisor
+        # unavailable); pass a clean one to isolate norm-violation behavior.
+        clean_risk = RiskAnalysis(trace_id="test-123", risk_score=0.0, flags=[])
+        decision = ev.evaluate_action_proposal(
+            proposal, risk_analysis=clean_risk, norm_violations=[]
+        )
         assert decision.type.value == "ALLOW"
 
     def test_norm_violation_boosts_risk(self):
@@ -294,7 +337,12 @@ class TestKernelNormViolations:
             {"norm_id": "norm.force_limit", "content": "force limit", "risk_boost": 0.3},
             {"norm_id": "norm.gradual_motor", "content": "gradual", "risk_boost": 0.15},
         ]
-        decision = ev.evaluate_action_proposal(proposal, norm_violations=violations)
+        # Missing risk_analysis fails closed at max risk (Safety Supervisor
+        # unavailable); pass a clean one to isolate norm-violation behavior.
+        clean_risk = RiskAnalysis(trace_id="test-123", risk_score=0.0, flags=[])
+        decision = ev.evaluate_action_proposal(
+            proposal, risk_analysis=clean_risk, norm_violations=violations
+        )
 
         # 0.0 base + 0.3 + 0.15 = 0.45, which is below defer threshold (0.5)
         # But risk_score should reflect the boost
