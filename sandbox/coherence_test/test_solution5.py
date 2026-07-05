@@ -26,7 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "sensory-gateway" / "sensors"))
 sys.path.insert(0, str(PROJECT_ROOT / "sdk" / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "neuromorphic" / "src"))
 
-import numpy as np
+import numpy as np  # noqa: E402
 
 # Audio constants (same as AudioFileSensor)
 SAMPLE_RATE = 16000
@@ -45,10 +45,23 @@ def extract_audio(video_path: str) -> np.ndarray:
     tmp.close()
     try:
         result = subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path,
-             "-vn", "-acodec", "pcm_s16le",
-             "-ar", str(SAMPLE_RATE), "-ac", "1", tmp_path],
-            capture_output=True, text=True, timeout=120,
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                str(SAMPLE_RATE),
+                "-ac",
+                "1",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {result.stderr[:300]}")
@@ -66,16 +79,23 @@ def compute_mfcc(audio_chunk: np.ndarray) -> np.ndarray | None:
         return None
     try:
         from python_speech_features import mfcc
-        features = mfcc(audio_chunk, samplerate=SAMPLE_RATE,
-                        winlen=CHUNK_DURATION, winstep=CHUNK_DURATION,
-                        numcep=N_MFCC, nfilt=26, nfft=512)
+
+        features = mfcc(
+            audio_chunk,
+            samplerate=SAMPLE_RATE,
+            winlen=CHUNK_DURATION,
+            winstep=CHUNK_DURATION,
+            numcep=N_MFCC,
+            nfilt=26,
+            nfft=512,
+        )
         return features.mean(axis=0).astype(np.float32) if len(features) > 0 else None
     except ImportError:
         windowed = audio_chunk[:512] * np.hanning(min(len(audio_chunk), 512))
         spectrum = np.abs(np.fft.rfft(windowed, n=512)) ** 2
         log_spectrum = np.log(spectrum + 1e-10)
         step = max(1, len(log_spectrum) // N_MFCC)
-        features = log_spectrum[:N_MFCC * step:step][:N_MFCC]
+        features = log_spectrum[: N_MFCC * step : step][:N_MFCC]
         return features.astype(np.float32)
 
 
@@ -84,10 +104,10 @@ def is_silent(features: np.ndarray) -> bool:
 
 
 # Import neuromorphic modules directly (no SDK dependency needed)
-from neuromorphic.auditory_stm import AuditorySTM, AuditorySTMConfig
-from neuromorphic.config import NeuromorphicConfig
-from neuromorphic.encoding import SpikeEncoder
-from neuromorphic.regions import SensoryCortex
+from neuromorphic.auditory_stm import AuditorySTM, AuditorySTMConfig  # noqa: E402
+from neuromorphic.config import NeuromorphicConfig  # noqa: E402
+from neuromorphic.encoding import SpikeEncoder  # noqa: E402
+from neuromorphic.regions import SensoryCortex  # noqa: E402
 
 
 def compute_temporal_audio_frame(chunks):
@@ -104,7 +124,7 @@ def compute_temporal_audio_frame(chunks):
         delta_mfcc = delta.mean(axis=0)
     else:
         delta_mfcc = np.zeros(arr.shape[1], dtype=np.float32)
-    energy = np.sqrt((arr ** 2).mean(axis=1))
+    energy = np.sqrt((arr**2).mean(axis=1))
     return {
         "type": "temporal_audio_frame",
         "n_chunks": n,
@@ -123,7 +143,7 @@ def extract_mfcc_chunks(audio: np.ndarray, max_seconds: float = 20.0):
     pos = 0
     consecutive_silent = 0
     while pos + chunk_samples <= end_sample:
-        chunk = audio[pos:pos + chunk_samples]
+        chunk = audio[pos : pos + chunk_samples]
         feat = compute_mfcc(chunk)
         timestamp = pos / SAMPLE_RATE
         pos += chunk_samples
@@ -153,12 +173,14 @@ def simulate_old_pipeline(mfcc_chunks, flush_hz=2.0):
     for ts, feat in mfcc_chunks:
         while ts > flush_time:
             if buffer_latest is not None:
-                results.append({
-                    "flush_time": flush_time,
-                    "features": buffer_latest.copy(),
-                    "chunks_in_window": buffer_count,
-                    "chunks_discarded": buffer_count - 1,
-                })
+                results.append(
+                    {
+                        "flush_time": flush_time,
+                        "features": buffer_latest.copy(),
+                        "chunks_in_window": buffer_count,
+                        "chunks_discarded": buffer_count - 1,
+                    }
+                )
             buffer_latest = None
             buffer_count = 0
             flush_time += flush_interval
@@ -167,12 +189,14 @@ def simulate_old_pipeline(mfcc_chunks, flush_hz=2.0):
 
     # Final flush
     if buffer_latest is not None:
-        results.append({
-            "flush_time": flush_time,
-            "features": buffer_latest.copy(),
-            "chunks_in_window": buffer_count,
-            "chunks_discarded": buffer_count - 1,
-        })
+        results.append(
+            {
+                "flush_time": flush_time,
+                "features": buffer_latest.copy(),
+                "chunks_in_window": buffer_count,
+                "chunks_discarded": buffer_count - 1,
+            }
+        )
     return results
 
 
@@ -190,12 +214,14 @@ def simulate_new_pipeline(mfcc_chunks, flush_hz=2.0):
         while ts > flush_time:
             if buffer:
                 frame = compute_temporal_audio_frame([f.tolist() for f in buffer])
-                results.append({
-                    "flush_time": flush_time,
-                    "temporal_frame": frame,
-                    "chunks_in_window": len(buffer),
-                    "chunks_used": len(buffer),  # ALL chunks used
-                })
+                results.append(
+                    {
+                        "flush_time": flush_time,
+                        "temporal_frame": frame,
+                        "chunks_in_window": len(buffer),
+                        "chunks_used": len(buffer),  # ALL chunks used
+                    }
+                )
             buffer = []
             flush_time += flush_interval
         buffer.append(feat)
@@ -203,12 +229,14 @@ def simulate_new_pipeline(mfcc_chunks, flush_hz=2.0):
     # Final flush
     if buffer:
         frame = compute_temporal_audio_frame([f.tolist() for f in buffer])
-        results.append({
-            "flush_time": flush_time,
-            "temporal_frame": frame,
-            "chunks_in_window": len(buffer),
-            "chunks_used": len(buffer),
-        })
+        results.append(
+            {
+                "flush_time": flush_time,
+                "temporal_frame": frame,
+                "chunks_in_window": len(buffer),
+                "chunks_used": len(buffer),
+            }
+        )
     return results
 
 
@@ -238,12 +266,14 @@ def simulate_stm_pipeline(mfcc_chunks, flush_hz=2.0, brain_hz=0.74):
             stm.update(latest_frame)
             features = stm.get_features()
             if features is not None:
-                results.append({
-                    "step_time": step_time,
-                    "features": features,
-                    "stm_frames": stm.n_frames,
-                    "feature_length": len(features),
-                })
+                results.append(
+                    {
+                        "step_time": step_time,
+                        "features": features,
+                        "stm_frames": stm.n_frames,
+                        "feature_length": len(features),
+                    }
+                )
 
         step_time += brain_step_interval
 
@@ -282,29 +312,35 @@ def main():
         print(f"MFCC chunks: {len(mfcc_chunks)}")
 
         # ====== OLD PIPELINE ======
-        print(f"\n--- OLD Pipeline (latest-only) ---")
+        print("\n--- OLD Pipeline (latest-only) ---")
         old_flushes = simulate_old_pipeline(mfcc_chunks)
         old_total_chunks = sum(f["chunks_in_window"] for f in old_flushes)
         old_discarded = sum(f["chunks_discarded"] for f in old_flushes)
         print(f"  Flushes: {len(old_flushes)}")
-        print(f"  Chunks: {old_total_chunks} total, {old_discarded} discarded "
-              f"({old_discarded/max(1,old_total_chunks)*100:.0f}% loss)")
-        print(f"  Features per flush: 13 floats (single MFCC snapshot)")
+        print(
+            f"  Chunks: {old_total_chunks} total, {old_discarded} discarded "
+            f"({old_discarded/max(1,old_total_chunks)*100:.0f}% loss)"
+        )
+        print("  Features per flush: 13 floats (single MFCC snapshot)")
 
         # Cross-flush cosine similarity (how different are consecutive observations?)
         if len(old_flushes) >= 2:
             old_sims = []
             for i in range(len(old_flushes) - 1):
-                a, b = old_flushes[i]["features"], old_flushes[i+1]["features"]
+                a, b = old_flushes[i]["features"], old_flushes[i + 1]["features"]
                 cos = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10)
                 old_sims.append(float(cos))
-            print(f"  Cross-flush cosine sim: mean={np.mean(old_sims):.4f}, "
-                  f"std={np.std(old_sims):.4f}")
-            print(f"  Distinct transitions (cos < 0.8): "
-                  f"{sum(1 for s in old_sims if s < 0.8)}/{len(old_sims)}")
+            print(
+                f"  Cross-flush cosine sim: mean={np.mean(old_sims):.4f}, "
+                f"std={np.std(old_sims):.4f}"
+            )
+            print(
+                f"  Distinct transitions (cos < 0.8): "
+                f"{sum(1 for s in old_sims if s < 0.8)}/{len(old_sims)}"
+            )
 
         # ====== NEW PIPELINE (aggregator only) ======
-        print(f"\n--- NEW Pipeline (temporal audio frame) ---")
+        print("\n--- NEW Pipeline (temporal audio frame) ---")
         new_flushes = simulate_new_pipeline(mfcc_chunks)
         new_total_chunks = sum(f["chunks_in_window"] for f in new_flushes)
         new_used = sum(f["chunks_used"] for f in new_flushes)
@@ -313,38 +349,44 @@ def main():
 
         if new_flushes:
             sample = new_flushes[0]["temporal_frame"]
-            n_features = len(sample["mean_mfcc"]) + len(sample["delta_mfcc"]) + len(sample["energy"])
-            print(f"  Features per flush: {n_features} floats "
-                  f"(13 mean + 13 delta + {len(sample['energy'])} energy)")
+            n_features = (
+                len(sample["mean_mfcc"]) + len(sample["delta_mfcc"]) + len(sample["energy"])
+            )
+            print(
+                f"  Features per flush: {n_features} floats "
+                f"(13 mean + 13 delta + {len(sample['energy'])} energy)"
+            )
 
         # Cross-flush similarity for temporal frames (use fixed-length mean+delta only)
         if len(new_flushes) >= 2:
             new_sims = []
             for i in range(len(new_flushes) - 1):
                 a_frame = new_flushes[i]["temporal_frame"]
-                b_frame = new_flushes[i+1]["temporal_frame"]
+                b_frame = new_flushes[i + 1]["temporal_frame"]
                 # Use only mean+delta (26 floats) — energy varies in length per flush
-                a_vec = np.concatenate([
-                    a_frame["mean_mfcc"], a_frame["delta_mfcc"]
-                ])
-                b_vec = np.concatenate([
-                    b_frame["mean_mfcc"], b_frame["delta_mfcc"]
-                ])
+                a_vec = np.concatenate([a_frame["mean_mfcc"], a_frame["delta_mfcc"]])
+                b_vec = np.concatenate([b_frame["mean_mfcc"], b_frame["delta_mfcc"]])
                 cos = np.dot(a_vec, b_vec) / (np.linalg.norm(a_vec) * np.linalg.norm(b_vec) + 1e-10)
                 new_sims.append(float(cos))
-            print(f"  Cross-flush cosine sim: mean={np.mean(new_sims):.4f}, "
-                  f"std={np.std(new_sims):.4f}")
-            print(f"  Distinct transitions (cos < 0.8): "
-                  f"{sum(1 for s in new_sims if s < 0.8)}/{len(new_sims)}")
+            print(
+                f"  Cross-flush cosine sim: mean={np.mean(new_sims):.4f}, "
+                f"std={np.std(new_sims):.4f}"
+            )
+            print(
+                f"  Distinct transitions (cos < 0.8): "
+                f"{sum(1 for s in new_sims if s < 0.8)}/{len(new_sims)}"
+            )
 
         # ====== FULL SOLUTION 5 (aggregator + STM) ======
-        print(f"\n--- FULL Solution 5 (aggregator + AuditorySTM @ 0.74 Hz brain) ---")
+        print("\n--- FULL Solution 5 (aggregator + AuditorySTM @ 0.74 Hz brain) ---")
         stm_results = simulate_stm_pipeline(mfcc_chunks)
         print(f"  Brain steps with audio: {len(stm_results)}")
         if stm_results:
             lengths = [r["feature_length"] for r in stm_results]
-            print(f"  Feature vector length: {lengths[0]} floats "
-                  f"(consistent: {len(set(lengths)) == 1})")
+            print(
+                f"  Feature vector length: {lengths[0]} floats "
+                f"(consistent: {len(set(lengths)) == 1})"
+            )
             stm_frames = [r["stm_frames"] for r in stm_results]
             print(f"  STM buffer depth: min={min(stm_frames)}, max={max(stm_frames)} frames")
 
@@ -352,16 +394,20 @@ def main():
         if len(stm_results) >= 2:
             stm_sims = []
             for i in range(len(stm_results) - 1):
-                a, b = stm_results[i]["features"], stm_results[i+1]["features"]
+                a, b = stm_results[i]["features"], stm_results[i + 1]["features"]
                 cos = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10)
                 stm_sims.append(float(cos))
-            print(f"  Cross-step cosine sim: mean={np.mean(stm_sims):.4f}, "
-                  f"std={np.std(stm_sims):.4f}")
-            print(f"  Distinct transitions (cos < 0.8): "
-                  f"{sum(1 for s in stm_sims if s < 0.8)}/{len(stm_sims)}")
+            print(
+                f"  Cross-step cosine sim: mean={np.mean(stm_sims):.4f}, "
+                f"std={np.std(stm_sims):.4f}"
+            )
+            print(
+                f"  Distinct transitions (cos < 0.8): "
+                f"{sum(1 for s in stm_sims if s < 0.8)}/{len(stm_sims)}"
+            )
 
         # ====== SPIKE PATTERN COMPARISON ======
-        print(f"\n--- Spike Pattern Comparison (encoder output) ---")
+        print("\n--- Spike Pattern Comparison (encoder output) ---")
 
         # Encode a few old pipeline observations
         old_spikes = []
@@ -409,7 +455,7 @@ def main():
                     return []
                 sims = []
                 for i in range(len(spikes_list) - 1):
-                    a, b = spikes_list[i], spikes_list[i+1]
+                    a, b = spikes_list[i], spikes_list[i + 1]
                     norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
                     if norm_a > 0 and norm_b > 0:
                         cos = np.dot(a, b) / (norm_a * norm_b)
@@ -419,7 +465,7 @@ def main():
             old_disc = cross_discriminability(old_spikes)
             stm_disc = cross_discriminability(stm_spikes)
             if old_disc and stm_disc:
-                print(f"  Spike pattern discriminability (lower = more distinct):")
+                print("  Spike pattern discriminability (lower = more distinct):")
                 print(f"    Old: mean_cos={np.mean(old_disc):.4f}")
                 print(f"    STM: mean_cos={np.mean(stm_disc):.4f}")
 
@@ -430,17 +476,21 @@ def main():
         if old_flushes:
             old_loss = old_discarded / max(1, old_total_chunks) * 100
             print(f"\n  OLD pipeline: {old_loss:.0f}% audio data loss")
-            print(f"  NEW pipeline: 0% audio data loss")
+            print("  NEW pipeline: 0% audio data loss")
             if len(old_flushes) >= 2 and len(stm_results) >= 2:
                 old_distinct = sum(1 for s in old_sims if s < 0.8) / len(old_sims) * 100
                 stm_distinct = sum(1 for s in stm_sims if s < 0.8) / len(stm_sims) * 100
                 print(f"  OLD distinct transitions: {old_distinct:.0f}%")
                 print(f"  STM distinct transitions: {stm_distinct:.0f}%")
                 if stm_results:
-                    print(f"  Feature richness: {stm_results[0]['feature_length']} vs 13 floats "
-                          f"({stm_results[0]['feature_length']/13:.0f}x)")
+                    print(
+                        f"  Feature richness: {stm_results[0]['feature_length']} vs 13 floats "
+                        f"({stm_results[0]['feature_length']/13:.0f}x)"
+                    )
                 if stm_ent and old_ent:
-                    improvement = (np.mean(stm_ent) - np.mean(old_ent)) / max(0.01, np.mean(old_ent)) * 100
+                    improvement = (
+                        (np.mean(stm_ent) - np.mean(old_ent)) / max(0.01, np.mean(old_ent)) * 100
+                    )
                     print(f"  Spike entropy improvement: {improvement:+.1f}%")
 
 

@@ -13,7 +13,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from beliefs.profiles import BodyProfile
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Policy Rollback
 # ------------------------------------------------------------------
 
+
 @dataclass
 class PolicySnapshot:
     """A snapshot of the active policy for rollback.
@@ -32,6 +33,7 @@ class PolicySnapshot:
     Stores a deep copy of the full BodyProfile so rollback is independent
     of disk — protects against file tampering between snapshot and revert.
     """
+
     profile_name: str
     profile: Any  # BodyProfile — stored as deep copy
     timestamp: float = field(default_factory=time.time)
@@ -48,11 +50,12 @@ class PolicyRollbackManager:
 
     def __init__(self, max_history: int = 5):
         self._history: deque[PolicySnapshot] = deque(maxlen=max_history)
-        self._current: Optional[PolicySnapshot] = None
+        self._current: PolicySnapshot | None = None
 
-    def snapshot(self, profile: "BodyProfile", reason: str = "") -> None:
+    def snapshot(self, profile: BodyProfile, reason: str = "") -> None:
         """Save current profile state before applying a change."""
         import copy
+
         snap = PolicySnapshot(
             profile_name=profile.name,
             profile=copy.deepcopy(profile),
@@ -62,7 +65,7 @@ class PolicyRollbackManager:
             self._history.append(self._current)
         self._current = snap
 
-    def rollback(self) -> Optional[PolicySnapshot]:
+    def rollback(self) -> PolicySnapshot | None:
         """Pop the last-known-good snapshot for revert.
 
         Returns None if no history exists.
@@ -79,17 +82,21 @@ class PolicyRollbackManager:
         return len(self._history) > 0
 
     @property
-    def current(self) -> Optional[PolicySnapshot]:
+    def current(self) -> PolicySnapshot | None:
         return self._current
 
     def get_state(self) -> dict[str, Any]:
         """Serialize for persistence."""
         return {
-            "current": {
-                "profile_name": self._current.profile_name,
-                "timestamp": self._current.timestamp,
-                "reason": self._current.reason,
-            } if self._current else None,
+            "current": (
+                {
+                    "profile_name": self._current.profile_name,
+                    "timestamp": self._current.timestamp,
+                    "reason": self._current.reason,
+                }
+                if self._current
+                else None
+            ),
             "history_len": len(self._history),
         }
 
@@ -98,9 +105,11 @@ class PolicyRollbackManager:
 # Decision Sequence Tracker
 # ------------------------------------------------------------------
 
+
 @dataclass
 class DenySequence:
     """Tracks consecutive DENY decisions for escalation."""
+
     channel: str
     count: int = 0
     first_at: float = 0.0
@@ -128,8 +137,10 @@ class DecisionSequenceTracker:
         self._window = window_seconds
 
     def record_decision(
-        self, channel: str, decision_type: str,
-    ) -> Optional[str]:
+        self,
+        channel: str,
+        decision_type: str,
+    ) -> str | None:
         """Record a decision and check for escalation.
 
         Args:
@@ -167,14 +178,10 @@ class DecisionSequenceTracker:
             )
             return "disable"
         elif seq.count >= self.ESCALATE_THRESHOLD:
-            logger.warning(
-                f"Channel '{channel}': {seq.count} consecutive DENYs — escalating"
-            )
+            logger.warning(f"Channel '{channel}': {seq.count} consecutive DENYs — escalating")
             return "escalate"
         elif seq.count >= self.WARN_THRESHOLD:
-            logger.warning(
-                f"Channel '{channel}': {seq.count} consecutive DENYs"
-            )
+            logger.warning(f"Channel '{channel}': {seq.count} consecutive DENYs")
             return "warn"
 
         return None
@@ -209,29 +216,31 @@ _BLOCKED_RESPONSE_PATTERNS = [
 
 # Common Unicode confusables (Cyrillic/Greek → Latin) for homoglyph attack defense.
 # Covers the most common lookalike characters used in prompt injection.
-_CONFUSABLE_MAP = str.maketrans({
-    "\u0430": "a",  # Cyrillic а
-    "\u0435": "e",  # Cyrillic е
-    "\u043e": "o",  # Cyrillic о
-    "\u0440": "p",  # Cyrillic р → p
-    "\u0441": "c",  # Cyrillic с
-    "\u0443": "y",  # Cyrillic у
-    "\u0456": "i",  # Cyrillic і
-    "\u0455": "s",  # Cyrillic ѕ
-    "\u04bb": "h",  # Cyrillic һ
-    "\u0501": "d",  # Cyrillic ԁ
-    "\u051b": "q",  # Cyrillic ԛ
-    "\u0391": "A",  # Greek Α
-    "\u0392": "B",  # Greek Β
-    "\u0395": "E",  # Greek Ε
-    "\u039a": "K",  # Greek Κ
-    "\u039c": "M",  # Greek Μ
-    "\u039d": "N",  # Greek Ν
-    "\u039f": "O",  # Greek Ο
-    "\u03a1": "P",  # Greek Ρ
-    "\u03a4": "T",  # Greek Τ
-    "\u03bf": "o",  # Greek ο
-})
+_CONFUSABLE_MAP = str.maketrans(
+    {
+        "\u0430": "a",  # Cyrillic а
+        "\u0435": "e",  # Cyrillic е
+        "\u043e": "o",  # Cyrillic о
+        "\u0440": "p",  # Cyrillic р → p
+        "\u0441": "c",  # Cyrillic с
+        "\u0443": "y",  # Cyrillic у
+        "\u0456": "i",  # Cyrillic і
+        "\u0455": "s",  # Cyrillic ѕ
+        "\u04bb": "h",  # Cyrillic һ
+        "\u0501": "d",  # Cyrillic ԁ
+        "\u051b": "q",  # Cyrillic ԛ
+        "\u0391": "A",  # Greek Α
+        "\u0392": "B",  # Greek Β
+        "\u0395": "E",  # Greek Ε
+        "\u039a": "K",  # Greek Κ
+        "\u039c": "M",  # Greek Μ
+        "\u039d": "N",  # Greek Ν
+        "\u039f": "O",  # Greek Ο
+        "\u03a1": "P",  # Greek Ρ
+        "\u03a4": "T",  # Greek Τ
+        "\u03bf": "o",  # Greek ο
+    }
+)
 
 # Max length for cognitive responses (characters)
 _MAX_RESPONSE_LENGTH = 2000
@@ -239,7 +248,7 @@ _MAX_RESPONSE_LENGTH = 2000
 
 def validate_cognitive_response(
     response_text: str,
-    profile: Optional["BodyProfile"] = None,
+    profile: BodyProfile | None = None,
 ) -> tuple[bool, str]:
     """Validate an LLM response before it's injected into the sensory pipeline.
 
@@ -261,8 +270,7 @@ def validate_cognitive_response(
 
     if len(response_text) > _MAX_RESPONSE_LENGTH:
         return False, (
-            f"Response too long ({len(response_text)} chars, "
-            f"max {_MAX_RESPONSE_LENGTH})"
+            f"Response too long ({len(response_text)} chars, " f"max {_MAX_RESPONSE_LENGTH})"
         )
 
     # Prompt injection detection — multi-layer Unicode defense:
@@ -270,10 +278,12 @@ def validate_cognitive_response(
     # 2. Strip zero-width/format characters (catches invisible insertions)
     # 3. Confusable character replacement (catches Cyrillic/Greek homoglyphs)
     import unicodedata
+
     normalized = unicodedata.normalize("NFKD", response_text)
     # Strip zero-width and format characters
     cleaned = "".join(
-        ch for ch in normalized
+        ch
+        for ch in normalized
         if unicodedata.category(ch) != "Cf"  # format characters (zero-width, BOM, etc.)
     )
     lower = cleaned.lower()
@@ -296,12 +306,12 @@ def validate_cognitive_response(
 # ------------------------------------------------------------------
 
 _VALID_POLICY_FIELDS = {
-    "profile_name",      # string — switch to a different profile
-    "motor_limits",      # dict[channel → {max_intensity, max_acceleration}]
-    "capabilities",      # dict[cap_key → bool/numeric]
-    "reason",            # string — why this update was issued
-    "operator_id",       # string — who issued the update
-    "timestamp",         # float — when the update was issued
+    "profile_name",  # string — switch to a different profile
+    "motor_limits",  # dict[channel → {max_intensity, max_acceleration}]
+    "capabilities",  # dict[cap_key → bool/numeric]
+    "reason",  # string — why this update was issued
+    "operator_id",  # string — who issued the update
+    "timestamp",  # float — when the update was issued
 }
 
 _REQUIRED_POLICY_FIELDS = {"reason", "operator_id"}
@@ -346,8 +356,7 @@ def validate_policy_update(update: dict[str, Any]) -> tuple[bool, str]:
                     return False, f"motor_limits['{channel}']['{key}'] must be numeric"
                 if val < 0.0 or val > 1.0:
                     return False, (
-                        f"motor_limits['{channel}']['{key}']={val} "
-                        f"out of range [0.0, 1.0]"
+                        f"motor_limits['{channel}']['{key}']={val} " f"out of range [0.0, 1.0]"
                     )
 
     # Validate capabilities structure

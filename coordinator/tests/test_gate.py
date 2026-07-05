@@ -9,9 +9,7 @@ import importlib.util
 import os
 import sys
 
-_GATE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "coordinator", "gate.py"
-)
+_GATE_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "coordinator", "gate.py")
 _spec = importlib.util.spec_from_file_location("coord_gate", _GATE_PATH)
 gate = importlib.util.module_from_spec(_spec)
 sys.modules["coord_gate"] = gate
@@ -19,6 +17,7 @@ _spec.loader.exec_module(gate)
 
 
 # ── proposal construction ──────────────────────────────────────────────────
+
 
 def test_build_execution_proposal_shape():
     p = gate.build_execution_proposal("trace-1", "task-42", {"speed": 1})
@@ -35,6 +34,7 @@ def test_build_execution_proposal_defaults_parameters():
 
 
 # ── decision gating (fail-closed contract) ─────────────────────────────────
+
 
 def test_allow_permits_execution():
     assert gate.decision_allows({"type": "ALLOW"}) is True

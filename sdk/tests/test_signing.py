@@ -1,11 +1,11 @@
 """Tests for Kernel-decision signing — the unforgeable safety gate (Phase 1.2)."""
 
 from activelearning.signing import (
-    sign_decision,
-    verify_decision,
-    signing_enabled,
-    SIGNATURE_FIELD,
     DECISION_KEY_ENV,
+    SIGNATURE_FIELD,
+    sign_decision,
+    signing_enabled,
+    verify_decision,
 )
 
 KEY = "unit-test-decision-secret"
@@ -71,6 +71,6 @@ def test_legacy_mode_without_key_accepts(monkeypatch):
 def test_env_key_enforced(monkeypatch):
     monkeypatch.setenv(DECISION_KEY_ENV, KEY)
     assert signing_enabled() is True
-    signed = sign_decision(_decision())          # uses env key
-    assert verify_decision(signed) is True        # uses env key
+    signed = sign_decision(_decision())  # uses env key
+    assert verify_decision(signed) is True  # uses env key
     assert verify_decision(_decision()) is False  # forged/unsigned rejected

@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, cast
 
 import aiosqlite
 
@@ -78,7 +78,7 @@ class Database:
     the unified ActiveLearningAI database.
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize the database.
 
@@ -86,7 +86,7 @@ class Database:
             db_path: Path to SQLite database file
         """
         self.db_path = db_path or default_sqlite_path()
-        self._connection: Optional[aiosqlite.Connection] = None
+        self._connection: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
         """Initialize the database and create schema."""
@@ -161,7 +161,7 @@ class Database:
         self,
         sql: str,
         params: tuple[Any, ...] = (),
-    ) -> Optional[aiosqlite.Row]:
+    ) -> aiosqlite.Row | None:
         """Execute and fetch one result."""
         cursor = await self.execute(sql, params)
         return await cursor.fetchone()
@@ -173,7 +173,7 @@ class Database:
     ) -> list[aiosqlite.Row]:
         """Execute and fetch all results."""
         cursor = await self.execute(sql, params)
-        return await cursor.fetchall()
+        return cast(list[Any], await cursor.fetchall())
 
     async def commit(self) -> None:
         """Commit the current transaction."""
@@ -200,7 +200,7 @@ class Database:
         sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
         await self.execute(sql, tuple(data.values()))
         await self.commit()
-        return data.get("id", "")
+        return cast(str, data.get("id", ""))
 
     async def update(
         self,
@@ -229,7 +229,7 @@ class Database:
 
 
 # Global database instance
-_db: Optional[Database] = None
+_db: Database | None = None
 
 
 async def get_database() -> Database:

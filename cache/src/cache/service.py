@@ -8,14 +8,13 @@ Manages:
 """
 
 import asyncio
-from typing import Optional
 
 from activelearning import BaseService, get_embedding_service
 from activelearning.nats_client import serialize_message
 
-from cache.llm_cache import LLMCache
 from cache.autopilot import AutopilotController
 from cache.invalidator import CacheInvalidator
+from cache.llm_cache import LLMCache
 
 
 class CacheService(BaseService):
@@ -26,9 +25,9 @@ class CacheService(BaseService):
     def __init__(self):
         super().__init__("cache", use_database=True, use_event_bus=True)
 
-        self._llm_cache: Optional[LLMCache] = None
-        self._autopilot: Optional[AutopilotController] = None
-        self._invalidator: Optional[CacheInvalidator] = None
+        self._llm_cache: LLMCache | None = None
+        self._autopilot: AutopilotController | None = None
+        self._invalidator: CacheInvalidator | None = None
         # One shared embedding client per service, injected into the cache and
         # closed on shutdown.
         self._embedding_service = get_embedding_service()

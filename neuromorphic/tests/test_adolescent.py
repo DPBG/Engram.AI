@@ -14,23 +14,21 @@ Tests cover:
 """
 
 import numpy as np
-import pytest
 
 from neuromorphic.config import (
-    NeuromorphicConfig,
-    STDPParams,
-    PruningConfig,
-    MyelinationConfig,
-    NeighborhoodConsolidationConfig,
-    AdolescentSTDPConfig,
     AdolescentEntryConfig,
     CriticalPeriodConfig,
     EligibilityTraceConfig,
+    MyelinationConfig,
+    NeighborhoodConsolidationConfig,
+    NeuromorphicConfig,
+    PruningConfig,
+    STDPParams,
 )
-from neuromorphic.synapses import SynapseGroup
-from neuromorphic.neuromodulation import NeuromodulationSystem, ConceptDifferentiationTracker
 from neuromorphic.instincts import OrientingInstincts
 from neuromorphic.network import NeuromorphicNetwork
+from neuromorphic.neuromodulation import ConceptDifferentiationTracker, NeuromodulationSystem
+from neuromorphic.synapses import SynapseGroup
 
 
 class TestConceptDifferentiationTracker:
@@ -53,7 +51,7 @@ class TestConceptDifferentiationTracker:
         # Create 5 very different patterns (orthogonal-ish random vectors)
         for i in range(5):
             pat = np.zeros(100, dtype=np.float32)
-            pat[i * 20:(i + 1) * 20] = rng.random(20).astype(np.float32)
+            pat[i * 20 : (i + 1) * 20] = rng.random(20).astype(np.float32)
             tracker.record_pattern(pat)
         assert tracker.count_distinct() >= 3
         assert tracker.is_differentiated
@@ -120,7 +118,7 @@ class TestNeuromodulationAdolescent:
         rng = np.random.default_rng(42)
         for i in range(5):
             pat = np.zeros(200, dtype=np.float32)
-            pat[i * 40:(i + 1) * 40] = rng.random(40).astype(np.float32)
+            pat[i * 40 : (i + 1) * 40] = rng.random(40).astype(np.float32)
             nm.concept_tracker.record_pattern(pat)
 
         # Set external signals: sensory stable, feature STDP declined
@@ -195,7 +193,7 @@ class TestNeuromodulationAdolescent:
         nm2 = NeuromodulationSystem(config)
         nm2.set_state(state)
 
-        assert nm2._adolescent_active == True
+        assert nm2._adolescent_active
         assert nm2._adolescent_start_step == 42
         assert nm2._current_phase == "adolescent"
         assert nm2._feature_stdp_peak == 0.5
@@ -204,10 +202,14 @@ class TestNeuromodulationAdolescent:
 class TestSynapticPruning:
     def _make_synapse(self, n=100, init_weight=0.5):
         return SynapseGroup(
-            n_pre=n, n_post=n, sparsity=0.1,
-            init_weight=init_weight, plastic=True,
+            n_pre=n,
+            n_post=n,
+            sparsity=0.1,
+            init_weight=init_weight,
+            plastic=True,
             stdp_params=STDPParams(w_min=0.0, w_max=1.0),
-            rng=np.random.default_rng(42), name="test",
+            rng=np.random.default_rng(42),
+            name="test",
         )
 
     def test_prune_removes_weak_synapses(self):
@@ -257,10 +259,14 @@ class TestSynapticPruning:
 class TestMyelination:
     def _make_synapse(self):
         syn = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.2,
-            init_weight=0.7, plastic=True,
+            n_pre=50,
+            n_post=50,
+            sparsity=0.2,
+            init_weight=0.7,
+            plastic=True,
             stdp_params=STDPParams(w_min=0.01, w_max=1.0),
-            rng=np.random.default_rng(42), name="test",
+            rng=np.random.default_rng(42),
+            name="test",
         )
         syn.init_adolescent_arrays()
         return syn
@@ -312,9 +318,13 @@ class TestMyelination:
 class TestIdentityTagging:
     def test_tag_identity(self):
         syn = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.2,
-            init_weight=0.7, plastic=True,
-            rng=np.random.default_rng(42), name="test",
+            n_pre=50,
+            n_post=50,
+            sparsity=0.2,
+            init_weight=0.7,
+            plastic=True,
+            rng=np.random.default_rng(42),
+            name="test",
         )
         syn.init_adolescent_arrays()
         # Mark some as myelinated and survived pruning
@@ -329,10 +339,14 @@ class TestIdentityTagging:
 class TestNeighborhoodConsolidation:
     def test_da_burst_rescues_traces(self):
         syn = SynapseGroup(
-            n_pre=30, n_post=30, sparsity=0.3,
-            init_weight=0.5, plastic=True,
+            n_pre=30,
+            n_post=30,
+            sparsity=0.3,
+            init_weight=0.5,
+            plastic=True,
             eligibility_config=EligibilityTraceConfig(),
-            rng=np.random.default_rng(42), name="test",
+            rng=np.random.default_rng(42),
+            name="test",
         )
         # Set some eligibility traces
         syn.eligibility[:] = 0.01
@@ -409,9 +423,14 @@ class TestConvergenceTracking:
         """Network tracks convergence via STDP delta moving average."""
         config = NeuromorphicConfig(
             populations=NeuromorphicConfig().populations.__class__(
-                brainstem=100, reflex_arc=50, sensory_cortex=200,
-                motor_cortex=100, cerebellum=100, association_cortex=200,
-                predictive_layer=100, working_memory=50,
+                brainstem=100,
+                reflex_arc=50,
+                sensory_cortex=200,
+                motor_cortex=100,
+                cerebellum=100,
+                association_cortex=200,
+                predictive_layer=100,
+                working_memory=50,
             ),
         )
         net = NeuromorphicNetwork(config, seed=42)
@@ -428,9 +447,14 @@ class TestConvergenceTracking:
     def test_reset_convergence(self):
         config = NeuromorphicConfig(
             populations=NeuromorphicConfig().populations.__class__(
-                brainstem=50, reflex_arc=30, sensory_cortex=100,
-                motor_cortex=50, cerebellum=50, association_cortex=100,
-                predictive_layer=50, working_memory=30,
+                brainstem=50,
+                reflex_arc=30,
+                sensory_cortex=100,
+                motor_cortex=50,
+                cerebellum=50,
+                association_cortex=100,
+                predictive_layer=50,
+                working_memory=30,
             ),
         )
         net = NeuromorphicNetwork(config, seed=42)
@@ -444,9 +468,13 @@ class TestAdolescentStateRoundtrip:
     def test_synapse_state_with_adolescent_arrays(self):
         rng = np.random.default_rng(42)
         syn = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.2,
-            init_weight=0.5, plastic=True,
-            rng=rng, name="test",
+            n_pre=50,
+            n_post=50,
+            sparsity=0.2,
+            init_weight=0.5,
+            plastic=True,
+            rng=rng,
+            name="test",
         )
         syn.init_adolescent_arrays()
         syn.stability_counter[:10] = 42
@@ -459,9 +487,13 @@ class TestAdolescentStateRoundtrip:
         # Create a new synapse with same shape and SAME nnz by using identical init
         # (set_state replaces the weight matrix so nnz will match)
         syn2 = SynapseGroup(
-            n_pre=50, n_post=50, sparsity=0.2,
-            init_weight=0.3, plastic=True,
-            rng=np.random.default_rng(99), name="test",
+            n_pre=50,
+            n_post=50,
+            sparsity=0.2,
+            init_weight=0.3,
+            plastic=True,
+            rng=np.random.default_rng(99),
+            name="test",
         )
         syn2.init_adolescent_arrays()
         syn2.set_state(state)

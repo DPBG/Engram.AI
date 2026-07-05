@@ -1,0 +1,32 @@
+{
+  "description": "CI performance baseline for neuromorphic/scripts/benchmark.py (issue #132). Small fixed network — not the ~1M-neuron production scale.",
+  "benchmark_args": {
+    "steps": 50,
+    "patterns": 2,
+    "reps": 1,
+    "steps_per_pattern": 8
+  },
+  "env": {
+    "NEURO_BRAINSTEM_N": "50",
+    "NEURO_REFLEX_N": "30",
+    "NEURO_SENSORY_N": "200",
+    "NEURO_MOTOR_N": "100",
+    "NEURO_CEREBELLUM_N": "50",
+    "NEURO_ASSOCIATION_N": "150",
+    "NEURO_PREDICTIVE_N": "80",
+    "NEURO_WORKING_MEM_N": "40",
+    "NEURO_FEATURE_N": "0",
+    "NEURO_CONCEPT_N": "0",
+    "NEURO_DG_N": "0",
+    "NEURO_META_N": "0",
+    "NEURO_WORKSPACE_N": "0",
+    "NEURO_DENDRITES": "0",
+    "ENGRAM_SKIP_MUJOCO_LOOP": "1"
+  },
+  "regression_threshold_pct": 25,
+  "metrics": {
+    "speed_steps_per_sec": 400.0,
+    "speed_mean_step_ms": 2.5,
+    "learning_steps_per_sec": 350.0
+  }
+}

@@ -14,8 +14,7 @@ from collections import deque
 
 import numpy as np
 import sounddevice as sd
-
-from activelearning.plugins import SensorPlugin, PluginCapability, RiskClass
+from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +43,7 @@ def _compute_mfcc(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> np.ndarr
 
     try:
         from python_speech_features import mfcc
+
         features = mfcc(
             audio,
             samplerate=sample_rate,
@@ -64,7 +64,7 @@ def _compute_mfcc(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> np.ndarr
     log_spectrum = np.log(spectrum + 1e-10)
     # Take first N_MFCC components as rough features
     step = max(1, len(log_spectrum) // N_MFCC)
-    features = log_spectrum[:N_MFCC * step:step][:N_MFCC]
+    features = log_spectrum[: N_MFCC * step : step][:N_MFCC]
     return features.astype(np.float32)
 
 
@@ -87,11 +87,13 @@ class MicrophoneSensor(SensorPlugin[list]):
         self._buffer: deque[np.ndarray] = deque(maxlen=100)
         self._silent_frames: int = 0
 
-        self.add_capability(PluginCapability(
-            name="audio_capture",
-            description="Captures audio and extracts MFCC features",
-            parameters={"sample_rate": "16000", "mfcc_coefficients": "13"},
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="audio_capture",
+                description="Captures audio and extracts MFCC features",
+                parameters={"sample_rate": "16000", "mfcc_coefficients": "13"},
+            )
+        )
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         """PortAudio callback — buffer incoming audio chunks."""
@@ -148,7 +150,7 @@ class MicrophoneSensor(SensorPlugin[list]):
                 except IndexError:
                     break
             audio = np.concatenate(chunks)
-            rms = np.sqrt(np.mean(audio ** 2))
+            rms = np.sqrt(np.mean(audio**2))
             if rms < 0.005:  # still silent — skip MFCC entirely
                 return None
             # Sound detected — exit squelch, fall through to full processing

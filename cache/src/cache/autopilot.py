@@ -8,7 +8,7 @@ Autopilot mode:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from activelearning.nats_client import EventBus
 
@@ -56,8 +56,8 @@ class AutopilotController:
         prompt: str,
         model: str = "deepseek-coder:6.7b",
         force_live: bool = False,
-        tags: Optional[List[str]] = None,
-    ) -> Dict:
+        tags: list[str] | None = None,
+    ) -> dict:
         """
         Query LLM with autopilot caching.
 
@@ -75,7 +75,9 @@ class AutopilotController:
         if self._enabled and not force_live:
             cached = await self.llm_cache.get(prompt, model)
             if cached and cached["confidence"] >= self._confidence_threshold:
-                logger.info(f"Autopilot: using cached response (confidence: {cached['confidence']:.3f})")
+                logger.info(
+                    f"Autopilot: using cached response (confidence: {cached['confidence']:.3f})"
+                )
 
                 # Publish cache hit event
                 await self._publish_cache_event("hit", prompt, cached["confidence"])
@@ -126,7 +128,7 @@ class AutopilotController:
         except Exception as e:
             logger.error(f"Error publishing cache event: {e}")
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         """Get autopilot status."""
         return {
             "enabled": self._enabled,

@@ -24,17 +24,23 @@ logger = logging.getLogger("launcher.supervisor")
 
 # Simple ANSI colors for log prefixes (disabled automatically when not a TTY).
 _COLORS = [
-    "\033[36m", "\033[32m", "\033[33m", "\033[35m",
-    "\033[34m", "\033[31m", "\033[96m", "\033[92m",
+    "\033[36m",
+    "\033[32m",
+    "\033[33m",
+    "\033[35m",
+    "\033[34m",
+    "\033[31m",
+    "\033[96m",
+    "\033[92m",
 ]
 _RESET = "\033[0m"
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 # Restart-with-backoff parameters.
-_BACKOFF_INITIAL = 1.0   # seconds before first restart
-_BACKOFF_FACTOR  = 2.0   # multiply delay by this on each consecutive crash
-_BACKOFF_MAX     = 30.0  # cap on per-restart delay
-_BACKOFF_RESET   = 10.0  # if the process lived this long, reset backoff to initial
+_BACKOFF_INITIAL = 1.0  # seconds before first restart
+_BACKOFF_FACTOR = 2.0  # multiply delay by this on each consecutive crash
+_BACKOFF_MAX = 30.0  # cap on per-restart delay
+_BACKOFF_RESET = 10.0  # if the process lived this long, reset backoff to initial
 
 # signal.SIGKILL is not available on Windows; fall back to SIGTERM so the name
 # is always safe to reference.  _kill_proc uses proc.kill() on Windows anyway.
@@ -169,9 +175,7 @@ class Supervisor:
             # Drain stdout in a background thread so that proc.wait() is never
             # blocked by a grandchild that keeps the pipe open after the main
             # service process has already exited.
-            drain_thread = threading.Thread(
-                target=self._drain, args=(mp,), daemon=True
-            )
+            drain_thread = threading.Thread(target=self._drain, args=(mp,), daemon=True)
             drain_thread.start()
             code = mp.proc.wait()
             uptime = time.monotonic() - started_at
@@ -191,7 +195,9 @@ class Supervisor:
             mp.restart_count += 1
             logger.info(
                 "restarting %s in %.1fs (attempt %d)",
-                mp.name, actual_delay, mp.restart_count,
+                mp.name,
+                actual_delay,
+                mp.restart_count,
             )
 
             # Interruptible sleep — exits immediately on shutdown.
@@ -229,7 +235,8 @@ class Supervisor:
             if dep is None:
                 logger.warning(
                     "dep %r of %s was not started — skipping readiness wait",
-                    dep_name, svc.name,
+                    dep_name,
+                    svc.name,
                 )
                 continue
             wait_secs = dep.svc.readiness_timeout + 5.0
@@ -237,7 +244,9 @@ class Supervisor:
             if not dep.ready.wait(timeout=wait_secs):
                 logger.warning(
                     "%s dep %r not ready after %.1fs — starting anyway",
-                    svc.name, dep_name, wait_secs,
+                    svc.name,
+                    dep_name,
+                    wait_secs,
                 )
 
         color = _COLORS[len(self.procs) % len(_COLORS)]

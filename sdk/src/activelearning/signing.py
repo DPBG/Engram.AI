@@ -28,7 +28,7 @@ import hmac
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ SIGNED_FIELDS = ("trace_id", "type", "risk_score", "expires_at", "issued_at")
 _warned_unsigned = False
 
 
-def get_decision_key() -> Optional[str]:
+def get_decision_key() -> str | None:
     """Return the configured signing key, or ``None`` if signing is disabled."""
     key = os.environ.get(DECISION_KEY_ENV, "").strip()
     return key or None
@@ -59,9 +59,7 @@ def signing_enabled() -> bool:
 def _canonical_bytes(payload: dict[str, Any]) -> bytes:
     """Canonical, deterministic encoding of the signed subset of a payload."""
     subset = {k: payload.get(k) for k in SIGNED_FIELDS}
-    return json.dumps(
-        subset, sort_keys=True, separators=(",", ":"), default=str
-    ).encode("utf-8")
+    return json.dumps(subset, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
 
 def compute_signature(payload: dict[str, Any], key: str) -> str:
@@ -69,7 +67,7 @@ def compute_signature(payload: dict[str, Any], key: str) -> str:
     return hmac.new(key.encode("utf-8"), _canonical_bytes(payload), hashlib.sha256).hexdigest()
 
 
-def sign_decision(payload: dict[str, Any], key: Optional[str] = None) -> dict[str, Any]:
+def sign_decision(payload: dict[str, Any], key: str | None = None) -> dict[str, Any]:
     """Return a copy of ``payload`` with a signature attached.
 
     No-op (returns the payload unchanged) when signing is disabled. The
@@ -84,7 +82,7 @@ def sign_decision(payload: dict[str, Any], key: Optional[str] = None) -> dict[st
     return signed
 
 
-def verify_decision(payload: dict[str, Any], key: Optional[str] = None) -> bool:
+def verify_decision(payload: dict[str, Any], key: str | None = None) -> bool:
     """Return ``True`` if ``payload`` is an authentic Kernel decision.
 
     - Signing disabled (no key) → ``True`` (legacy mode), with a one-time warning.
@@ -98,7 +96,8 @@ def verify_decision(payload: dict[str, Any], key: Optional[str] = None) -> bool:
             logger.warning(
                 "Decision signing is DISABLED (%s not set) — the Kernel gate is "
                 "unauthenticated. Set %s on the Kernel and all services to enforce it.",
-                DECISION_KEY_ENV, DECISION_KEY_ENV,
+                DECISION_KEY_ENV,
+                DECISION_KEY_ENV,
             )
             _warned_unsigned = True
         return True

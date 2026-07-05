@@ -8,9 +8,7 @@ import importlib.util
 import os
 import sys
 
-_AUTH_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "dashboard", "auth.py"
-)
+_AUTH_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "dashboard", "auth.py")
 _spec = importlib.util.spec_from_file_location("dash_auth", _AUTH_PATH)
 auth = importlib.util.module_from_spec(_spec)
 sys.modules["dash_auth"] = auth
@@ -20,6 +18,7 @@ TOKEN = "unit-test-dashboard-token"
 
 
 # ── token configuration ───────────────────────────────────────────────────
+
 
 def test_auth_disabled_without_token(monkeypatch):
     monkeypatch.delenv(auth.DASHBOARD_TOKEN_ENV, raising=False)
@@ -36,6 +35,7 @@ def test_auth_enabled_with_token(monkeypatch):
 
 # ── bearer parsing ─────────────────────────────────────────────────────────
 
+
 def test_parse_bearer():
     assert auth.parse_bearer(f"Bearer {TOKEN}") == TOKEN
     assert auth.parse_bearer(f"bearer {TOKEN}") == TOKEN  # case-insensitive scheme
@@ -45,6 +45,7 @@ def test_parse_bearer():
 
 
 # ── authorization decisions ────────────────────────────────────────────────
+
 
 def test_correct_token_authorized(monkeypatch):
     monkeypatch.setenv(auth.DASHBOARD_TOKEN_ENV, TOKEN)
@@ -62,6 +63,7 @@ def test_missing_token_rejected_when_enabled(monkeypatch):
 
 
 # ── HTTP request gating (the security-relevant contract) ────────────────────
+
 
 def test_get_never_requires_auth(monkeypatch):
     # Read-only GETs stay open even when auth is enabled (UI must load).

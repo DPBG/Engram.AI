@@ -10,9 +10,10 @@ Invalidates cache entries when:
 
 import asyncio
 import logging
-import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
+from activelearning import current_timestamp
 from activelearning.nats_client import EventBus
 
 from cache.llm_cache import CacheTag
@@ -138,7 +139,7 @@ class CacheInvalidator:
         """
         logger.info("Running periodic cache cleanup...")
 
-        now = int(time.time() * 1000)
+        now = current_timestamp()
         max_age_ms = self.max_age_days * 24 * 60 * 60 * 1000
         unused_age_ms = self.unused_age_days * 24 * 60 * 60 * 1000
 

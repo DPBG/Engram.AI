@@ -18,7 +18,7 @@ Patent alignment:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -171,12 +171,10 @@ class AuditorySTM:
         # regardless of how many chunks arrived in the last flush window.
         # This ensures stable neuron-to-feature mapping for STDP.
         if cfg.include_recent_raw:
-            padded = np.zeros(
-                (cfg.max_recent_raw_chunks, self.N_MFCC), dtype=np.float32
-            )
+            padded = np.zeros((cfg.max_recent_raw_chunks, self.N_MFCC), dtype=np.float32)
             if self._raw_stack is not None:
-                raw = self._raw_stack[-cfg.max_recent_raw_chunks:]
-                padded[-len(raw):] = raw  # right-align (most recent at end)
+                raw = self._raw_stack[-cfg.max_recent_raw_chunks :]
+                padded[-len(raw) :] = raw  # right-align (most recent at end)
             parts.append(padded.flatten())
 
         features = np.concatenate(parts).astype(np.float32)
@@ -199,12 +197,8 @@ class AuditorySTM:
 
     def set_state(self, state: dict) -> None:
         """Restore STM state from persistence."""
-        self._mean_buffer = [
-            np.array(m, dtype=np.float32) for m in state.get("mean_buffer", [])
-        ]
-        self._delta_buffer = [
-            np.array(d, dtype=np.float32) for d in state.get("delta_buffer", [])
-        ]
+        self._mean_buffer = [np.array(m, dtype=np.float32) for m in state.get("mean_buffer", [])]
+        self._delta_buffer = [np.array(d, dtype=np.float32) for d in state.get("delta_buffer", [])]
         self._energy_buffer = [
             np.array(e, dtype=np.float32) for e in state.get("energy_buffer", [])
         ]

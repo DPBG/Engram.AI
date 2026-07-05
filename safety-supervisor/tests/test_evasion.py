@@ -27,13 +27,16 @@ def _analyze(code: str, target_path: str = "/data/plugins/sensor.py"):
 # ── self-referential / self-modifying code ───────────────────────────────────
 
 
-@pytest.mark.parametrize("code", [
-    "import kernel",
-    "import kernel as k",
-    "import meta_programmer.service",
-    "from safety_supervisor.analyzer import RiskAnalyzer",
-    "from beliefs.graph import BeliefGraph",
-])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "import kernel",
+        "import kernel as k",
+        "import meta_programmer.service",
+        "from safety_supervisor.analyzer import RiskAnalyzer",
+        "from beliefs.graph import BeliefGraph",
+    ],
+)
 def test_self_referential_import_flagged(code: str) -> None:
     result = _analyze(code)
     assert "SELF_REFERENTIAL_CODE" in result.flags

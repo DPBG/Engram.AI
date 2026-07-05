@@ -7,13 +7,13 @@ Uses vector similarity to find cached responses for similar prompts.
 import hashlib
 import json
 import logging
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from activelearning import (
     EmbeddingService,
     QdrantPoint,
     QdrantStore,
+    current_timestamp,
     get_embedding_service,
 )
 
@@ -32,7 +32,7 @@ class CacheTag:
     TASK_QUERY = "task_query"  # dropped on `task.saved`
 
 
-def _normalize_tags(tags: Any) -> Optional[List[str]]:
+def _normalize_tags(tags: Any) -> list[str] | None:
     """Coerce a list or bare string into a clean list of non-empty tags, or None.
 
     Tags arrive over the untyped JSON boundary, so a bare string is wrapped
@@ -60,8 +60,8 @@ class LLMCache:
         db: Any,
         hit_threshold: float = 0.95,
         *,
-        store: Optional[QdrantStore] = None,
-        embedding_service: Optional[EmbeddingService] = None,
+        store: QdrantStore | None = None,
+        embedding_service: EmbeddingService | None = None,
     ):
         self.db = db
         self.hit_threshold = hit_threshold
@@ -104,7 +104,7 @@ class LLMCache:
         """Release the Qdrant connection."""
         await self._qdrant.close()
 
-    async def get(self, prompt: str, model: str = "deepseek-coder:6.7b") -> Optional[Dict]:
+    async def get(self, prompt: str, model: str = "deepseek-coder:6.7b") -> dict | None:
         """
         Get cached response for a prompt.
 
@@ -166,7 +166,7 @@ class LLMCache:
         prompt: str,
         response: str,
         model: str = "deepseek-coder:6.7b",
-        tags: Optional[List[str]] = None,
+        tags: list[str] | None = None,
     ) -> bool:
         """
         Cache an LLM response.
@@ -194,7 +194,7 @@ class LLMCache:
                 "response": response,
                 "model": model,
                 "tags": _normalize_tags(tags),
-                "cached_at": int(time.time() * 1000),
+                "cached_at": current_timestamp(),
                 "hit_count": 0,
                 "last_hit_at": None,
             }
@@ -225,7 +225,7 @@ class LLMCache:
         except Exception as e:
             logger.error(f"Error rolling back cache entry {prompt_hash}: {e}")
 
-    async def _store_in_db(self, cache_entry: Dict) -> None:
+    async def _store_in_db(self, cache_entry: dict) -> None:
         """Mirror a cache entry into SQLite, the index used for invalidation.
 
         Raises on failure so the caller can keep the stores consistent.
@@ -253,7 +253,7 @@ class LLMCache:
     async def _update_hit_stats(self, cache_id: str) -> None:
         """Update cache hit statistics."""
         try:
-            now = int(time.time() * 1000)
+            now = current_timestamp()
 
             await self.db.execute(
                 """
@@ -268,7 +268,7 @@ class LLMCache:
         except Exception as e:
             logger.error(f"Error updating hit stats: {e}")
 
-    def get_metrics(self) -> Dict:
+    def get_metrics(self) -> dict:
         """Get cache metrics."""
         total = self._cache_hits + self._cache_misses
         hit_rate = self._cache_hits / total if total > 0 else 0.0

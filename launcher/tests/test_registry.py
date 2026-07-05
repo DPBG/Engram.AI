@@ -23,6 +23,7 @@ get_service = registry.get_service
 
 # ── profile selection ─────────────────────────────────────────────────────────
 
+
 def test_core_profile_only_returns_core_services():
     core = services_for_profile("core")
     assert core, "core profile should not be empty"
@@ -63,6 +64,7 @@ def test_profiles_map_has_expected_keys():
 
 # ── service lookup ────────────────────────────────────────────────────────────
 
+
 def test_get_service_returns_matching_service():
     svc = get_service("kernel")
     assert svc is not None
@@ -75,6 +77,7 @@ def test_get_service_unknown_returns_none():
 
 
 # ── registry invariants ───────────────────────────────────────────────────────
+
 
 def test_service_names_are_unique():
     names = [s.name for s in SERVICES]
@@ -93,6 +96,7 @@ def test_governance_services_are_ordered_first():
 
 
 # ── Service path helpers ──────────────────────────────────────────────────────
+
 
 def test_src_path_is_rooted_under_repo_root():
     svc = get_service("planner")

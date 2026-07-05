@@ -83,6 +83,7 @@ def _client(router):
 
 # ── system router ──────────────────────────────────────────────────────────
 
+
 def test_system_router_health_and_endpoints():
     ctx, _, _, _ = _ctx()
     client = _client(build_system_router(ctx, static_dir="/nonexistent"))
@@ -101,6 +102,7 @@ def test_system_router_health_and_endpoints():
 
 # ── introspection router ───────────────────────────────────────────────────
 
+
 def test_introspection_router():
     ctx, _, _, _ = _ctx()
     ctx.state.knowledge.learn("observation", "nats_message", "subj")
@@ -114,6 +116,7 @@ def test_introspection_router():
 
 
 # ── chat router ────────────────────────────────────────────────────────────
+
 
 def test_chat_router_post_delegates_to_engine():
     ctx, _, chat, _ = _ctx()
@@ -147,6 +150,7 @@ def test_chat_router_observation_requires_nats():
 
 # ── control router ─────────────────────────────────────────────────────────
 
+
 def test_control_router_video_submit_publishes_command():
     ctx, nats, _, _ = _ctx(nats_connected=True)
     client = _client(build_control_router(ctx))
@@ -162,7 +166,9 @@ def test_control_router_validates_before_publish():
     ctx, _, _, _ = _ctx(nats_connected=True)
     client = _client(build_control_router(ctx))
     # Empty url is rejected with a validation error (not a NATS error).
-    assert client.post("/api/video/submit", json={"url": "   "}).json() == {"error": "url is required"}
+    assert client.post("/api/video/submit", json={"url": "   "}).json() == {
+        "error": "url is required"
+    }
 
 
 def test_control_router_gateway_command_requires_nats():
@@ -181,6 +187,7 @@ def test_control_router_static_geometry_endpoints():
 
 
 # ── stream router ──────────────────────────────────────────────────────────
+
 
 def test_stream_router_websocket_init_and_ping():
     ctx, nats, _, _ = _ctx(nats_connected=True)
@@ -203,6 +210,7 @@ def test_stream_router_websocket_init_and_ping():
 
 def test_stream_router_safe_halt_and_resume_publish_to_kernel():
     from dashboard import safe_halt
+
     safe_halt.update_halt_state({"halted": False})
     ctx, nats, _, _ = _ctx(nats_connected=True)
     client = _client(build_stream_router(ctx))
@@ -227,7 +235,8 @@ def test_stream_router_safe_halt_invalid_payload_fails_closed():
         ws.receive_json()  # init
         ws.send_json({"type": "safe_halt", "data": "not-a-dict"})
         assert ws.receive_json() == {
-            "type": "error", "data": {"message": "Invalid SAFE_HALT payload"},
+            "type": "error",
+            "data": {"message": "Invalid SAFE_HALT payload"},
         }
     assert nats.published == []
 
@@ -246,6 +255,7 @@ def test_stream_router_chat_over_websocket():
 
 # ── auth integration against the real app ──────────────────────────────────
 
+
 def test_real_app_auth_gate_blocks_unauthenticated_mutations(monkeypatch):
     monkeypatch.setenv("ENGRAM_DASHBOARD_TOKEN", "secret-token")
     from dashboard.api import app  # imported lazily so other tests stay web-stack-light
@@ -256,7 +266,9 @@ def test_real_app_auth_gate_blocks_unauthenticated_mutations(monkeypatch):
     assert r.status_code == 401
 
     # With the token it passes the gate.
-    r = client.delete("/api/concept-probe/results", headers={"Authorization": "Bearer secret-token"})
+    r = client.delete(
+        "/api/concept-probe/results", headers={"Authorization": "Bearer secret-token"}
+    )
     assert r.status_code == 200
 
     # Read-only GETs stay open.
