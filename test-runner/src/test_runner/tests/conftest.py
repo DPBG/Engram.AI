@@ -24,7 +24,8 @@ async def nats_client() -> AsyncGenerator[NATSClient, None]:
     Connects to NATS server and yields the client, then closes on cleanup.
     """
     nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
-    nc = await NATSClient().connect(nats_url)
+    nc = NATSClient()
+    await nc.connect(nats_url)
     yield nc
     await nc.drain()
     await nc.close()

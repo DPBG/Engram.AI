@@ -61,7 +61,7 @@ async def test_safety_stream_exists_after_event_bus_connect(nats_url: str):
             pytest.skip("JetStream not available")
 
         for subject in ("proposal.new", "code.proposal", "decision.abc", "code.decision.abc"):
-            stream_name = await js.find_stream(subject)
+            stream_name = await js.find_stream_name_by_subject(subject)
             assert stream_name == SAFETY_STREAM_NAME, (
                 f"Subject '{subject}' should be covered by {SAFETY_STREAM_NAME}, "
                 f"got '{stream_name}'"
