@@ -86,6 +86,31 @@ class RSTDPParams:
 
 
 @dataclass
+class SleepPhaseConfig:
+    """Periodic offline sleep consolidation (ported for OSCEN core-function parity).
+
+    OFF by default. When enabled, every ``interval_s`` seconds of wall-clock the
+    brain enters a ``duration_s``-second consolidation window. During the window:
+    sensory observation gain is dropped (less noise), the 5HT baseline is raised
+    (replay-friendly neuromod profile), and eligibility traces are replayed with a
+    HARD-CAPPED weight boost.
+
+    The cap is critical: unbounded replay can multiply weights past ``w_max`` and
+    overflow. The boost is capped at ``boost_factor`` AND the result is clipped to
+    the synapse group's ``w_max`` — do not relax either gate.
+
+    Consumed by ``neuromorphic.sleep_phase``.
+    """
+
+    enabled: bool = False  # NEURO_SLEEP_PHASE
+    interval_s: float = 14400.0  # 4 hours between sleep windows
+    duration_s: float = 600.0  # 10 min consolidation window
+    boost_factor: float = 1.2  # max trace -> weight multiplier (HARD CAP)
+    sensory_gain_during_sleep: float = 0.1  # drop external input to 10%
+    serotonin_boost: float = 1.5  # multiplier on 5HT baseline during sleep
+
+
+@dataclass
 class PopulationConfig:
     """Size configuration for each brain region."""
 
