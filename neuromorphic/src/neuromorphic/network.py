@@ -211,6 +211,30 @@ class NeuromorphicNetwork:
             )
             logger.info(f"Parallel STDP enabled: {n_stdp_threads} threads")
 
+        # Scale-adaptive parallel synaptic routing (docs/adr/0002 §1).
+        # Below the crossover (~55K–220K neurons), ThreadPoolExecutor dispatch
+        # in _route_parallel costs more than the SpMV it parallelizes; default
+        # dev scale (_NEURO_SMALL, ~55K) is ~37% faster with serial routing.
+        _route_min = int(os.environ.get("NEURO_PARALLEL_ROUTE_MIN_NEURONS", "100000"))
+        _route_mode = os.environ.get("NEURO_PARALLEL_ROUTE", "auto").lower()
+        _total_neurons = self.config.populations.total
+        if _route_mode == "always":
+            self._parallel_routing_enabled = True
+        elif _route_mode == "never":
+            self._parallel_routing_enabled = False
+        else:
+            self._parallel_routing_enabled = _total_neurons >= _route_min
+        if self._parallel_routing_enabled:
+            logger.info(
+                f"Parallel synaptic routing enabled "
+                f"({_total_neurons:,} neurons, threshold {_route_min:,})"
+            )
+        else:
+            logger.info(
+                f"Parallel synaptic routing disabled — serial _route_parallel "
+                f"({_total_neurons:,} neurons < {_route_min:,}; see ADR 0002)"
+            )
+
         # Strategy 3: Adaptive per-group STDP interval — stable groups skip more steps
         self._base_stdp_interval = self.config.stdp_update_interval
         # Per-group interval multiplier: starts at 1, doubles when stable, resets on activity
@@ -1021,9 +1045,14 @@ class NeuromorphicNetwork:
         SciPy CSR SpMV releases the GIL, so threads give genuine parallelism.
         Injection uses += on shared arrays, so it must be sequential.
 
-        Falls back to serial execution when no thread pool is available.
+        Falls back to serial execution when no thread pool is available or
+        when the network is below NEURO_PARALLEL_ROUTE_MIN_NEURONS (ADR 0002).
         """
-        if len(routes) <= 1 or self._stdp_executor is None:
+        if (
+            len(routes) <= 1
+            or self._stdp_executor is None
+            or not self._parallel_routing_enabled
+        ):
             # Serial fallback
             for syn_name, pre_sp, pre_sign, target in routes:
                 self._route_current(syn_name, pre_sp, pre_sign, target)
