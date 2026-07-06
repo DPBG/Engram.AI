@@ -302,10 +302,3 @@ class VideoQualityGate:
         """Check if a video is blacklisted."""
         video_hash = self.compute_hash(filepath)
         return video_hash in self._blacklist if video_hash else False
-
-    def is_duplicate(self, filepath: str) -> str | None:
-        """Check if video is a duplicate. Returns the existing identifier or None."""
-        video_hash = self.compute_hash(filepath)
-        if video_hash and video_hash in self._known_hashes:
-            return self._known_hashes[video_hash]
-        return None

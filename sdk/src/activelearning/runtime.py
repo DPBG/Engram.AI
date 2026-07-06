@@ -122,19 +122,6 @@ class SDKRuntime:
         self._shutdown_event.set()
 
 
-# Global runtime instance
-_runtime: SDKRuntime | None = None
-
-
-async def get_runtime() -> SDKRuntime:
-    """Get the global SDK runtime instance."""
-    global _runtime
-    if _runtime is None:
-        _runtime = SDKRuntime()
-        await _runtime.start()
-    return _runtime
-
-
 async def main() -> None:
     """Main entry point for the SDK runtime."""
     runtime = SDKRuntime()

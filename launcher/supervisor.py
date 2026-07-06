@@ -258,9 +258,6 @@ class Supervisor:
         if stagger:
             time.sleep(stagger)
 
-    def any_alive(self) -> bool:
-        return any(mp.proc.poll() is None for mp in self.procs)
-
     def wait(self) -> None:
         """Block until interrupted; then shut everything down."""
         try:

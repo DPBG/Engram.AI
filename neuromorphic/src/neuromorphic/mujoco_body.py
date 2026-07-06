@@ -453,29 +453,6 @@ class MuJoCoBody:
             "bodies": bodies,
         }
 
-    def get_model_geometry(self) -> list[dict[str, Any]]:
-        """Return static geometry definitions for visualization (call once).
-
-        Each entry describes a body's shape so a 3D viewer can build
-        matching meshes without parsing MJCF.
-        """
-        geoms = []
-        for i in range(self._model.ngeom):
-            g = self._model.geom(i)
-            body_id = g.bodyid
-            body_name = self._model.body(body_id).name if body_id >= 0 else "world"
-            geom_type = int(g.type)  # 0=plane, 2=sphere, 3=ellipsoid, 5=capsule, 6=box
-            type_names = {0: "plane", 2: "sphere", 3: "ellipsoid", 5: "capsule", 6: "box"}
-            geoms.append(
-                {
-                    "body": body_name,
-                    "type": type_names.get(geom_type, f"unknown_{geom_type}"),
-                    "size": g.size.tolist(),
-                    "rgba": g.rgba.tolist(),
-                }
-            )
-        return geoms
-
     # ── Guided teaching (human-in-the-loop) ───────────────────────
 
     @property
@@ -685,27 +662,6 @@ class MuJoCoBody:
             "error_magnitude": float(np.clip(1.0 - post_z / self._initial_root_z, 0, 1)),
             "guided": True,
         }
-
-    def get_joint_info(self) -> list[dict[str, Any]]:
-        """Return joint names, ranges, and current positions for the UI."""
-        joints = []
-        for jname, channel in self._joint_channel.items():
-            jnt_id = self._model.joint(jname).id
-            qpos_adr = self._model.jnt_qposadr[jnt_id]
-            jnt_range = self._model.jnt_range[jnt_id]
-            joints.append(
-                {
-                    "name": jname,
-                    "channel": channel,
-                    "angle_rad": float(self._data.qpos[qpos_adr]),
-                    "range_rad": [float(jnt_range[0]), float(jnt_range[1])],
-                    "range_deg": [
-                        int(round(float(np.degrees(jnt_range[0])))),
-                        int(round(float(np.degrees(jnt_range[1])))),
-                    ],
-                }
-            )
-        return joints
 
     def is_fallen(self) -> bool:
         """Detect if the body has fallen using both height AND orientation.

@@ -119,13 +119,3 @@ class DatasetManifest:
             except (json.JSONDecodeError, OSError):
                 continue
         return runs
-
-    def load_run(self, run_id: str) -> dict | None:
-        """Load a specific manifest by run_id."""
-        path = self._dir / f"manifest_{run_id}.json"
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return None

@@ -40,17 +40,6 @@ class AutopilotController:
         logger.info("Autopilot mode: DISABLED")
         self._enabled = False
 
-    def is_enabled(self) -> bool:
-        """Check if autopilot is enabled."""
-        return self._enabled
-
-    def set_confidence_threshold(self, threshold: float) -> None:
-        """Set confidence threshold for autopilot decisions."""
-        if not 0.0 <= threshold <= 1.0:
-            raise ValueError("Threshold must be between 0.0 and 1.0")
-        self._confidence_threshold = threshold
-        logger.info(f"Autopilot confidence threshold: {threshold}")
-
     async def query_llm(
         self,
         prompt: str,

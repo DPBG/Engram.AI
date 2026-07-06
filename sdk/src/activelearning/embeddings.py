@@ -165,11 +165,6 @@ class EmbeddingService(_OllamaSession):
             # Evict the least-recently-used entry (front of the OrderedDict).
             self._cache.popitem(last=False)
 
-    def clear_cache(self) -> None:
-        """Clear the embedding cache."""
-        self._cache.clear()
-        logger.info("Embedding cache cleared")
-
     async def is_available(self) -> bool:
         """Check if the embedding service is available."""
         try:
