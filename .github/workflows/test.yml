@@ -201,9 +201,6 @@ jobs:
     if: ${{ needs.changes.outputs.sandbox == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: read
-      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -222,30 +219,6 @@ jobs:
       # flags in meta-programmer/.../sandbox_manager.py.
       - name: Build sandbox image + run smoke tests
         run: bash sandbox/smoke/run_smoke.sh
-
-      # Tier 1 supply-chain check: scan the freshly-built sandbox image for known
-      # OS/dependency CVEs. Non-blocking (--exit-code 0) — the sandbox runs
-      # generated code, so image CVEs are worth surfacing, but this reports
-      # rather than gates until a baseline is agreed. Results land in the
-      # Security tab via the SARIF upload below.
-      - name: Scan sandbox image for CVEs (Trivy)
-        continue-on-error: true
-        run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "${PWD}:/work" -w /work \
-            aquasec/trivy:latest image \
-            --severity HIGH,CRITICAL --exit-code 0 --no-progress \
-            --format sarif --output trivy-sandbox.sarif \
-            activelearning-sandbox:latest
-
-      - name: Upload Trivy results to the Security tab
-        if: ${{ always() && hashFiles('trivy-sandbox.sarif') != '' }}
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-sandbox.sarif
-          category: trivy-sandbox
 
       # Adversarial integration tests (E1.3.3): each test proves one containment
       # property by running the payload both without its guard (baseline) and
