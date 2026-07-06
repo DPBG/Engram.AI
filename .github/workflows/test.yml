@@ -102,7 +102,21 @@ jobs:
 
       - name: Run SDK tests with coverage
         working-directory: sdk
-        run: uv run --extra dev python -m pytest tests/ -v --cov=activelearning --cov-report=term-missing
+        run: uv run --extra dev python -m pytest tests/ -v --cov=activelearning --cov-report=term-missing --cov-report=json:coverage.json
+
+      # Non-blocking: publish the SDK coverage percentage to the run summary so
+      # reviewers see the trend on a PR without gating merges. Only the 3.12 leg
+      # writes it, to avoid a duplicate line from the matrix.
+      - name: Coverage summary
+        if: ${{ always() && matrix.python-version == '3.12' }}
+        working-directory: sdk
+        run: |
+          if [ -f coverage.json ]; then
+            pct=$(python -c "import json; print(round(json.load(open('coverage.json'))['totals']['percent_covered'], 1))")
+            echo "### SDK coverage: ${pct}%" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### SDK coverage: report not generated" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   governance:
     name: Governance & safety tests
@@ -122,7 +136,6 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + External-API tests
       - name: Install nats-server
         run: |
           set -euo pipefail
@@ -135,7 +148,7 @@ jobs:
           sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
 
       - name: Run NATS authz red-team tests (E1.1.9)
-        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest tests/red_team/ -v
+        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest sdk/tests/red_team/ -v
 
       - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
         env:

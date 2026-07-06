@@ -1,0 +1,75 @@
+name: PR Review Bot
+
+# Automated code-quality reviewer. Runs the same linters CI enforces (Ruff, and
+# Mypy on the SDK) but reports findings as inline review comments on the diff, so
+# maintainers don't have to hand-check style/type issues on every PR.
+#
+# This is non-blocking by design (fail-on-error=false): it comments, it does not
+# gate merges. The blocking gates live in the `Tests` workflow (test.yml).
+#
+# NOTE ON FORK PRs: `pull_request` grants a read-only GITHUB_TOKEN to PRs opened
+# from forks, so inline comments only post for branches pushed to this repo.
+# To also annotate fork PRs, a maintainer can switch the trigger to
+# `pull_request_target` (safe here — Ruff and Mypy statically analyze, they do
+# not execute PR code). Left as `pull_request` for a conservative default.
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+concurrency:
+  group: pr-review-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  reviewdog:
+    name: Ruff + Mypy inline review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up reviewdog
+        uses: reviewdog/action-setup@v1
+        with:
+          reviewdog_version: latest
+
+      # Ruff emits reviewdog's native rdjson format. `|| true` keeps a non-zero
+      # ruff exit (issues found) from failing the step under pipefail; reviewdog
+      # then turns each finding into an inline comment. filter_mode=added keeps
+      # the noise on the lines the PR actually touched.
+      - name: Ruff -> reviewdog
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uvx ruff check --output-format=rdjson . > ruff.rdjson || true
+          reviewdog -f=rdjson -name="ruff" \
+            -reporter=github-pr-review \
+            -filter-mode=added \
+            -level=warning \
+            -fail-on-error=false < ruff.rdjson
+
+      # Mypy on the SDK only — that surface is already strict-clean in CI, so
+      # inline type hints here stay low-noise. errorformat matches
+      # `file:line:col: message`.
+      - name: Mypy (sdk) -> reviewdog
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uvx mypy --python-version 3.11 --ignore-missing-imports \
+            --show-column-numbers --no-error-summary --no-color-output \
+            sdk/src/activelearning > mypy.txt || true
+          reviewdog -efm="%f:%l:%c: %t%*[^:]: %m" -name="mypy" \
+            -reporter=github-pr-review \
+            -filter-mode=added \
+            -level=warning \
+            -fail-on-error=false < mypy.txt
