@@ -1092,6 +1092,9 @@ class NeuromorphicConfig:
     adolescent_stdp: AdolescentSTDPConfig = field(default_factory=AdolescentSTDPConfig)
     adolescent_entry: AdolescentEntryConfig = field(default_factory=AdolescentEntryConfig)
 
+    # Offline sleep consolidation (OFF by default; see neuromorphic.sleep_phase).
+    sleep_phase: SleepPhaseConfig = field(default_factory=SleepPhaseConfig)
+
     # Per-region LIF overrides
     brainstem_lif: LIFParams = field(
         default_factory=lambda: LIFParams(tau=40.0, threshold=-52.0, reset=-65.0, noise_std=1.0)

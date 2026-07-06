@@ -19,12 +19,29 @@ from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.encoding import _resolve_modality
 from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.persistence import NeuromorphicPersistence
+from neuromorphic.sleep_phase import SleepPhaseManager
 from neuromorphic.watchdog import AlertLevel, NeuralWatchdog, WatchdogConfig, WatchdogStatus
 
 if TYPE_CHECKING:
     from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
 
 logger = logging.getLogger(__name__)
+
+
+class _SleepGroupAdapter:
+    """Adapts a SynapseGroup to the interface sleep replay needs.
+
+    SynapseGroup stores weights as a scipy CSR matrix; the mutable values are
+    ``weights.data``. ``w_max`` lives on ``stdp_params``. This exposes the three
+    fields ``apply_capped_replay`` mutates without leaking CSR details.
+    """
+
+    __slots__ = ("weights", "eligibility", "w_max")
+
+    def __init__(self, weights, eligibility, w_max: float):
+        self.weights = weights  # CSR .data slice (ndarray, mutated in place)
+        self.eligibility = eligibility
+        self.w_max = float(w_max)
 
 
 class NeuromorphicService(BaseService):
@@ -164,6 +181,16 @@ class NeuromorphicService(BaseService):
 
         # Create network
         self._network = NeuromorphicNetwork(self._config)
+
+        # Offline sleep consolidation — config-gated, OFF by default. When the
+        # NEURO_SLEEP_PHASE env flag is set, enable it for this run. maybe_tick()
+        # is a no-op while disabled, so the default simulation path is unchanged.
+        sleep_cfg = self._config.sleep_phase
+        if os.environ.get("NEURO_SLEEP_PHASE") == "1":
+            sleep_cfg.enabled = True
+        self._sleep = SleepPhaseManager(sleep_cfg)
+        self._sleep_enabled = sleep_cfg.enabled
+        self._sleep_replay_interval = 200  # steps between replay passes while asleep
 
         # Load saved state if available
         if await self._persistence.has_saved_state():
@@ -889,6 +916,30 @@ class NeuromorphicService(BaseService):
 
         return result, step_count, network.drives.get_state()
 
+    def _maybe_sleep_consolidate(self, step_count: int) -> None:
+        """Config-gated offline sleep consolidation. No-op unless enabled + asleep.
+
+        Called once per simulation step under the network lock. Advances the
+        sleep scheduler; while in a sleep window, periodically replays
+        eligibility traces into weights with a HARD-CAPPED, ``w_max``-clipped
+        boost (see ``sleep_phase.apply_capped_replay``).
+        """
+        transition = self._sleep.maybe_tick()
+        if transition == "entered":
+            self.logger.info("Sleep phase ENTER at step %d", step_count)
+        elif transition == "exited":
+            self.logger.info("Sleep phase EXIT at step %d", step_count)
+        if not self._sleep.in_sleep or step_count % self._sleep_replay_interval != 0:
+            return
+        groups = [
+            _SleepGroupAdapter(s.weights.data, s.eligibility, s.stdp_params.w_max)
+            for s in self._network.synapses.values()
+            if getattr(s, "eligibility", None) is not None and s.weights.nnz > 0
+        ]
+        if groups:
+            diagnostics = self._sleep.apply_capped_replay(groups)
+            self.logger.debug("Sleep replay across %d synapse groups", len(diagnostics))
+
     async def _simulation_loop(self) -> None:
         """Main simulation loop — processes observations through the network.
 
@@ -979,6 +1030,12 @@ class NeuromorphicService(BaseService):
                             pain_snap,
                             posture_snap,
                         )
+
+                    # Offline sleep consolidation tick (OFF by default; a single
+                    # bool check when disabled, so the hot path is unchanged).
+                    if self._sleep_enabled:
+                        async with self._net_lock:
+                            self._maybe_sleep_consolidate(step_count)
 
                     # Process outputs (no lock needed — using captured snapshots)
                     for cmd in result.get("motor_commands", []):
