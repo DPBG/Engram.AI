@@ -70,16 +70,22 @@ def _run_steps(net, n_steps: int, warmup: int = 20) -> float:
     aud = rng.random(1500).astype(np.float32)
 
     for _ in range(warmup):
-        c = net.inject_multimodal({
-            "sensor.videofile.profile": vis, "sensor.audiofile.profile": aud,
-        })
+        c = net.inject_multimodal(
+            {
+                "sensor.videofile.profile": vis,
+                "sensor.audiofile.profile": aud,
+            }
+        )
         net.step(c)
 
     t0 = time.perf_counter()
     for _ in range(n_steps):
-        c = net.inject_multimodal({
-            "sensor.videofile.profile": vis, "sensor.audiofile.profile": aud,
-        })
+        c = net.inject_multimodal(
+            {
+                "sensor.videofile.profile": vis,
+                "sensor.audiofile.profile": aud,
+            }
+        )
         net.step(c)
     return time.perf_counter() - t0
 
@@ -97,8 +103,10 @@ def profile(steps: int, top: int, output: str | None) -> None:
     _run()
     profiler.disable()
     elapsed = time.perf_counter() - t0
-    print(f"\n{steps} steps in {elapsed:.2f}s = {elapsed / steps * 1000:.2f} ms/step, "
-          f"{steps / elapsed:.2f} steps/sec\n")
+    print(
+        f"\n{steps} steps in {elapsed:.2f}s = {elapsed / steps * 1000:.2f} ms/step, "
+        f"{steps / elapsed:.2f} steps/sec\n"
+    )
 
     stats = pstats.Stats(profiler)
     if output:
@@ -119,8 +127,10 @@ def compare_threading(steps: int) -> None:
     for threads in ("1", "8"):
         net, _ = _build_network(threads=threads)
         elapsed = _run_steps(net, steps, warmup=20)
-        print(f"NEURO_STDP_THREADS={threads}: {steps} steps in {elapsed:.3f}s = "
-              f"{elapsed / steps * 1000:.3f} ms/step, {steps / elapsed:.2f} steps/sec")
+        print(
+            f"NEURO_STDP_THREADS={threads}: {steps} steps in {elapsed:.3f}s = "
+            f"{elapsed / steps * 1000:.3f} ms/step, {steps / elapsed:.2f} steps/sec"
+        )
 
 
 def main() -> None:
@@ -128,8 +138,11 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--top", type=int, default=30, help="Rows to print per sort order")
     parser.add_argument("--output", type=str, default=None, help="Path to save raw .pstats")
-    parser.add_argument("--compare-threading", action="store_true",
-                         help="A/B compare serial vs. parallel STDP dispatch instead of profiling")
+    parser.add_argument(
+        "--compare-threading",
+        action="store_true",
+        help="A/B compare serial vs. parallel STDP dispatch instead of profiling",
+    )
     args = parser.parse_args()
 
     if args.compare_threading:

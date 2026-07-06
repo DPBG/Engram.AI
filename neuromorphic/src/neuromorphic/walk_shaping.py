@@ -20,10 +20,10 @@ being added to the task reward. One env var, hardcoded thresholds
 elsewhere -- if tuning data demands per-knob control later, split
 then.
 """
+
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Tuple
 
 import numpy as np
 
@@ -40,7 +40,7 @@ class FootContactHistory:
         # Round up so we never under-sample. Minimum 2 to detect any
         # transition at all.
         capacity = max(2, int(np.ceil(window_seconds / max(tick_period_seconds, 1e-6))))
-        self._buf: Deque[Tuple[bool, bool]] = deque(maxlen=capacity)
+        self._buf: deque[tuple[bool, bool]] = deque(maxlen=capacity)
         self._window_seconds = window_seconds
         self._tick_period_seconds = tick_period_seconds
 
@@ -100,9 +100,7 @@ def gait_frequency_reward(
         lower_edge = band_min_hz * 0.5
         if transitions_per_second <= lower_edge:
             return 0.0
-        return float(
-            (transitions_per_second - lower_edge) / (band_min_hz - lower_edge)
-        )
+        return float((transitions_per_second - lower_edge) / (band_min_hz - lower_edge))
     # Above band_max: linear from 1 at band_max to 0 at 2 * band_max.
     upper_edge = band_max_hz * 2.0
     if transitions_per_second >= upper_edge:
@@ -206,7 +204,7 @@ class GhostTrackingBuffer:
 
     def __init__(self, window_seconds: float, tick_period_seconds: float) -> None:
         capacity = max(2, int(np.ceil(window_seconds / max(tick_period_seconds, 1e-6))))
-        self._buf: Deque[float] = deque(maxlen=capacity)
+        self._buf: deque[float] = deque(maxlen=capacity)
 
     def push(self, score: float) -> None:
         self._buf.append(float(score))
@@ -221,7 +219,10 @@ class GhostTrackingBuffer:
 
 
 def combined_shaping_reward_with_ghost(
-    a1: float, a2: float, a3: float, gain: float,
+    a1: float,
+    a2: float,
+    a3: float,
+    gain: float,
 ) -> float:
     """Three-component shaping: gait + posture + ghost-tracking.
 

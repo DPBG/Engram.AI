@@ -27,6 +27,7 @@ Design intent:
   natural way to distinguish self vs ghost. The brain learns the
   binding via STDP on sensory->association (also Claim 4).
 """
+
 from __future__ import annotations
 
 import json
@@ -36,9 +37,7 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
-
-import numpy as np
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +53,11 @@ class DemonstrationFrame:
     specific fields; non-locomotion providers leave them empty.
     """
 
-    timestamp: float                              # service monotonic clock
-    source: str                                   # provider identifier
-    joint_angles: dict[str, float]                # joint name -> radians
+    timestamp: float  # service monotonic clock
+    source: str  # provider identifier
+    joint_angles: dict[str, float]  # joint name -> radians
     foot_contacts: dict[str, bool] = field(default_factory=dict)
-    phase: float = 0.0                            # gait cycle phase [0, 1)
+    phase: float = 0.0  # gait cycle phase [0, 1)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
@@ -81,7 +80,7 @@ class DemonstrationProvider(ABC):
     def name(self) -> str: ...
 
     @abstractmethod
-    def step(self, timestamp: float = 0.0) -> Optional[DemonstrationFrame]:
+    def step(self, timestamp: float = 0.0) -> DemonstrationFrame | None:
         """Produce one frame, or None if the provider is idle this tick.
 
         ``timestamp`` is the service-side monotonic clock; providers
@@ -148,9 +147,9 @@ class DemonstrationProvider(ABC):
 # obvious whether this looks like walking.
 
 
-_HIP_AMPLITUDE_RAD = 0.45    # ~26 degrees -- hip flexion / extension
-_KNEE_AMPLITUDE_RAD = 0.70   # ~40 degrees -- knee bend during swing
-_KNEE_PHASE_OFFSET = 0.20    # fraction of cycle -- knee leads hip slightly
+_HIP_AMPLITUDE_RAD = 0.45  # ~26 degrees -- hip flexion / extension
+_KNEE_AMPLITUDE_RAD = 0.70  # ~40 degrees -- knee bend during swing
+_KNEE_PHASE_OFFSET = 0.20  # fraction of cycle -- knee leads hip slightly
 
 
 class KinematicGaitGenerator(DemonstrationProvider):
@@ -180,23 +179,19 @@ class KinematicGaitGenerator(DemonstrationProvider):
         self._phase = 0.0
         self._tick_count = 0
 
-    def step(self, timestamp: float = 0.0) -> Optional[DemonstrationFrame]:
+    def step(self, timestamp: float = 0.0) -> DemonstrationFrame | None:
         # Advance the gait phase.
         self._phase = (self._phase + self._rate_hz * self._dt) % 1.0
         self._tick_count += 1
         p = self._phase
-        TAU = 2.0 * math.pi
+        tau = 2.0 * math.pi
         # Hips: smooth sinusoid, anti-phase legs.
-        hip_left = _HIP_AMPLITUDE_RAD * math.sin(TAU * p)
-        hip_right = _HIP_AMPLITUDE_RAD * math.sin(TAU * (p + 0.5))
+        hip_left = _HIP_AMPLITUDE_RAD * math.sin(tau * p)
+        hip_right = _HIP_AMPLITUDE_RAD * math.sin(tau * (p + 0.5))
         # Knees: bend during swing (peaks when hip is at max flexion).
         # Half-wave rectified sine so knee only goes positive.
-        knee_left = _KNEE_AMPLITUDE_RAD * max(
-            0.0, math.sin(TAU * (p + _KNEE_PHASE_OFFSET))
-        )
-        knee_right = _KNEE_AMPLITUDE_RAD * max(
-            0.0, math.sin(TAU * (p + 0.5 + _KNEE_PHASE_OFFSET))
-        )
+        knee_left = _KNEE_AMPLITUDE_RAD * max(0.0, math.sin(tau * (p + _KNEE_PHASE_OFFSET)))
+        knee_right = _KNEE_AMPLITUDE_RAD * max(0.0, math.sin(tau * (p + 0.5 + _KNEE_PHASE_OFFSET)))
         # Foot contact: leg is in contact when hip extends (negative angle).
         # During the second half of each leg's cycle the foot is planted.
         foot_contacts = {
@@ -246,11 +241,11 @@ CPGKinematicWalker = KinematicGaitGenerator
 # 1.0 = full walking ghost. The env knob `NEURO_DEMONSTRATION_AMPLITUDE`
 # exposes this without code change.
 
-_HIP_PITCH_AMP_RAD = 0.45     # ~26 deg flexion / extension
-_KNEE_BEND_AMP_RAD = 0.70     # ~40 deg knee bend (applied as negative)
-_ANKLE_PITCH_AMP_RAD = 0.20   # subtle foot pitch for ground clearance
+_HIP_PITCH_AMP_RAD = 0.45  # ~26 deg flexion / extension
+_KNEE_BEND_AMP_RAD = 0.70  # ~40 deg knee bend (applied as negative)
+_ANKLE_PITCH_AMP_RAD = 0.20  # subtle foot pitch for ground clearance
 _SHOULDER_PITCH_AMP_RAD = 0.35  # ~20 deg arm swing
-_ELBOW_BASELINE_RAD = 0.15    # slight standing elbow bend
+_ELBOW_BASELINE_RAD = 0.15  # slight standing elbow bend
 _ELBOW_SWING_AMP_RAD = 0.10
 _WAIST_PITCH_LEAN_RAD = 0.05  # ~3 deg constant forward lean
 
@@ -270,11 +265,16 @@ class HumanoidGaitGenerator(DemonstrationProvider):
     """
 
     _JOINT_ORDER: tuple[str, ...] = (
-        "r_hip_pitch", "l_hip_pitch",
-        "r_knee", "l_knee",
-        "r_ankle_pitch", "l_ankle_pitch",
-        "r_shoulder_pitch", "l_shoulder_pitch",
-        "r_elbow", "l_elbow",
+        "r_hip_pitch",
+        "l_hip_pitch",
+        "r_knee",
+        "l_knee",
+        "r_ankle_pitch",
+        "l_ankle_pitch",
+        "r_shoulder_pitch",
+        "l_shoulder_pitch",
+        "r_elbow",
+        "l_elbow",
         "waist_pitch",
     )
 
@@ -309,41 +309,29 @@ class HumanoidGaitGenerator(DemonstrationProvider):
         self._phase = 0.0
         self._tick_count = 0
 
-    def step(self, timestamp: float = 0.0) -> Optional[DemonstrationFrame]:
+    def step(self, timestamp: float = 0.0) -> DemonstrationFrame | None:
         self._phase = (self._phase + self._rate_hz * self._dt) % 1.0
         self._tick_count += 1
         p = self._phase
-        TAU = 2.0 * math.pi
+        tau = 2.0 * math.pi
         s = self._amp
         # Anti-phase legs. Right leg leads with phase 0; left at phase 0.5.
-        r_hip = s * _HIP_PITCH_AMP_RAD * math.sin(TAU * p)
-        l_hip = s * _HIP_PITCH_AMP_RAD * math.sin(TAU * (p + 0.5))
+        r_hip = s * _HIP_PITCH_AMP_RAD * math.sin(tau * p)
+        l_hip = s * _HIP_PITCH_AMP_RAD * math.sin(tau * (p + 0.5))
         # Knee bend during forward swing -- humanoid knee flexion is NEGATIVE.
-        r_knee = -s * _KNEE_BEND_AMP_RAD * max(
-            0.0, math.sin(TAU * (p + _KNEE_PHASE_OFFSET))
-        )
-        l_knee = -s * _KNEE_BEND_AMP_RAD * max(
-            0.0, math.sin(TAU * (p + 0.5 + _KNEE_PHASE_OFFSET))
-        )
+        r_knee = -s * _KNEE_BEND_AMP_RAD * max(0.0, math.sin(tau * (p + _KNEE_PHASE_OFFSET)))
+        l_knee = -s * _KNEE_BEND_AMP_RAD * max(0.0, math.sin(tau * (p + 0.5 + _KNEE_PHASE_OFFSET)))
         # Ankle dorsiflexion to clear the ground during swing.
-        r_ankle = s * _ANKLE_PITCH_AMP_RAD * math.sin(
-            TAU * (p + _KNEE_PHASE_OFFSET)
-        )
-        l_ankle = s * _ANKLE_PITCH_AMP_RAD * math.sin(
-            TAU * (p + 0.5 + _KNEE_PHASE_OFFSET)
-        )
+        r_ankle = s * _ANKLE_PITCH_AMP_RAD * math.sin(tau * (p + _KNEE_PHASE_OFFSET))
+        l_ankle = s * _ANKLE_PITCH_AMP_RAD * math.sin(tau * (p + 0.5 + _KNEE_PHASE_OFFSET))
         # Contralateral arm swing: left arm forward when right leg forward.
-        r_sho = s * _SHOULDER_PITCH_AMP_RAD * math.sin(TAU * (p + 0.5))
-        l_sho = s * _SHOULDER_PITCH_AMP_RAD * math.sin(TAU * p)
+        r_sho = s * _SHOULDER_PITCH_AMP_RAD * math.sin(tau * (p + 0.5))
+        l_sho = s * _SHOULDER_PITCH_AMP_RAD * math.sin(tau * p)
         # Slight elbow flexion during forward arm swing.
         r_elbow = s * (
-            _ELBOW_BASELINE_RAD
-            + _ELBOW_SWING_AMP_RAD * max(0.0, math.sin(TAU * (p + 0.5)))
+            _ELBOW_BASELINE_RAD + _ELBOW_SWING_AMP_RAD * max(0.0, math.sin(tau * (p + 0.5)))
         )
-        l_elbow = s * (
-            _ELBOW_BASELINE_RAD
-            + _ELBOW_SWING_AMP_RAD * max(0.0, math.sin(TAU * p))
-        )
+        l_elbow = s * (_ELBOW_BASELINE_RAD + _ELBOW_SWING_AMP_RAD * max(0.0, math.sin(tau * p)))
         # Subtle steady forward lean.
         waist = s * _WAIST_PITCH_LEAN_RAD
         # Foot contact: leg in stance when hip is extending and knee near
@@ -429,11 +417,17 @@ _GETUP_TOTAL_S_DEFAULT = 18.0
 # tests/test_cpg_humanoid_getup.py. Adding a 12th joint = update this
 # tuple only; waypoint dicts auto-extend via _NEUTRAL_POSE.
 _GETUP_JOINT_ORDER: tuple[str, ...] = (
-    "waist_roll", "waist_pitch",
-    "r_shoulder_pitch", "l_shoulder_pitch",
-    "r_elbow", "l_elbow",
-    "r_hip_roll", "r_hip_pitch", "l_hip_pitch",
-    "r_knee", "l_knee",
+    "waist_roll",
+    "waist_pitch",
+    "r_shoulder_pitch",
+    "l_shoulder_pitch",
+    "r_elbow",
+    "l_elbow",
+    "r_hip_roll",
+    "r_hip_pitch",
+    "l_hip_pitch",
+    "r_knee",
+    "l_knee",
 )
 _NEUTRAL_POSE: dict[str, float] = {j: 0.0 for j in _GETUP_JOINT_ORDER}
 
@@ -450,6 +444,7 @@ def _wp(**overrides: float) -> dict[str, float]:
             f"(canonical set: {_GETUP_JOINT_ORDER})"
         )
     return {**_NEUTRAL_POSE, **overrides}
+
 
 # Each tuple is (t_seconds, joint -> radians dict). Joints kept stable
 # (always written) so linear interpolation between any two adjacent
@@ -475,75 +470,117 @@ def _wp(**overrides: float) -> dict[str, float]:
 #                NEGATIVE = unrolls toward back
 _GETUP_WAYPOINTS: tuple[tuple[float, dict[str, float]], ...] = (
     # settle: body lying on right side, all joints neutral.
-    (0.0,  _wp()),
-    (1.0,  _wp()),
+    (0.0, _wp()),
+    (1.0, _wp()),
     # roll: build angular momentum upward off right side. Left arm
     # sweeps overhead and left leg lifts -- both throw mass away from
     # the floor. Right arm plants slightly so the right elbow becomes
     # the pivot. waist_pitch negative starts the sit-up direction.
-    (4.0,  _wp(
-        waist_pitch=-0.3,
-        r_shoulder_pitch=-0.4, l_shoulder_pitch=1.4,
-        r_elbow=0.3, l_elbow=0.3,
-        r_hip_pitch=0.4, l_hip_pitch=0.9,
-        r_knee=-0.5, l_knee=-1.0,
-    )),
+    (
+        4.0,
+        _wp(
+            waist_pitch=-0.3,
+            r_shoulder_pitch=-0.4,
+            l_shoulder_pitch=1.4,
+            r_elbow=0.3,
+            l_elbow=0.3,
+            r_hip_pitch=0.4,
+            l_hip_pitch=0.9,
+            r_knee=-0.5,
+            l_knee=-1.0,
+        ),
+    ),
     # prop: lever upper body off the floor on right elbow. waist_pitch
     # at max negative (range max is -0.52). r_shoulder_pitch positive
     # actively lifts the right shoulder; r_elbow folds forearm under
     # torso (upper arm pinned by body weight, elbow flex pushes
     # shoulder up). Both knees tuck deeply so legs are out of the way.
-    (7.0,  _wp(
-        waist_pitch=-0.5,
-        r_shoulder_pitch=0.8, l_shoulder_pitch=1.2,
-        r_elbow=1.2, l_elbow=0.8,
-        r_hip_pitch=1.0, l_hip_pitch=1.2,
-        r_knee=-1.3, l_knee=-1.4,
-    )),
+    (
+        7.0,
+        _wp(
+            waist_pitch=-0.5,
+            r_shoulder_pitch=0.8,
+            l_shoulder_pitch=1.2,
+            r_elbow=1.2,
+            l_elbow=0.8,
+            r_hip_pitch=1.0,
+            l_hip_pitch=1.2,
+            r_knee=-1.3,
+            l_knee=-1.4,
+        ),
+    ),
     # sit: pull body into compact seated configuration. waist_pitch
     # eased toward 0 (body more upright, less need for sit-up bias).
     # Knees + hips at deepest flex. Both arms tucked.
-    (10.0, _wp(
-        waist_pitch=-0.2,
-        r_shoulder_pitch=0.5, l_shoulder_pitch=0.5,
-        r_elbow=1.0, l_elbow=1.0,
-        r_hip_pitch=1.2, l_hip_pitch=1.2,
-        r_knee=-1.4, l_knee=-1.4,
-    )),
+    (
+        10.0,
+        _wp(
+            waist_pitch=-0.2,
+            r_shoulder_pitch=0.5,
+            l_shoulder_pitch=0.5,
+            r_elbow=1.0,
+            l_elbow=1.0,
+            r_hip_pitch=1.2,
+            l_hip_pitch=1.2,
+            r_knee=-1.4,
+            l_knee=-1.4,
+        ),
+    ),
     # kneel: rotate forward to hands-and-knees. waist_pitch flips sign
     # -- body no longer side-lying, positive is forward bend toward
     # floor in front of body. Shoulders reach arms forward to plant.
-    (12.0, _wp(
-        waist_pitch=0.5,
-        r_shoulder_pitch=-1.0, l_shoulder_pitch=-1.0,
-        r_elbow=0.1, l_elbow=0.1,
-        r_hip_pitch=1.2, l_hip_pitch=1.2,
-        r_knee=-1.4, l_knee=-1.4,
-    )),
+    (
+        12.0,
+        _wp(
+            waist_pitch=0.5,
+            r_shoulder_pitch=-1.0,
+            l_shoulder_pitch=-1.0,
+            r_elbow=0.1,
+            l_elbow=0.1,
+            r_hip_pitch=1.2,
+            l_hip_pitch=1.2,
+            r_knee=-1.4,
+            l_knee=-1.4,
+        ),
+    ),
     # crouch: hands lift, hips/knees partly extend.
-    (14.0, _wp(
-        waist_pitch=0.3,
-        r_shoulder_pitch=-0.4, l_shoulder_pitch=-0.4,
-        r_elbow=0.3, l_elbow=0.3,
-        r_hip_pitch=0.9, l_hip_pitch=0.9,
-        r_knee=-1.0, l_knee=-1.0,
-    )),
+    (
+        14.0,
+        _wp(
+            waist_pitch=0.3,
+            r_shoulder_pitch=-0.4,
+            l_shoulder_pitch=-0.4,
+            r_elbow=0.3,
+            l_elbow=0.3,
+            r_hip_pitch=0.9,
+            l_hip_pitch=0.9,
+            r_knee=-1.0,
+            l_knee=-1.0,
+        ),
+    ),
     # half_stand: continued extension.
-    (16.0, _wp(
-        waist_pitch=0.1,
-        r_shoulder_pitch=-0.1, l_shoulder_pitch=-0.1,
-        r_elbow=0.1, l_elbow=0.1,
-        r_hip_pitch=0.4, l_hip_pitch=0.4,
-        r_knee=-0.4, l_knee=-0.4,
-    )),
+    (
+        16.0,
+        _wp(
+            waist_pitch=0.1,
+            r_shoulder_pitch=-0.1,
+            l_shoulder_pitch=-0.1,
+            r_elbow=0.1,
+            l_elbow=0.1,
+            r_hip_pitch=0.4,
+            l_hip_pitch=0.4,
+            r_knee=-0.4,
+            l_knee=-0.4,
+        ),
+    ),
     # stand: neutral upright.
     (18.0, _wp()),
 )
 
 _GETUP_PHASE_NAMES: tuple[tuple[float, str], ...] = (
-    (1.0,  "settle"),
-    (4.0,  "roll"),
-    (7.0,  "prop"),
+    (1.0, "settle"),
+    (4.0, "roll"),
+    (7.0, "prop"),
     (10.0, "sit"),
     (12.0, "kneel"),
     (14.0, "crouch"),
@@ -575,9 +612,7 @@ class HumanoidGetupGenerator(DemonstrationProvider):
         amplitude_scale: float = 1.0,
     ) -> None:
         if total_duration_s <= 0.0:
-            raise ValueError(
-                f"total_duration_s must be positive, got {total_duration_s}"
-            )
+            raise ValueError(f"total_duration_s must be positive, got {total_duration_s}")
         self._total_s = float(total_duration_s)
         # Scale the waypoint anchor times so a custom duration stretches /
         # compresses the trajectory uniformly. Anchor in the table is built
@@ -620,9 +655,7 @@ class HumanoidGetupGenerator(DemonstrationProvider):
         # transformation; called per step but the cost is trivial relative
         # to the rest of step().
         ts = self._time_scale
-        return tuple(
-            (t * ts, angles) for t, angles in _GETUP_WAYPOINTS
-        )
+        return tuple((t * ts, angles) for t, angles in _GETUP_WAYPOINTS)
 
     def _phase_name_at(self, t: float) -> str:
         ts = self._time_scale
@@ -654,15 +687,12 @@ class HumanoidGetupGenerator(DemonstrationProvider):
             span = hi_t - lo_t
             # span > 0 since we built waypoints with strictly increasing t.
             u = 0.0 if span <= 0.0 else (t - lo_t) / span
-            base = {
-                j: lo_angles[j] + u * (hi_angles[j] - lo_angles[j])
-                for j in _GETUP_JOINT_ORDER
-            }
+            base = {j: lo_angles[j] + u * (hi_angles[j] - lo_angles[j]) for j in _GETUP_JOINT_ORDER}
         if self._amp == 1.0:
             return dict(base)
         return {j: base[j] * self._amp for j in _GETUP_JOINT_ORDER}
 
-    def step(self, timestamp: float = 0.0) -> Optional[DemonstrationFrame]:
+    def step(self, timestamp: float = 0.0) -> DemonstrationFrame | None:
         # Advance body time. After total duration the body_time keeps
         # climbing but _interpolate clamps to the last waypoint, so the
         # frame stays at the standing pose. reset() puts us back at t=0.
@@ -725,7 +755,8 @@ class HumanoidStandGenerator(DemonstrationProvider):
     """
 
     _ANKLE_JOINTS: tuple[str, ...] = (
-        "r_ankle_pitch", "l_ankle_pitch",
+        "r_ankle_pitch",
+        "l_ankle_pitch",
     )
 
     def __init__(
@@ -763,7 +794,7 @@ class HumanoidStandGenerator(DemonstrationProvider):
         self._body_time = 0.0
         self._tick_count = 0
 
-    def step(self, timestamp: float = 0.0) -> Optional[DemonstrationFrame]:
+    def step(self, timestamp: float = 0.0) -> DemonstrationFrame | None:
         self._body_time += self._dt
         self._tick_count += 1
         t = self._body_time
@@ -776,9 +807,7 @@ class HumanoidStandGenerator(DemonstrationProvider):
             if ankle in angles:
                 angles[ankle] += self._ankle_bias
         if "waist_pitch" in angles:
-            angles["waist_pitch"] += self._sway_amp * math.sin(
-                2.0 * math.pi * self._sway_hz * t
-            )
+            angles["waist_pitch"] += self._sway_amp * math.sin(2.0 * math.pi * self._sway_hz * t)
         # Phase: position in the sway cycle, normalized to [0, 1).
         period = 1.0 / self._sway_hz if self._sway_hz > 0.0 else 1.0
         phase = (t % period) / period if period > 0.0 else 0.0
@@ -912,7 +941,7 @@ class HumanoidStandStepGenerator(DemonstrationProvider):
             angles[swing_knee] = self._knee_bias - self._step_knee_amp * swing
         return angles
 
-    def step(self, timestamp: float = 0.0) -> Optional[DemonstrationFrame]:
+    def step(self, timestamp: float = 0.0) -> DemonstrationFrame | None:
         self._body_time += self._dt
         self._tick_count += 1
         t = self._body_time % self._cycle
@@ -928,7 +957,7 @@ class HumanoidStandStepGenerator(DemonstrationProvider):
         elif t < self._stand_a + self._step:
             phase = "step"
             phase_t = t - self._stand_a
-            right_leg_swings = (self._cycle_count % 2 == 0)
+            right_leg_swings = self._cycle_count % 2 == 0
             angles = self._step_pose(phase_t, right_leg_swings)
             # Swinging leg lifts mid-step (foot off the ground); other
             # leg stays planted. Both feet down at the very start and
@@ -1013,12 +1042,11 @@ class VideoPoseProvider(DemonstrationProvider):
         self._fps = float(trajectory.get("fps", 30.0))
         self._frames = trajectory.get("frames", [])
         if not self._frames:
-            raise ValueError(
-                f"Video trajectory {video_id!r} has no frames"
-            )
+            raise ValueError(f"Video trajectory {video_id!r} has no frames")
         self._frame_count = len(self._frames)
-        self._duration = float(trajectory.get("duration_seconds",
-                                              self._frame_count / max(self._fps, 1.0)))
+        self._duration = float(
+            trajectory.get("duration_seconds", self._frame_count / max(self._fps, 1.0))
+        )
         self._dt = float(dt_seconds)
         # Frame index as float -- accumulate dt*fps so loops are smooth
         # at any (dt, fps) combination.
@@ -1032,7 +1060,7 @@ class VideoPoseProvider(DemonstrationProvider):
     def reset(self) -> None:
         self._frame_pos = 0.0
 
-    def step(self, timestamp: float = 0.0) -> Optional[DemonstrationFrame]:
+    def step(self, timestamp: float = 0.0) -> DemonstrationFrame | None:
         # Advance frame position; wrap around.
         self._frame_pos = (self._frame_pos + self._dt * self._fps) % self._frame_count
         idx = int(self._frame_pos)
@@ -1064,21 +1092,24 @@ class VideoPoseProvider(DemonstrationProvider):
         )
 
 
-def _load_video_trajectory(video_id: str, base_dir: Optional[str] = None) -> dict:
+def _load_video_trajectory(video_id: str, base_dir: str | None = None) -> dict:
     """Read the extracted JSON for ``video_id`` from the shared volume.
 
     Raises FileNotFoundError if the trajectory has not been extracted.
     """
-    base = Path(base_dir or os.environ.get(
-        "NEURO_DEMONSTRATION_DATA_DIR", _VIDEO_TRAJECTORY_DIR_DEFAULT,
-    ))
+    base = Path(
+        base_dir
+        or os.environ.get(
+            "NEURO_DEMONSTRATION_DATA_DIR",
+            _VIDEO_TRAJECTORY_DIR_DEFAULT,
+        )
+    )
     path = base / f"{video_id}.json"
     if not path.exists():
         raise FileNotFoundError(
-            f"Video trajectory not found: {path} "
-            f"(extract via dashboard upload first)"
+            f"Video trajectory not found: {path} " f"(extract via dashboard upload first)"
         )
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -1086,10 +1117,14 @@ def _load_video_trajectory(video_id: str, base_dir: Optional[str] = None) -> dic
 # Brain-side encoding helper
 # ---------------------------------------------------------------------------
 
+
 def encode_frame_to_proprio_vector(
     frame: DemonstrationFrame,
     joint_order: tuple[str, ...] = (
-        "hip_left", "hip_right", "knee_left", "knee_right",
+        "hip_left",
+        "hip_right",
+        "knee_left",
+        "knee_right",
     ),
     angle_range: tuple[float, float] = (-_HIP_AMPLITUDE_RAD, _KNEE_AMPLITUDE_RAD),
 ) -> list[float]:
@@ -1123,10 +1158,11 @@ def encode_frame_to_proprio_vector(
 # Factory
 # ---------------------------------------------------------------------------
 
+
 def make_demonstration_provider(
-    type_name: Optional[str] = None,
-    video_id: Optional[str] = None,
-) -> Optional[DemonstrationProvider]:
+    type_name: str | None = None,
+    video_id: str | None = None,
+) -> DemonstrationProvider | None:
     """Construct a provider from env, explicit type, or video_id.
 
     ``type_name`` defaults to ``NEURO_DEMONSTRATION_TYPE`` env var.
@@ -1139,7 +1175,7 @@ def make_demonstration_provider(
     Falls back gracefully (logs + returns ``None``) when the file is
     missing, so a bad video_id does not crash the service.
     """
-    name_raw = (type_name or os.environ.get("NEURO_DEMONSTRATION_TYPE", "none") or "none")
+    name_raw = type_name or os.environ.get("NEURO_DEMONSTRATION_TYPE", "none") or "none"
     name = name_raw.lower()
     if name in ("", "none", "off", "0", "false"):
         return None
@@ -1151,7 +1187,9 @@ def make_demonstration_provider(
         rate_hz = float(os.environ.get("NEURO_DEMONSTRATION_GAIT_HZ", "1.4"))
         amp = float(os.environ.get("NEURO_DEMONSTRATION_AMPLITUDE", "1.0"))
         return HumanoidGaitGenerator(
-            rate_hz=rate_hz, dt_seconds=dt, amplitude_scale=amp,
+            rate_hz=rate_hz,
+            dt_seconds=dt,
+            amplitude_scale=amp,
         )
     if name in ("cpg_humanoid_stand", "humanoid_stand"):
         # Pairing check: the stand ghost holds a neutral upright pose
@@ -1169,7 +1207,8 @@ def make_demonstration_provider(
                 "The stand ghost holds a neutral pose; a locomotion "
                 "task will fight it. Flip both together in "
                 "deploy/docker-compose.1m.yml.",
-                name_raw, _task_pin,
+                name_raw,
+                _task_pin,
             )
         sway_amp = float(os.environ.get("NEURO_STAND_SWAY_AMP", "0.05"))
         sway_hz = float(os.environ.get("NEURO_STAND_SWAY_HZ", "0.3"))
@@ -1197,7 +1236,8 @@ def make_demonstration_provider(
                 "The stand-step-stand ghost cycles stand -> step -> stand "
                 "and will fight any task other than stand_step_stand. "
                 "Flip both together in deploy/docker-compose.1m.yml.",
-                name_raw, _task_pin,
+                name_raw,
+                _task_pin,
             )
         stand_a_s = float(os.environ.get("NEURO_STAND_STEP_STAND_STAND_A_S", "1.5"))
         step_s = float(os.environ.get("NEURO_STAND_STEP_STAND_STEP_S", "1.0"))
@@ -1236,12 +1276,15 @@ def make_demonstration_provider(
                 "NEURO_DEMONSTRATION_TYPE=%s with NEURO_TASK_PIN=%s. "
                 "The getup ghost trajectory will fight the active "
                 "task. Flip both together in deploy/docker-compose.1m.yml.",
-                name_raw, _task_pin,
+                name_raw,
+                _task_pin,
             )
         amp = float(os.environ.get("NEURO_DEMONSTRATION_AMPLITUDE", "1.0"))
         total_s = float(os.environ.get("NEURO_GETUP_DURATION_S", str(_GETUP_TOTAL_S_DEFAULT)))
         return HumanoidGetupGenerator(
-            total_duration_s=total_s, dt_seconds=dt, amplitude_scale=amp,
+            total_duration_s=total_s,
+            dt_seconds=dt,
+            amplitude_scale=amp,
         )
     if name in ("video", "video_pose"):
         if not video_id:

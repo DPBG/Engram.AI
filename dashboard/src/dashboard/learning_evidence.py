@@ -3,12 +3,13 @@
 Reads ``neuromorphic/benchmarks/*.json`` (and optional ``/data/benchmarks``)
 and normalizes metrics for the dashboard Learning Evidence panel.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,7 @@ def _parse_timestamp(raw: dict[str, Any], filename: str) -> str:
     if m:
         d, t = m.group(1), m.group(2)
         return f"{d[:4]}-{d[4:6]}-{d[6:8]}T{t[:2]}:{t[2:4]}:{t[4:6]}"
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _safe_float(value: Any) -> float | None:
@@ -123,13 +124,15 @@ def load_benchmark_files(
     found.sort(key=lambda item: _parse_timestamp(item[2], item[0]))
     entries: list[dict[str, Any]] = []
     for filename, directory, raw in found[-limit:]:
-        entries.append({
-            "timestamp": _parse_timestamp(raw, filename),
-            "filename": filename,
-            "source_dir": str(directory),
-            "metrics": extract_learning_metrics(raw),
-            "raw_keys": sorted(raw.keys()),
-        })
+        entries.append(
+            {
+                "timestamp": _parse_timestamp(raw, filename),
+                "filename": filename,
+                "source_dir": str(directory),
+                "metrics": extract_learning_metrics(raw),
+                "raw_keys": sorted(raw.keys()),
+            }
+        )
     return entries, None
 
 
@@ -147,15 +150,19 @@ def build_learning_evidence_series(
         m = entry["metrics"]
         point_base = {"timestamp": entry["timestamp"], "filename": entry["filename"]}
         if m.get("concept_separability") is not None:
-            series["concept_separability"].append({
-                **point_base,
-                "value": m["concept_separability"],
-            })
+            series["concept_separability"].append(
+                {
+                    **point_base,
+                    "value": m["concept_separability"],
+                }
+            )
         if m.get("binding_accuracy") is not None:
-            series["binding_accuracy"].append({
-                **point_base,
-                "value": m["binding_accuracy"],
-            })
+            series["binding_accuracy"].append(
+                {
+                    **point_base,
+                    "value": m["binding_accuracy"],
+                }
+            )
 
     latest = entries[-1] if entries else None
     return {

@@ -38,25 +38,32 @@ def _result(sps: float, mean_ms: float, learn_sps: float) -> dict:
 
 class TestCheckRegression:
     def test_passes_within_threshold(self, baseline):
-        assert benchmark_ci_gate.check_regression(
-            _result(450.0, 2.0, 400.0), baseline,
-        ) == []
+        assert (
+            benchmark_ci_gate.check_regression(
+                _result(450.0, 2.0, 400.0),
+                baseline,
+            )
+            == []
+        )
 
     def test_fails_slow_steps_per_sec(self, baseline):
         failures = benchmark_ci_gate.check_regression(
-            _result(200.0, 2.0, 400.0), baseline,
+            _result(200.0, 2.0, 400.0),
+            baseline,
         )
         assert any("speed steps/sec" in f for f in failures)
 
     def test_fails_high_mean_step_ms(self, baseline):
         failures = benchmark_ci_gate.check_regression(
-            _result(450.0, 5.0, 400.0), baseline,
+            _result(450.0, 5.0, 400.0),
+            baseline,
         )
         assert any("mean step time" in f for f in failures)
 
     def test_fails_slow_learning(self, baseline):
         failures = benchmark_ci_gate.check_regression(
-            _result(450.0, 2.0, 100.0), baseline,
+            _result(450.0, 2.0, 100.0),
+            baseline,
         )
         assert any("learning steps/sec" in f for f in failures)
 

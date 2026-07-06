@@ -49,7 +49,7 @@ class CuratorConfig:
     recent_window: int = 100
 
     @classmethod
-    def from_env(cls) -> "CuratorConfig":
+    def from_env(cls) -> CuratorConfig:
         def _f(name: str, default: float) -> float:
             try:
                 return float(os.environ.get(name, default))
@@ -92,9 +92,7 @@ class Curator:
 
     def __init__(self, config: CuratorConfig | None = None) -> None:
         self._config = config or CuratorConfig.from_env()
-        self._recent_concepts: deque[np.ndarray] = deque(
-            maxlen=self._config.recent_window
-        )
+        self._recent_concepts: deque[np.ndarray] = deque(maxlen=self._config.recent_window)
         self._stats = _CuratorStats()
 
     @property
@@ -132,8 +130,7 @@ class Curator:
         if confidence < self._config.min_confidence:
             self._stats.rejects[stream] += 1
             return False, (
-                f"confidence {confidence:.3f} < min "
-                f"{self._config.min_confidence:.3f}"
+                f"confidence {confidence:.3f} < min " f"{self._config.min_confidence:.3f}"
             )
 
         # Novelty check applies only to concept events (the only stream

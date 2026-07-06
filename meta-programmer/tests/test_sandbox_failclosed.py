@@ -210,9 +210,9 @@ def test_container_timeout_is_test_failure():
 
     result = _run(mgr.run_tests("/staging/x/mod.py"))
     assert result["success"] is False
-    assert result["sandbox_unavailable"] is False, (
-        "timeout is a test failure, not containment unavailability"
-    )
+    assert (
+        result["sandbox_unavailable"] is False
+    ), "timeout is a test failure, not containment unavailability"
     assert "timeout" in result["error"].lower()
 
 
@@ -226,9 +226,9 @@ def test_oom_killed_exit_137_is_test_failure():
     mgr = _manager(_FakeDockerClient(status_code=137))
     result = _run(mgr.run_tests("/staging/x/mod.py"))
     assert result["success"] is False
-    assert result["sandbox_unavailable"] is False, (
-        "OOM exit is a test failure, not containment unavailability"
-    )
+    assert (
+        result["sandbox_unavailable"] is False
+    ), "OOM exit is a test failure, not containment unavailability"
 
 
 def test_unexpected_exception_fails_closed():
@@ -238,6 +238,7 @@ def test_unexpected_exception_fails_closed():
     cannot confirm containment ran, so we must treat it as sandbox
     unavailability (never deploy).
     """
+
     class _ExplodingContainers:
         def run(self, **_kwargs):
             raise RuntimeError("unexpected internal error")
@@ -245,9 +246,7 @@ def test_unexpected_exception_fails_closed():
     mgr = _manager(_FakeDockerClient())
     mgr.docker_client.containers = _ExplodingContainers()
     result = _run(mgr.run_tests("/staging/x/mod.py"))
-    assert result["sandbox_unavailable"] is True, (
-        "unexpected exception must fail closed"
-    )
+    assert result["sandbox_unavailable"] is True, "unexpected exception must fail closed"
     assert result["success"] is False
 
 
@@ -268,17 +267,17 @@ def test_all_unavailable_paths_carry_remediation():
     mode triggered the block.
     """
     cases = [
-        _manager(None),                                            # no client
-        _manager(_FakeDockerClient(ping_ok=False)),                # daemon down
-        _manager(_FakeDockerClient(image_found=False)),            # missing image
-        _manager(_FakeDockerClient(spawn_error=True)),             # spawn rejected
+        _manager(None),  # no client
+        _manager(_FakeDockerClient(ping_ok=False)),  # daemon down
+        _manager(_FakeDockerClient(image_found=False)),  # missing image
+        _manager(_FakeDockerClient(spawn_error=True)),  # spawn rejected
     ]
     for mgr in cases:
         result = _run(mgr.run_tests("/staging/x/mod.py"))
         assert result["sandbox_unavailable"] is True
-        assert SANDBOX_REMEDIATION in result["error"], (
-            f"SANDBOX_REMEDIATION missing for: {result['error'][:80]}"
-        )
+        assert (
+            SANDBOX_REMEDIATION in result["error"]
+        ), f"SANDBOX_REMEDIATION missing for: {result['error'][:80]}"
 
 
 # ── service deploy path: unavailable sandbox blocks deploy ───────────────────

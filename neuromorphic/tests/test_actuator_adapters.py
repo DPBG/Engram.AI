@@ -9,6 +9,8 @@ Covers:
 
 from __future__ import annotations
 
+# ruff: noqa: E402 - the activelearning/neuromorphic imports below intentionally
+# follow the sys.path bootstrap, so they cannot sit at the top of the file.
 # ---------------------------------------------------------------------------
 # Bootstrap activelearning SDK submodules without triggering __init__.py.
 # The neuromorphic venv doesn't install aiohttp/qdrant (pulled in by the
@@ -32,13 +34,13 @@ if _SDK_SRC not in sys.path:
 
 import asyncio
 import time
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from activelearning.core import ActionProposal
 from activelearning.plugins import RiskClass
+
 from neuromorphic.actuators.mujoco_actuator import MuJoCoActuator
 from neuromorphic.actuators.serial_servo_actuator import (
     NullServoDriver,
@@ -46,7 +48,6 @@ from neuromorphic.actuators.serial_servo_actuator import (
     ServoDriver,
 )
 from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -221,7 +222,7 @@ class _RecordingDriver:
         self.calls.append((servo_id, angle, speed))
         return self._succeed
 
-    def get_position(self, servo_id: int) -> Optional[float]:
+    def get_position(self, servo_id: int) -> float | None:
         return None
 
 
@@ -311,8 +312,7 @@ class TestSerialServoActuator:
             # Manually invoke the heartbeat body (avoid running the full loop task)
             await bus.publish(
                 f"actuator.heartbeat.{act._channel}",
-                {"channel": act._channel, "actuator_id": act.actuator_id,
-                 "timestamp": time.time()},
+                {"channel": act._channel, "actuator_id": act.actuator_id, "timestamp": time.time()},
             )
 
         _run(_one_tick())
@@ -326,6 +326,7 @@ class TestSerialServoActuator:
 
 class _FakeMotorFeedbackConfig:
     """Minimal MotorFeedbackConfig substitute."""
+
     motor_rate_limit_hz: float = 0.0
     heartbeat_timeout_s: float = 30.0
     mujoco_continuous: bool = False
@@ -416,6 +417,7 @@ class TestMotorFeedbackAdapterPluginRouting:
 
     def test_register_plugin_logs_on_overwrite(self, caplog):
         import logging
+
         adapter, _ = self._make_adapter()
         p1 = _AlwaysSuccessPlugin()
         p2 = _AlwaysSuccessPlugin()

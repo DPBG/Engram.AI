@@ -85,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_bodies_brain_name ON bodies(brain_name);
 @dataclass
 class SkillEntry:
     """One stored skill row."""
+
     manifest_id: str
     brain_name: str
     created_at: float
@@ -116,7 +117,8 @@ class BodySkillLibrary:
 
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path or os.environ.get(
-            "NEURO_BODY_SKILL_DB", self.DEFAULT_PATH,
+            "NEURO_BODY_SKILL_DB",
+            self.DEFAULT_PATH,
         )
         if self._db_path != ":memory:":
             db_dir = os.path.dirname(self._db_path)
@@ -152,6 +154,7 @@ class BodySkillLibrary:
         blob = self._serialize(weights)
         now = time.time()
         import json
+
         metadata_json = json.dumps(metadata or {})
         self._conn.execute(
             """
@@ -167,14 +170,22 @@ class BodySkillLibrary:
               metadata_json = excluded.metadata_json
             """,
             (
-                manifest_id, blob, brain_name,
-                now, now, len(weights), metadata_json,
+                manifest_id,
+                blob,
+                brain_name,
+                now,
+                now,
+                len(weights),
+                metadata_json,
             ),
         )
         self._conn.commit()
         logger.info(
             "BodySkillLibrary: saved %s (%d groups, %d bytes, brain=%s)",
-            manifest_id, len(weights), len(blob), brain_name or "(none)",
+            manifest_id,
+            len(weights),
+            len(blob),
+            brain_name or "(none)",
         )
 
     def load(self, manifest_id: str) -> dict[str, np.ndarray] | None:
@@ -206,6 +217,7 @@ class BodySkillLibrary:
         if row is None or not row[0]:
             return None
         import json
+
         try:
             metadata = json.loads(row[0])
         except (ValueError, TypeError):
@@ -223,7 +235,8 @@ class BodySkillLibrary:
 
     def delete(self, manifest_id: str) -> bool:
         cur = self._conn.execute(
-            "DELETE FROM bodies WHERE manifest_id = ?", (manifest_id,),
+            "DELETE FROM bodies WHERE manifest_id = ?",
+            (manifest_id,),
         )
         self._conn.commit()
         return cur.rowcount > 0
@@ -238,8 +251,11 @@ class BodySkillLibrary:
         ).fetchall()
         return [
             SkillEntry(
-                manifest_id=r[0], brain_name=r[1],
-                created_at=r[2], updated_at=r[3], weight_count=r[4],
+                manifest_id=r[0],
+                brain_name=r[1],
+                created_at=r[2],
+                updated_at=r[3],
+                weight_count=r[4],
             )
             for r in rows
         ]

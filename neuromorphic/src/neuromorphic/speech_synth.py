@@ -57,7 +57,6 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import signal as scisig
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -66,16 +65,16 @@ logger = logging.getLogger(__name__)
 # the synthesizer.
 @dataclass(frozen=True)
 class ArticulatorRanges:
-    f0_hz: tuple[float, float] = (80.0, 280.0)     # vocal-fold pitch
-    f1_hz: tuple[float, float] = (270.0, 900.0)    # first formant (jaw + tongue height)
-    f2_hz: tuple[float, float] = (800.0, 2400.0)   # second formant (tongue front/back)
+    f0_hz: tuple[float, float] = (80.0, 280.0)  # vocal-fold pitch
+    f1_hz: tuple[float, float] = (270.0, 900.0)  # first formant (jaw + tongue height)
+    f2_hz: tuple[float, float] = (800.0, 2400.0)  # second formant (tongue front/back)
     f3_hz: tuple[float, float] = (1900.0, 3400.0)  # third formant (lip rounding)
-    voicing: tuple[float, float] = (0.0, 1.0)       # voiced source amplitude
-    aspiration: tuple[float, float] = (0.0, 0.6)    # breath noise amplitude
-    frication: tuple[float, float] = (0.0, 0.6)     # friction noise amplitude
+    voicing: tuple[float, float] = (0.0, 1.0)  # voiced source amplitude
+    aspiration: tuple[float, float] = (0.0, 0.6)  # breath noise amplitude
+    frication: tuple[float, float] = (0.0, 0.6)  # friction noise amplitude
     friction_freq_hz: tuple[float, float] = (1500.0, 7500.0)  # friction center
-    amplitude: tuple[float, float] = (0.0, 1.0)     # overall gain
-    nasality: tuple[float, float] = (0.0, 0.4)      # nasal coupling
+    amplitude: tuple[float, float] = (0.0, 1.0)  # overall gain
+    nasality: tuple[float, float] = (0.0, 0.4)  # nasal coupling
 
 
 # Parameter names in canonical order. The decoder produces a vector in
@@ -177,9 +176,7 @@ class SpeechSynth:
         """
         params = np.asarray(params, dtype=np.float32).reshape(-1)
         if params.size != N_PARAMS:
-            raise ValueError(
-                f"speech params expected {N_PARAMS} values, got {params.size}"
-            )
+            raise ValueError(f"speech params expected {N_PARAMS} values, got {params.size}")
         params = np.clip(params, 0.0, 1.0)
 
         # Smooth across chunk boundary by linearly interpolating from the
@@ -242,11 +239,12 @@ class SpeechSynth:
         return out
 
     def _voicing_source(
-        self, f0_hz: np.ndarray, voicing_amp: np.ndarray,
+        self,
+        f0_hz: np.ndarray,
+        voicing_amp: np.ndarray,
     ) -> np.ndarray:
         """Bandlimited pulse train modulated by glottal pulse shape."""
         sr = self.cfg.sample_rate
-        n = f0_hz.shape[0]
         # Integrate F0 to get phase; carries over from previous call.
         dphase = 2.0 * np.pi * f0_hz / sr
         phase = np.cumsum(dphase) + self._glottal_phase
@@ -269,7 +267,9 @@ class SpeechSynth:
         return self._rng.standard_normal(n).astype(np.float64) * 0.5
 
     def _frication(
-        self, frication_amp: np.ndarray, friction_freq_hz: np.ndarray,
+        self,
+        frication_amp: np.ndarray,
+        friction_freq_hz: np.ndarray,
     ) -> np.ndarray:
         """Friction noise bandpassed around a centre frequency.
 
@@ -298,10 +298,11 @@ class SpeechSynth:
         return out * frication_amp
 
     def _formant_cascade(
-        self, excitation: np.ndarray, decoded: dict[str, np.ndarray],
+        self,
+        excitation: np.ndarray,
+        decoded: dict[str, np.ndarray],
     ) -> np.ndarray:
         """Three cascaded 2-pole resonators."""
-        sr = self.cfg.sample_rate
         # Use the chunk-mean centre for each formant so filter coefficients
         # are constant within a chunk. Brain step is ~1 s; formant motion
         # within that window is small. Per-sample formant modulation can
@@ -316,14 +317,19 @@ class SpeechSynth:
         return x
 
     def _nasal_branch(
-        self, excitation: np.ndarray, nasality: np.ndarray,
+        self,
+        excitation: np.ndarray,
+        nasality: np.ndarray,
     ) -> np.ndarray:
         cfg = self.cfg
         gain = float(np.mean(nasality))
         if gain < 1e-6:
             return np.zeros_like(excitation)
         x, self._zi_nasal = self._resonator(
-            excitation, cfg.nasal_freq, cfg.nasal_bw, self._zi_nasal,
+            excitation,
+            cfg.nasal_freq,
+            cfg.nasal_bw,
+            self._zi_nasal,
         )
         return x * gain
 
@@ -363,6 +369,7 @@ class SpeechSynth:
 
 
 # -------------------- Convenience: spectral features -----------------------
+
 
 def mel_filterbank_energies(
     pcm: np.ndarray,
@@ -441,7 +448,8 @@ def mel_filterbank_energies(
 
 
 def make_temporal_audio_frame(
-    pcm: np.ndarray, sample_rate: int = 16000,
+    pcm: np.ndarray,
+    sample_rate: int = 16000,
 ) -> dict:
     """Package PCM as a ``temporal_audio_frame`` dict for the auditory pathway.
 

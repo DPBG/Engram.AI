@@ -8,9 +8,7 @@ from pathlib import Path
 
 import pytest
 
-_LE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "dashboard", "learning_evidence.py"
-)
+_LE_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "dashboard", "learning_evidence.py")
 _spec = importlib.util.spec_from_file_location("learning_evidence", _LE_PATH)
 learning_evidence = importlib.util.module_from_spec(_spec)
 sys.modules["learning_evidence"] = learning_evidence
@@ -49,16 +47,22 @@ def test_extract_metrics_fallback_to_script_benchmark_format():
 
 
 def test_load_benchmark_files_builds_time_series(tmp_path):
-    _write_benchmark(tmp_path / "benchmark_20260101_100000.json", {
-        "timestamp": "2026-01-01T10:00:00",
-        "association_strength": {"concept_count": 1},
-        "cross_modal_binding_accuracy": {"f1": 0.1},
-    })
-    _write_benchmark(tmp_path / "benchmarks_20260102_100000.json", {
-        "timestamp": "2026-01-02T10:00:00",
-        "association_strength": {"concept_count": 4},
-        "cross_modal_binding_accuracy": {"f1": 0.25},
-    })
+    _write_benchmark(
+        tmp_path / "benchmark_20260101_100000.json",
+        {
+            "timestamp": "2026-01-01T10:00:00",
+            "association_strength": {"concept_count": 1},
+            "cross_modal_binding_accuracy": {"f1": 0.1},
+        },
+    )
+    _write_benchmark(
+        tmp_path / "benchmarks_20260102_100000.json",
+        {
+            "timestamp": "2026-01-02T10:00:00",
+            "association_strength": {"concept_count": 4},
+            "cross_modal_binding_accuracy": {"f1": 0.25},
+        },
+    )
 
     entries, err = learning_evidence.load_benchmark_files(
         benchmark_dirs=[tmp_path],
@@ -70,10 +74,13 @@ def test_load_benchmark_files_builds_time_series(tmp_path):
 
 
 def test_build_learning_evidence_series(tmp_path):
-    _write_benchmark(tmp_path / "benchmarks_20260101_120000.json", {
-        "association_strength": {"concept_count": 2},
-        "cross_modal_binding_accuracy": {"f1": 0.5},
-    })
+    _write_benchmark(
+        tmp_path / "benchmarks_20260101_120000.json",
+        {
+            "association_strength": {"concept_count": 2},
+            "cross_modal_binding_accuracy": {"f1": 0.5},
+        },
+    )
     payload = learning_evidence.build_learning_evidence_series(
         benchmark_dirs=[tmp_path],
     )

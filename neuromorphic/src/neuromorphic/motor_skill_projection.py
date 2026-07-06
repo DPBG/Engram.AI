@@ -56,19 +56,35 @@ Body-part tags vs spatial tags:
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_BODY_PART_TAGS: frozenset[str] = frozenset({
-    "leg", "arm", "hip", "knee", "ankle", "shoulder", "elbow", "wrist",
-    "neck", "waist", "core", "head", "rotor", "wheel", "fin", "thruster",
-    "propulsion",
-})
+_DEFAULT_BODY_PART_TAGS: frozenset[str] = frozenset(
+    {
+        "leg",
+        "arm",
+        "hip",
+        "knee",
+        "ankle",
+        "shoulder",
+        "elbow",
+        "wrist",
+        "neck",
+        "waist",
+        "core",
+        "head",
+        "rotor",
+        "wheel",
+        "fin",
+        "thruster",
+        "propulsion",
+    }
+)
 
 # Single source of truth for the motor-skill blob key separator. Used by
 # both the projection helper here and NeuromorphicNetwork.get/set_motor_skill_blob
@@ -156,6 +172,7 @@ def aggregate_actuator_weights_to_scale(weights: list[float]) -> float:
 class _Match:
     """One projection decision: target actuator at band [t0, t1) inherits
     from source band [s0, s1) with weight overlap-strength."""
+
     channel: str
     target_index: int
     target_band: tuple[int, int]
@@ -218,22 +235,25 @@ def _channel_matches(
             # Prefer the source with the largest body-part overlap, then
             # the largest total overlap.
             ov_body = ov & body_part_required_tags if body_part_required_tags else ov
-            best_ov_body = best_overlap & body_part_required_tags if body_part_required_tags else best_overlap
-            if (
-                len(ov_body) > len(best_ov_body)
-                or (len(ov_body) == len(best_ov_body) and len(ov) > len(best_overlap))
+            best_ov_body = (
+                best_overlap & body_part_required_tags if body_part_required_tags else best_overlap
+            )
+            if len(ov_body) > len(best_ov_body) or (
+                len(ov_body) == len(best_ov_body) and len(ov) > len(best_overlap)
             ):
                 best_j = j_src
                 best_overlap = ov
         if best_j >= 0:
-            matches.append(_Match(
-                channel=channel,
-                target_index=i_tgt,
-                target_band=tgt_bands[i_tgt],
-                source_index=best_j,
-                source_band=src_bands[best_j],
-                overlap=frozenset(best_overlap),
-            ))
+            matches.append(
+                _Match(
+                    channel=channel,
+                    target_index=i_tgt,
+                    target_band=tgt_bands[i_tgt],
+                    source_index=best_j,
+                    source_band=src_bands[best_j],
+                    overlap=frozenset(best_overlap),
+                )
+            )
     return matches
 
 
@@ -262,9 +282,7 @@ def project_motor_skill_via_tags(
     channel name. The only set comparison is body-part tag overlap.
     """
     motor_set = set(motor_group_names)
-    projected: dict[str, np.ndarray] = {
-        k: v.copy() for k, v in source_blob.items()
-    }
+    projected: dict[str, np.ndarray] = {k: v.copy() for k, v in source_blob.items()}
     all_matches: list[_Match] = []
     for channel, target_actuators in target_actuator_manifest.items():
         source_actuators = source_actuator_manifest.get(channel) or []
@@ -276,8 +294,12 @@ def project_motor_skill_via_tags(
         if r_end <= r_start:
             continue
         matches = _channel_matches(
-            channel, source_actuators, target_actuators,
-            r_start, r_end, body_part_required_tags,
+            channel,
+            source_actuators,
+            target_actuators,
+            r_start,
+            r_end,
+            body_part_required_tags,
         )
         all_matches.extend(matches)
 
@@ -289,9 +311,7 @@ def project_motor_skill_via_tags(
             data_key = f"{group_name}{_MOTOR_SKILL_SEP}weights_data"
             indices_key = f"{group_name}{_MOTOR_SKILL_SEP}weights_indices"
             if not (
-                indptr_key in source_blob
-                and data_key in source_blob
-                and indices_key in source_blob
+                indptr_key in source_blob and data_key in source_blob and indices_key in source_blob
             ):
                 continue
             src_indptr = source_blob[indptr_key]
@@ -330,18 +350,20 @@ def project_motor_skill_via_tags(
             projected[indptr_key] = new_indptr
             projected[data_key] = (
                 np.concatenate(new_data_parts).astype(src_data.dtype)
-                if new_data_parts else src_data.copy()
+                if new_data_parts
+                else src_data.copy()
             )
             projected[indices_key] = (
                 np.concatenate(new_indices_parts).astype(src_indices.dtype)
-                if new_indices_parts else src_indices.copy()
+                if new_indices_parts
+                else src_indices.copy()
             )
         # Log channel-level summary.
         if matches:
             logger.info(
-                "Phase 3.5 projection: channel=%s projected %d target "
-                "actuators via tag overlap",
-                channel, len(matches),
+                "Phase 3.5 projection: channel=%s projected %d target " "actuators via tag overlap",
+                channel,
+                len(matches),
             )
     return projected, all_matches
 
