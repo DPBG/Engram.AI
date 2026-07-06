@@ -159,24 +159,3 @@ class CacheInvalidator:
         if deleted_count > 0:
             logger.info(f"Deleted {deleted_count} old cache entries")
         return deleted_count
-
-    async def invalidate_all(self) -> int:
-        """
-        Invalidate all cache entries.
-
-        Returns:
-            Number of entries deleted
-        """
-        try:
-            logger.warning("Invalidating ALL cache entries")
-
-            cursor = await self.db.execute("SELECT prompt_hash FROM llm_cache")
-            rows = await cursor.fetchall()
-
-            deleted_count = await self._delete_hashes(row[0] for row in rows)
-            logger.info(f"Deleted {deleted_count} cache entries")
-            return deleted_count
-
-        except Exception as e:
-            logger.error(f"Error invalidating all: {e}", exc_info=True)
-            return 0

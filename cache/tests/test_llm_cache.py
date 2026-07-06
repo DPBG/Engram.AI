@@ -45,7 +45,7 @@ def _make(*, search_result=None, embed=(0.1, 0.2), embed_error=None, hit_thresho
     db.commit = AsyncMock()
 
     cache = LLMCache(
-        qdrant_url="http://qdrant",
+        qdrant_url="https://qdrant",
         db=db,
         hit_threshold=hit_threshold,
         store=store,

@@ -38,7 +38,7 @@ def _run(body):
         embeddings.embed_text = AsyncMock(return_value=[0.1, 0.2])
 
         cache = LLMCache(
-            qdrant_url="http://qdrant",
+            qdrant_url="https://qdrant",
             db=db,
             store=store,
             embedding_service=embeddings,
@@ -224,19 +224,6 @@ def test_evict_expired_drops_never_hit_entry_past_unused_age():
     _run(body)
 
 
-def test_invalidate_all_clears_every_entry():
-    async def body(inv, cache, db, _store):
-        await cache.set("p1", "A", tags=[CacheTag.CODE_GENERATION])
-        await cache.set("p2", "B")
-
-        deleted = await inv.invalidate_all()
-
-        assert deleted == 2
-        assert await _responses(db) == []
-
-    _run(body)
-
-
 # ── error handling (a failing query must not crash the caller) ────────────────
 
 
@@ -255,13 +242,6 @@ def test_invalidate_by_tag_swallows_db_error():
     inv, cache = _failing_invalidator()
 
     assert asyncio.run(inv._invalidate_by_tag(CacheTag.CONFIGURATION)) == 0
-    cache.invalidate.assert_not_called()
-
-
-def test_invalidate_all_swallows_db_error():
-    inv, cache = _failing_invalidator()
-
-    assert asyncio.run(inv.invalidate_all()) == 0
     cache.invalidate.assert_not_called()
 
 

@@ -23,24 +23,6 @@ from .mujoco_body import MuJoCoBody
 logger = logging.getLogger(__name__)
 
 
-def _has_body(body: MuJoCoBody, name: str) -> bool:
-    """Check if a named body exists in the MuJoCo model."""
-    try:
-        body._model.body(name)
-        return True
-    except Exception:
-        return False
-
-
-def _has_joint(body: MuJoCoBody, name: str) -> bool:
-    """Check if a named joint exists in the MuJoCo model."""
-    try:
-        body._model.joint(name)
-        return True
-    except Exception:
-        return False
-
-
 @dataclass
 class TaskResult:
     """Outcome of a single task evaluation step."""
@@ -665,17 +647,6 @@ class TaskCurriculum:
             )
             return True
         return False
-
-    def reset_to_first(self) -> None:
-        """Reset curriculum back to the first task (e.g., supported_stand).
-
-        Used when deploying motor learning fixes to re-train from scratch
-        with improved parameters.
-        """
-        self._current_idx = 0
-        self._successes = 0
-        self._tasks[0].reset(self._body)
-        logger.info("Curriculum reset to '%s'", self.current_task.name)
 
     def apply_continuous_support(self, body: MuJoCoBody) -> None:
         """Apply support force at physics rate. No-op if current task has no support."""
