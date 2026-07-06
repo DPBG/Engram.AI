@@ -1,0 +1,29 @@
+name: Release Please
+
+# Automated release PRs driven by your Conventional Commits. On each push to
+# main, release-please maintains a release PR that accumulates the changelog and
+# next version; merging it tags the release and publishes GitHub release notes.
+# No extra secret — uses the built-in GITHUB_TOKEN.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run release-please
+        uses: googleapis/release-please-action@v4
+        with:
+          # 'simple' tracks a repo-wide version + CHANGELOG without assuming a
+          # single language package (this is a multi-service monorepo).
+          release-type: simple

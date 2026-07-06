@@ -14,8 +14,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect which areas changed so the heavy suites only run when relevant. The
+  # safety-critical jobs (governance, lint, typecheck) are deliberately NOT gated
+  # below — they always run. A shared set (CI config, constraints) forces the
+  # full matrix so a tooling change can't skip coverage.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      neuromorphic: ${{ steps.filter.outputs.neuromorphic }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+      sandbox: ${{ steps.filter.outputs.sandbox }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Filter paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared: &shared
+              - 'constraints.txt'
+              - '.github/workflows/test.yml'
+              - '.github/actions/**'
+            neuromorphic:
+              - *shared
+              - 'neuromorphic/**'
+              - 'sdk/**'
+            sdk:
+              - *shared
+              - 'sdk/**'
+            sandbox:
+              - *shared
+              - 'sandbox/**'
+              - 'meta-programmer/**'
+
   neuromorphic:
     name: Neuromorphic test suite
+    needs: changes
+    if: ${{ needs.changes.outputs.neuromorphic == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -48,9 +86,11 @@ jobs:
 
   benchmark-regression:
     name: Neuromorphic benchmark regression gate
+    needs: changes
+    if: ${{ needs.changes.outputs.neuromorphic == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Fast small-network profile (~1 min). Runs on all PRs; touches neuromorphic/ most often.
+    # Fast small-network profile (~1 min). Gated on neuromorphic changes.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,6 +113,8 @@ jobs:
 
   sdk:
     name: SDK test suite
+    needs: changes
+    if: ${{ needs.changes.outputs.sdk == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -83,22 +125,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install uv and Python ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Engram CI env (uv + Python + nats-server)
+        uses: ./.github/actions/setup-engram
         with:
-          enable-cache: true
           python-version: ${{ matrix.python-version }}
-
-      - name: Install nats-server
-        run: |
-          set -euo pipefail
-          VERSION=v2.10.22
-          ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
-          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
-          tar -xzf "${ASSET}"
-          sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
+          nats: "true"
 
       - name: Run SDK tests with coverage
         working-directory: sdk
@@ -130,22 +161,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install uv and Python ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Engram CI env (uv + Python + nats-server)
+        uses: ./.github/actions/setup-engram
         with:
-          enable-cache: true
           python-version: ${{ matrix.python-version }}
-
-      - name: Install nats-server
-        run: |
-          set -euo pipefail
-          VERSION=v2.10.22
-          ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
-          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
-          tar -xzf "${ASSET}"
-          sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
+          nats: "true"
 
       - name: Run NATS authz red-team tests (E1.1.9)
         run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest sdk/tests/red_team/ -v
@@ -174,8 +194,13 @@ jobs:
 
   sandbox:
     name: Sandbox image build + smoke + containment
+    needs: changes
+    if: ${{ needs.changes.outputs.sandbox == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -194,6 +219,30 @@ jobs:
       # flags in meta-programmer/.../sandbox_manager.py.
       - name: Build sandbox image + run smoke tests
         run: bash sandbox/smoke/run_smoke.sh
+
+      # Tier 1 supply-chain check: scan the freshly-built sandbox image for known
+      # OS/dependency CVEs. Non-blocking (--exit-code 0) — the sandbox runs
+      # generated code, so image CVEs are worth surfacing, but this reports
+      # rather than gates until a baseline is agreed. Results land in the
+      # Security tab via the SARIF upload below.
+      - name: Scan sandbox image for CVEs (Trivy)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${PWD}:/work" -w /work \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL --exit-code 0 --no-progress \
+            --format sarif --output trivy-sandbox.sarif \
+            activelearning-sandbox:latest
+
+      - name: Upload Trivy results to the Security tab
+        if: ${{ always() && hashFiles('trivy-sandbox.sarif') != '' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-sandbox.sarif
+          category: trivy-sandbox
 
       # Adversarial integration tests (E1.3.3): each test proves one containment
       # property by running the payload both without its guard (baseline) and
@@ -246,3 +295,34 @@ jobs:
       # BLOCKING: all mypy errors in sdk/src/activelearning are resolved.
       - name: Mypy (sdk)
         run: uvx mypy --python-version 3.11 --ignore-missing-imports sdk/src/activelearning
+
+  # Single required status check for branch protection. Instead of naming every
+  # job, protect `dev`/`main` on this one. A path-skipped job reports "skipped"
+  # (not "failure"), which counts as a pass here — only real failures/cancels
+  # fail the gate.
+  ci-success:
+    name: CI success
+    if: ${{ always() }}
+    needs:
+      - changes
+      - neuromorphic
+      - benchmark-regression
+      - sdk
+      - governance
+      - sandbox
+      - lint
+      - typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify no required job failed
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "Upstream job results: ${results}"
+          for r in ${results}; do
+            case "${r}" in
+              success|skipped) ;;
+              *) echo "::error::A required job did not succeed (result=${r})"; exit 1 ;;
+            esac
+          done
+          echo "All required jobs passed or were skipped by the path filter."

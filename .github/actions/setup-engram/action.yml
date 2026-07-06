@@ -1,0 +1,40 @@
+name: Set up Engram CI env
+description: >-
+  Install uv + a pinned Python, and optionally a checksum-verified nats-server.
+  Centralizes the setup that was copy-pasted across test jobs.
+
+inputs:
+  python-version:
+    description: Python version for uv to provision.
+    required: false
+    default: "3.12"
+  nats:
+    description: Install nats-server when set to "true".
+    required: false
+    default: "false"
+  nats-version:
+    description: nats-server release tag to install.
+    required: false
+    default: "v2.10.22"
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv and Python ${{ inputs.python-version }}
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install nats-server ${{ inputs.nats-version }}
+      if: ${{ inputs.nats == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION="${{ inputs.nats-version }}"
+        ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
+        curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
+        curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
+        grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
+        tar -xzf "${ASSET}"
+        sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
