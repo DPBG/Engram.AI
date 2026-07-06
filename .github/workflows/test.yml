@@ -59,7 +59,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # PRs get fast feedback on one Python; the full 3.11+3.12 matrix runs
+        # on push to dev/main so both versions are still verified on merge.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -120,7 +122,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # PRs get fast feedback on one Python; the full 3.11+3.12 matrix runs
+        # on push to dev/main so both versions are still verified on merge.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -156,7 +160,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # PRs get fast feedback on one Python; the full 3.11+3.12 matrix runs
+        # on push to dev/main so both versions are still verified on merge.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -171,7 +177,10 @@ jobs:
         # -o addopts="" strips sdk/pyproject.toml's inherited --cov flag: this
         # step's env has no pytest-cov, so --cov would be an unrecognized option
         # (pytest usage error, exit 4). The other governance steps already do this.
-        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio python -m pytest sdk/tests/red_team/ -o addopts="" -v
+        # pytest-timeout honors the suite's `timeout = 120` ini so a hung test
+        # (e.g. an unbounded NATS reconnect) fails fast instead of riding the
+        # job to its 15-minute timeout.
+        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio --with pytest-timeout python -m pytest sdk/tests/red_team/ -o addopts="" -v
 
       - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
         env:

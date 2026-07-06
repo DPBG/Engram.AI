@@ -56,9 +56,9 @@ The **Tests** workflow runs on every PR to `dev` and `main`:
 
 | Job | What it covers |
 |---|---|
-| `neuromorphic` | Full brain suite on Python 3.11 + 3.12 |
+| `neuromorphic` | Full brain suite (Python 3.12 on PRs; 3.11 + 3.12 on push to dev/main) |
 | `benchmark-regression` | Step-timing gate vs. the committed baseline (fails > 25% regression) |
-| `sdk` | SDK suite on 3.11 + 3.12, with a non-blocking coverage summary in the run report |
+| `sdk` | SDK suite (3.12 on PRs; 3.11 + 3.12 on push), with a non-blocking coverage summary in the run report |
 | `governance` | Kernel, meta-programmer, coordinator, dashboard, safety-supervisor, beliefs, external-api, and NATS authz red-team tests |
 | `sandbox` | Builds the hardened sandbox image and asserts containment |
 | `lint` | Ruff (bug subset + full) and Black — **blocking** |
