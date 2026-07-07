@@ -36,6 +36,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from activelearning.database import close_database
 from activelearning.nats_client import EventBus
 from activelearning.subjects import Subjects
 
@@ -187,6 +188,12 @@ async def _smoke() -> None:
             await probe_bus.close()
         if kernel:
             await kernel.stop()
+        # KernelService(use_database=True) opens the real get_database()
+        # singleton. BaseService.stop() deliberately leaves it open (see its
+        # comment), but aiosqlite's connection worker thread is non-daemon —
+        # left open, it hangs pytest at interpreter shutdown after this test
+        # (and every test after it) reports passed. Close it explicitly.
+        await close_database()
         proc.terminate()
         try:
             proc.wait(timeout=5)
