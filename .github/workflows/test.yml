@@ -202,7 +202,7 @@ jobs:
         # backend). The dashboard router tests exercise the FastAPI app, so add
         # fastapi + httpx (its TestClient backend); they self-skip via importorskip
         # if those are ever absent.
-        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
+        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" --import-mode=importlib -v
 
   sandbox:
     name: Sandbox image build + smoke + containment
