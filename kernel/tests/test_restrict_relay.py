@@ -177,6 +177,47 @@ def test_restrict_request_does_not_broadcast_when_no_profile():
 
 
 # ---------------------------------------------------------------------------
+# Tests: _setup subscription wiring (ADR 0001 §3)
+# ---------------------------------------------------------------------------
+
+
+def test_setup_subscribes_policy_restrict_request_handler():
+    """Kernel must register _handle_restrict_request on policy.restrict.request."""
+    from unittest.mock import patch
+
+    from kernel.service import KernelService
+
+    svc = KernelService.__new__(KernelService)
+    svc.logger = MagicMock()
+    svc.event_bus = AsyncMock()
+
+    async def _run_setup() -> None:
+        def _fake_create_task(coro):
+            coro.close()
+            mock_task = MagicMock()
+            mock_task.done.return_value = True
+            return mock_task
+
+        with patch("asyncio.create_task", side_effect=_fake_create_task):
+            await svc._setup()
+
+        subscribe_calls = svc.event_bus.subscribe.call_args_list
+        wired = [(call.args[0], call.args[1]) for call in subscribe_calls if call.args]
+
+        assert (Subjects.POLICY_RESTRICT, svc._handle_restrict) in wired
+        assert (Subjects.POLICY_RESTRICT_REQUEST, svc._handle_restrict_request) in wired
+
+        restrict_call = next(
+            call for call in subscribe_calls if call.args[0] == Subjects.POLICY_RESTRICT
+        )
+        assert len(restrict_call.args) == 2, (
+            "policy.restrict must not pass restrict.request as a queue group name"
+        )
+
+    asyncio.run(_run_setup())
+
+
+# ---------------------------------------------------------------------------
 # Tests: SAFE_HALT broadcasts policy.restrict directly (no subscription round-trip)
 # ---------------------------------------------------------------------------
 
