@@ -14,7 +14,7 @@ from activelearning import BaseService
 from activelearning.subjects import Subjects
 from activelearning.nats_client import serialize_message
 
-from beliefs.graph import BeliefGraph, BeliefNode, BeliefEdge, NodeType, EdgeType
+from beliefs.graph import BeliefGraph, BeliefNode, BeliefEdge, NodeType, EdgeType, FloorRejectionEvent
 
 
 class BeliefsService(BaseService):
@@ -33,10 +33,12 @@ class BeliefsService(BaseService):
         """Service-specific setup."""
         # Load existing beliefs from database
         await self._load_from_db()
+        await self._persist_floor_rejections(self._graph.drain_floor_rejections())
 
         # Seed constitutional beliefs (values + norms) on first boot.
         # Idempotent — skips if values already exist from DB load.
         self._graph.seed_constitutional_beliefs()
+        await self._persist_floor_rejections(self._graph.drain_floor_rejections())
 
         # Subscribe to belief events using EventBus
         await self.event_bus.subscribe(Subjects.BELIEFS_ADD_NODE, self._handle_add_node)
@@ -159,7 +161,8 @@ class BeliefsService(BaseService):
                 source=data.get("source", "unknown"),
                 metadata=data.get("metadata", {}),
             )
-            node_id = self._graph.add_node(node)
+            self._graph.add_node(node)
+            await self._persist_floor_rejections(self._graph.drain_floor_rejections())
         except Exception as e:
             self.logger.error(f"Error adding node: {e}")
 
@@ -181,12 +184,13 @@ class BeliefsService(BaseService):
     async def _handle_update(self, data: dict) -> None:
         """Handle belief update requests."""
         try:
-            update = self._graph.update_belief(
+            self._graph.update_belief(
                 node_id=data["node_id"],
                 evidence_strength=data["evidence_strength"],
                 supports=data.get("supports", True),
                 source=data.get("source", "unknown"),
             )
+            await self._persist_floor_rejections(self._graph.drain_floor_rejections())
         except Exception as e:
             self.logger.error(f"Error updating belief: {e}")
 
@@ -248,6 +252,19 @@ class BeliefsService(BaseService):
                 result = [asdict(n) for n in norms if n.confidence >= threshold]
             elif query_type == "export":
                 result = self._graph.export_to_dict()
+            elif query_type == "floor_rejections":
+                limit = min(int(data.get("limit", 100)), 500)
+                rows = await self.database.fetchall(
+                    "SELECT id, timestamp, details FROM audit_entries "
+                    "WHERE component = 'beliefs' AND action = 'floor_rejection' "
+                    "ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                result = []
+                for row in rows:
+                    entry: dict = {"id": row["id"], "timestamp": row["timestamp"]}
+                    entry.update(json.loads(row["details"] or "{}"))
+                    result.append(entry)
 
             response = {"result": result, "query_type": query_type}
 
@@ -261,6 +278,45 @@ class BeliefsService(BaseService):
             self.logger.error(f"Error handling query request: {e}")
             if msg and msg.reply:
                 await msg.respond(serialize_message({"result": None, "error": str(e)}))
+
+
+    async def _persist_floor_rejections(self, events: list[FloorRejectionEvent]) -> None:
+        """Persist floor-rejection events to the audit_entries table.
+
+        Each event records an attempt to lower a constitutional VALUE's
+        confidence floor that was silently clamped. Persisting these turns
+        an invisible rejection into a queryable, durable security signal.
+        """
+        for event in events:
+            try:
+                await self.database.insert(
+                    "audit_entries",
+                    {
+                        "id": event.id,
+                        "trace_id": event.node_id,
+                        "timestamp": event.rejected_at,
+                        "component": "beliefs",
+                        "action": "floor_rejection",
+                        "details": json.dumps({
+                            "node_id": event.node_id,
+                            "attempted_confidence": event.attempted_confidence,
+                            "enforced_confidence": event.enforced_confidence,
+                            "path": event.path,
+                            "source": event.source,
+                        }),
+                    },
+                )
+                self.logger.warning(
+                    "Floor rejection audited: node=%s path=%s attempted=%.3f source=%s",
+                    event.node_id,
+                    event.path,
+                    event.attempted_confidence,
+                    event.source,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to persist floor rejection for %s: %s", event.node_id, exc
+                )
 
 
 async def main() -> None:
