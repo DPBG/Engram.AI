@@ -116,7 +116,7 @@ class Database:
         Tracks progress with PRAGMA user_version; a fresh database starts at 0
         and the pending statements are no-ops on it.
         """
-        cursor = await self._connection.execute("PRAGMA user_version")
+        cursor = await self._connection.execute("PRAGMA user_version")  # type: ignore[union-attr]
         row = await cursor.fetchone()
         version = row[0] if row else 0
 
@@ -128,7 +128,7 @@ class Database:
 
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
-                await self._connection.execute(statement)
+                await self._connection.execute(statement)  # type: ignore[union-attr]
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -143,9 +143,10 @@ class Database:
         params: tuple[Any, ...] = (),
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement."""
-        if not self._connection:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.execute(sql, params)
+        return await conn.execute(sql, params)  # type: ignore[union-attr]
 
     async def executemany(
         self,
@@ -153,9 +154,10 @@ class Database:
         params_list: list[tuple[Any, ...]],
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement with multiple parameter sets."""
-        if not self._connection:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.executemany(sql, params_list)
+        return await conn.executemany(sql, params_list)  # type: ignore[union-attr]
 
     async def fetchone(
         self,
