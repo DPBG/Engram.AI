@@ -10,6 +10,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Developed by Gittensor · Bittensor SN74](https://img.shields.io/badge/Developed%20by-Gittensor%20·%20Bittensor%20SN74-6e40c9.svg)](https://gittensor.io)
+[![Gittensor impact](https://api.gittensor.io/repos/DPBG%2FEngram.AI/badge.svg)](https://gittensor.io/miners/repository?name=DPBG/Engram.AI)
 
 <sub>Contributed & developed by <strong>Gittensor</strong> — <strong>Bittensor Subnet 74</strong>.</sub>
 

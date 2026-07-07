@@ -117,6 +117,8 @@ class Database:
         and the pending statements are no-ops on it.
         """
         assert self._connection is not None
+        if not self._connection:
+            raise RuntimeError("Database not initialized")
         cursor = await self._connection.execute("PRAGMA user_version")
         row = await cursor.fetchone()
         version = row[0] if row else 0
