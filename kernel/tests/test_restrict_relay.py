@@ -210,9 +210,9 @@ def test_setup_subscribes_policy_restrict_request_handler():
         restrict_call = next(
             call for call in subscribe_calls if call.args[0] == Subjects.POLICY_RESTRICT
         )
-        assert len(restrict_call.args) == 2, (
-            "policy.restrict must not pass restrict.request as a queue group name"
-        )
+        assert (
+            len(restrict_call.args) == 2
+        ), "policy.restrict must not pass restrict.request as a queue group name"
 
     asyncio.run(_run_setup())
 

@@ -24,9 +24,7 @@ def small_config():
 
 
 class TestScaleAdaptiveParallelRouting:
-    def test_small_network_disables_parallel_routing_by_default(
-        self, small_config, monkeypatch
-    ):
+    def test_small_network_disables_parallel_routing_by_default(self, small_config, monkeypatch):
         monkeypatch.setenv("NEURO_STDP_THREADS", "4")
         monkeypatch.delenv("NEURO_PARALLEL_ROUTE_MIN_NEURONS", raising=False)
         monkeypatch.delenv("NEURO_PARALLEL_ROUTE", raising=False)
@@ -58,17 +56,13 @@ class TestScaleAdaptiveParallelRouting:
         net = NeuromorphicNetwork(cfg, seed=42)
         assert net._parallel_routing_enabled is False
 
-    def test_always_mode_enables_routing_even_for_small_net(
-        self, small_config, monkeypatch
-    ):
+    def test_always_mode_enables_routing_even_for_small_net(self, small_config, monkeypatch):
         monkeypatch.setenv("NEURO_STDP_THREADS", "4")
         monkeypatch.setenv("NEURO_PARALLEL_ROUTE", "always")
         net = NeuromorphicNetwork(small_config, seed=42)
         assert net._parallel_routing_enabled is True
 
-    def test_serial_and_parallel_routes_produce_identical_state(
-        self, small_config, monkeypatch
-    ):
+    def test_serial_and_parallel_routes_produce_identical_state(self, small_config, monkeypatch):
         """Numerical equivalence: routing mode must not change simulation math."""
         monkeypatch.setenv("NEURO_STDP_THREADS", "4")
 
@@ -79,10 +73,12 @@ class TestScaleAdaptiveParallelRouting:
             vis = rng.random(200).astype(np.float32)
             aud = rng.random(100).astype(np.float32)
             for _ in range(30):
-                current = net.inject_multimodal({
-                    "sensor.videofile.profile": vis,
-                    "sensor.audiofile.profile": aud,
-                })
+                current = net.inject_multimodal(
+                    {
+                        "sensor.videofile.profile": vis,
+                        "sensor.audiofile.profile": aud,
+                    }
+                )
                 net.step(current)
             return {
                 "motor": net.motor.spikes.copy(),
