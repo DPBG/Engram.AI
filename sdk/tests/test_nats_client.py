@@ -188,5 +188,7 @@ async def test_js_subscribe_delivers_proposal(event_bus: EventBus, wait_for_mess
         "provenance": "nats-test",
     }
     await event_bus.publish(Subjects.PROPOSAL_NEW, payload)
-    await wait_for_message(lambda: len(received) == 1)
-    assert received[0]["trace_id"] == payload["trace_id"]
+    # A fresh durable replays the stream's retained history (DeliverPolicy ALL),
+    # so proposal.new messages from earlier tests in the session may arrive too.
+    # Assert OUR message was delivered rather than assuming it is the only one.
+    await wait_for_message(lambda: any(m.get("trace_id") == payload["trace_id"] for m in received))
