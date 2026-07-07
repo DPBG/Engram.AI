@@ -29,7 +29,7 @@ class SandboxManager:
     Sandboxes are isolated, resource-limited containers that:
     - Have no network access
     - Run with read-only filesystem
-    - Have memory and CPU limits
+    - Have memory, CPU, PID, and disk-quota limits
     - Auto-destroy after execution
     """
 
@@ -49,6 +49,11 @@ class SandboxManager:
         self.cpu_quota = int(os.environ.get("SANDBOX_CPU_QUOTA", "50000"))  # 50% of one core
         self.timeout = int(os.environ.get("SANDBOX_TIMEOUT_SECONDS", "30"))
         self.max_pids = int(os.environ.get("SANDBOX_MAX_PIDS", "100"))
+        # Disk quota for the writable /tmp tmpfs.  The root filesystem is
+        # read-only, so /tmp is the only place a sandboxed process can write.
+        # Capping its size prevents unbounded logging or temp-file creation
+        # from exhausting the host's disk or tmpfs memory pool.
+        self.tmp_size = os.environ.get("SANDBOX_TMP_SIZE", "50M")
 
     @staticmethod
     def _unavailable(detail: str) -> dict:
@@ -141,7 +146,7 @@ class SandboxManager:
                     pids_limit=self.max_pids,
                     detach=True,
                     remove=True,  # Auto-destroy after completion
-                    tmpfs={"/tmp": "size=50M"},  # Writable /tmp only
+                    tmpfs={"/tmp": f"size={self.tmp_size}"},  # Writable /tmp with disk quota
                 )
             except docker.errors.DockerException as e:
                 logger.error("Sandbox spawn failed: %s", e)
