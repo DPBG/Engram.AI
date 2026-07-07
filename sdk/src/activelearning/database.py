@@ -116,7 +116,7 @@ class Database:
         Tracks progress with PRAGMA user_version; a fresh database starts at 0
         and the pending statements are no-ops on it.
         """
-        cursor = await self._connection.execute("PRAGMA user_version")
+        cursor = await self._connection.execute("PRAGMA user_version")  # type: ignore[union-attr]
         row = await cursor.fetchone()
         version = row[0] if row else 0
 
@@ -128,7 +128,7 @@ class Database:
 
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
-                await self._connection.execute(statement)
+                await self._connection.execute(statement)  # type: ignore[union-attr]
 
     async def close(self) -> None:
         """Close the database connection."""
