@@ -17,7 +17,6 @@ from activelearning import RiskAnalysis
 
 from safety_supervisor.analyzer import RiskAnalyzer
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -190,12 +189,15 @@ def test_unsafe_angle_and_speed_both_flagged() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", [
-    "/kernel/evaluator.py",
-    "/safety-supervisor/analyzer.py",
-    "/meta-programmer/orchestrator/main.py",
-    "/meta-programmer/agents/code_gen.py",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/kernel/evaluator.py",
+        "/safety-supervisor/analyzer.py",
+        "/meta-programmer/orchestrator/main.py",
+        "/meta-programmer/agents/code_gen.py",
+    ],
+)
 def test_protected_path_max_risk(path: str) -> None:
     result = _analyzer().analyze_code(_code_proposal(target_path=path))
     assert "PROTECTED_PATH" in result.flags
@@ -420,14 +422,18 @@ def test_code_proposal_empty_dict_flagged() -> None:
 
 
 def test_code_proposal_blank_target_path_flagged() -> None:
-    result = _analyzer().analyze_code({"trace_id": "t", "target_path": "   ", "code_preview": "x = 1"})
+    result = _analyzer().analyze_code(
+        {"trace_id": "t", "target_path": "   ", "code_preview": "x = 1"}
+    )
     assert "MALFORMED_PROPOSAL" in result.flags
     assert result.risk_score >= 0.5
 
 
 def test_code_proposal_whitespace_target_path_not_assessed() -> None:
     # A whitespace-only path must not silently produce zero risk.
-    result = _analyzer().analyze_code({"trace_id": "t", "target_path": "\t\n", "code_preview": "x = 1"})
+    result = _analyzer().analyze_code(
+        {"trace_id": "t", "target_path": "\t\n", "code_preview": "x = 1"}
+    )
     assert result.risk_score >= 0.5
 
 

@@ -12,8 +12,7 @@ import logging
 
 import cv2
 import numpy as np
-
-from activelearning.plugins import SensorPlugin, PluginCapability, RiskClass
+from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +35,19 @@ class CameraSensor(SensorPlugin[list]):
         if cnn:
             try:
                 from sensors.cnn_preprocessor import get_shared_preprocessor
+
                 self._cnn = get_shared_preprocessor()
                 logger.info(f"CNN preprocessor enabled ({self._cnn.feature_dim} features)")
             except Exception as e:
                 logger.warning(f"CNN preprocessing unavailable, using raw pixels: {e}")
 
-        self.add_capability(PluginCapability(
-            name="video_capture",
-            description="Captures grayscale video frames",
-            parameters={"resolution": "64x64", "format": "grayscale_float32"},
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="video_capture",
+                description="Captures grayscale video frames",
+                parameters={"resolution": "64x64", "format": "grayscale_float32"},
+            )
+        )
 
     async def start(self, bus=None) -> None:
         """Open the camera, then start the emit loop."""

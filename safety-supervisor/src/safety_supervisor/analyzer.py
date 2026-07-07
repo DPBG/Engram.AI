@@ -8,7 +8,7 @@ It provides risk scores and flags to the Moral Kernel.
 import ast
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from activelearning import RiskAnalysis
 
@@ -69,16 +69,33 @@ DANGEROUS_BUILTINS = {
 # regex (e.g. getattr(os, "sys" + "tem"), getattr(__builtins__, "eval")).
 DYNAMIC_ATTR_BUILTINS = {"getattr", "setattr", "delattr"}
 DANGEROUS_ATTR_NAMES = {
-    "system", "popen", "exec", "eval", "compile", "fork", "spawn",
-    "__import__", "__globals__", "__code__", "__dict__", "__subclasses__",
-    "__bases__", "__builtins__", "__class__",
+    "system",
+    "popen",
+    "exec",
+    "eval",
+    "compile",
+    "fork",
+    "spawn",
+    "__import__",
+    "__globals__",
+    "__code__",
+    "__dict__",
+    "__subclasses__",
+    "__bases__",
+    "__builtins__",
+    "__class__",
 }
 
 # Importing one of Engram's own safety/governance components from generated code
 # is self-referential / self-modifying — the brain must not edit its own guards.
 SELF_REFERENTIAL_MODULES = {
-    "kernel", "safety_supervisor", "meta_programmer", "beliefs",
-    "overrides", "coordinator", "planner",
+    "kernel",
+    "safety_supervisor",
+    "meta_programmer",
+    "beliefs",
+    "overrides",
+    "coordinator",
+    "planner",
 }
 
 
@@ -337,7 +354,9 @@ class RiskAnalyzer:
                 if isinstance(arg, ast.Constant) and arg.value in DANGEROUS_IMPORTS:
                     mod = arg.value
                     self._flag(
-                        analysis, f"DANGEROUS_IMPORT:{mod}", DANGEROUS_IMPORTS[mod],
+                        analysis,
+                        f"DANGEROUS_IMPORT:{mod}",
+                        DANGEROUS_IMPORTS[mod],
                         f"Dangerous dynamic import: {mod}",
                     )
             return
@@ -347,13 +366,17 @@ class RiskAnalyzer:
             # A non-constant attribute name is computed at runtime → evasion.
             if not isinstance(attr, ast.Constant):
                 self._flag(
-                    analysis, "DYNAMIC_ATTRIBUTE_ACCESS", 0.3,
+                    analysis,
+                    "DYNAMIC_ATTRIBUTE_ACCESS",
+                    0.3,
                     f"Computed attribute name via {name}()",
                 )
             # A constant naming a dangerous attribute (e.g. "system", "eval").
             elif isinstance(attr.value, str) and attr.value in DANGEROUS_ATTR_NAMES:
                 self._flag(
-                    analysis, "DYNAMIC_ATTRIBUTE_ACCESS", 0.3,
+                    analysis,
+                    "DYNAMIC_ATTRIBUTE_ACCESS",
+                    0.3,
                     f"{name}() reaches dangerous attribute '{attr.value}'",
                 )
 
@@ -374,7 +397,9 @@ class RiskAnalyzer:
         for root in roots:
             if root in SELF_REFERENTIAL_MODULES:
                 self._flag(
-                    analysis, "SELF_REFERENTIAL_CODE", 0.6,
+                    analysis,
+                    "SELF_REFERENTIAL_CODE",
+                    0.6,
                     f"Self-referential import of safety component: {root}",
                 )
 

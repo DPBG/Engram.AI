@@ -6,30 +6,36 @@ Supports modes: EXECUTION, LEARNING, EXPLORATION, SAFE_HALT
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
-import time
+from typing import Any
+
+from activelearning import current_timestamp
 
 logger = logging.getLogger(__name__)
 
 
 class SchedulerMode(Enum):
     """Operating modes for the scheduler."""
-    EXECUTION = "EXECUTION"     # Normal operation
-    LEARNING = "LEARNING"       # Prioritize learning/training
-    EXPLORATION = "EXPLORATION" # Curiosity-driven exploration
-    SAFE_HALT = "SAFE_HALT"     # Emergency stop, cancel all pending
+
+    EXECUTION = "EXECUTION"  # Normal operation
+    LEARNING = "LEARNING"  # Prioritize learning/training
+    EXPLORATION = "EXPLORATION"  # Curiosity-driven exploration
+    SAFE_HALT = "SAFE_HALT"  # Emergency stop, cancel all pending
 
 
 @dataclass
 class PendingAction:
     """A pending action in the queue."""
+
     trace_id: str
     priority: int
     proposal: dict[str, Any]
     created_at: int = field(default_factory=lambda: int(time.time() * 1000))
-    expires_at: Optional[int] = None
+    expires_at: int | None = None
+    created_at: int = field(default_factory=current_timestamp)
+    expires_at: int | None = None
 
 
 class Scheduler:
@@ -107,7 +113,7 @@ class Scheduler:
         logger.debug(f"Enqueued action {action.trace_id} with priority {action.priority}")
         return True
 
-    async def dequeue(self) -> Optional[PendingAction]:
+    async def dequeue(self) -> PendingAction | None:
         """
         Dequeue the highest priority action.
 
@@ -121,10 +127,9 @@ class Scheduler:
 
         # Remove expired actions
         now = int(time.time() * 1000)
-        self._pending = [
-            a for a in self._pending
-            if a.expires_at is None or a.expires_at > now
-        ]
+        self._pending = [a for a in self._pending if a.expires_at is None or a.expires_at > now]
+        now = current_timestamp()
+        self._pending = [a for a in self._pending if a.expires_at is None or a.expires_at > now]
 
         if not self._pending:
             return None

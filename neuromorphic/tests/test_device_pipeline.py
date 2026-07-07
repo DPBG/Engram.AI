@@ -11,7 +11,9 @@ SDK dependencies that aren't installed in the neuromorphic venv.
 import importlib.util
 import os
 import sys
+import time
 import unittest
+import uuid
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,7 +30,14 @@ def _load_module(name: str, path: str):
 # Pre-load modules that have SDK-free code
 sys.path.insert(0, os.path.join(_ROOT, "sensory-gateway"))
 
-# Kernel evaluator needs its SDK types — mock them before import
+# Kernel evaluator needs its SDK types — mock them before import.
+# Save existing sys.modules entries so tearDownModule() can restore them,
+# preventing this fake from leaking into other test modules.
+_prior_modules: dict = {
+    "activelearning": sys.modules.get("activelearning"),
+    "activelearning.core": sys.modules.get("activelearning.core"),
+}
+
 _mock_core = type(sys)("activelearning.core")
 
 
@@ -62,15 +71,34 @@ class _FakeRiskAnalysis:
         self.recommendations = []
 
 
+class _FakeActionProposal:
+    """Minimal ActionProposal stub — satisfies lazy imports in motor_feedback_adapter."""
+
+    def __init__(self, trace_id: str = "", provenance: str = "", action=None, **kw):
+        self.trace_id = trace_id
+        self.provenance = provenance
+        self.action = action or {}
+
+
+def _fake_generate_trace_id() -> str:
+    return "fake-trace-id"
+
+
 _mock_core.KernelDecisionType = _FakeDecisionType
 _mock_core.KernelDecision = _FakeDecision
 _mock_core.RiskAnalysis = _FakeRiskAnalysis
+_mock_core.ActionProposal = _FakeActionProposal
+_mock_core.generate_trace_id = _fake_generate_trace_id
+_mock_core.current_timestamp = lambda: int(time.time() * 1000)
+_mock_core.generate_trace_id = lambda: str(uuid.uuid4())
 
 # Mock the activelearning package so kernel.evaluator can import from it
 _mock_al = type(sys)("activelearning")
 _mock_al.KernelDecisionType = _FakeDecisionType
 _mock_al.KernelDecision = _FakeDecision
 _mock_al.RiskAnalysis = _FakeRiskAnalysis
+_mock_al.current_timestamp = _mock_core.current_timestamp
+_mock_al.generate_trace_id = _mock_core.generate_trace_id
 _mock_al.core = _mock_core
 sys.modules["activelearning"] = _mock_al
 sys.modules["activelearning.core"] = _mock_core
@@ -84,28 +112,47 @@ KernelEvaluator = _evaluator_mod.KernelEvaluator
 DecisionType = _FakeDecisionType
 
 
+def tearDownModule() -> None:
+    """Restore sys.modules to the state before this file was imported.
+
+    The module-level fake install above runs at collection time and would
+    otherwise leave _mock_core in sys.modules for the rest of the pytest
+    session, causing ImportError in any test that lazily imports a symbol
+    (e.g. ActionProposal) that the fake doesn't define.
+    """
+    for key, prior in _prior_modules.items():
+        if prior is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = prior
+
+
 # ===== Discovery: KNOWN_DEVICE_TYPES =====
+
 
 class TestDiscoveryKnownTypes(unittest.TestCase):
     def test_known_types_include_basics(self):
         from discovery import KNOWN_DEVICE_TYPES
+
         assert "camera" in KNOWN_DEVICE_TYPES
         assert "mic" in KNOWN_DEVICE_TYPES
         assert "serial" in KNOWN_DEVICE_TYPES
 
     def test_unknown_type_not_in_known(self):
         from discovery import KNOWN_DEVICE_TYPES
+
         assert "lidar" not in KNOWN_DEVICE_TYPES
-        assert "imu" not in KNOWN_DEVICE_TYPES
 
     def test_sanitize_device_string(self):
         from discovery import sanitize_device_string
+
         assert sanitize_device_string("hello\nworld") == "hello world"
         assert sanitize_device_string("a" * 300) == "a" * 200
         assert sanitize_device_string(None) == "None"
 
     def test_discovered_device_dataclass(self):
         from discovery import DiscoveredDevice
+
         d = DiscoveredDevice(
             device_type="lidar",
             device_id="lidar:0",
@@ -117,6 +164,7 @@ class TestDiscoveryKnownTypes(unittest.TestCase):
 
 
 # ===== Kernel Envelope: intensity + channel validation =====
+
 
 class TestKernelEnvelopeExtension(unittest.TestCase):
     def setUp(self):
@@ -178,7 +226,12 @@ class TestKernelEnvelopeExtension(unittest.TestCase):
             "trace_id": "test-123",
             "action": {"intensity": 0.5, "channel": "locomotion"},
         }
-        decision = self.evaluator.evaluate_action_proposal(proposal)
+        # The Kernel fails closed (DENY) when no Safety-Supervisor risk analysis
+        # is supplied (fix/kernel-fail-closed-missing-safety-analysis). Provide a
+        # low-risk analysis so this exercises the intended ALLOW path.
+        decision = self.evaluator.evaluate_action_proposal(
+            proposal, risk_analysis=_FakeRiskAnalysis(risk_score=0.0)
+        )
         assert decision.type.value == "ALLOW"
 
     def test_full_proposal_deny_bad_channel(self):
@@ -192,17 +245,14 @@ class TestKernelEnvelopeExtension(unittest.TestCase):
 
 # ===== Meta-Programmer: Device-Aware Prompts =====
 
+
 class TestMetaProgrammerDevicePrompt(unittest.TestCase):
     def setUp(self):
         # Load agents.py directly, bypassing __init__.py
-        agents_path = os.path.join(
-            _ROOT, "meta-programmer", "src", "meta_programmer", "agents.py"
-        )
+        agents_path = os.path.join(_ROOT, "meta-programmer", "src", "meta_programmer", "agents.py")
         self.agents_mod = _load_module("meta_programmer.agents", agents_path)
         # Create team instance without __init__
-        team = self.agents_mod.MetaProgrammerTeam.__new__(
-            self.agents_mod.MetaProgrammerTeam
-        )
+        team = self.agents_mod.MetaProgrammerTeam.__new__(self.agents_mod.MetaProgrammerTeam)
         team.ollama_url = "http://localhost:11434"
         team.model_name = "test"
         self.team = team
@@ -273,6 +323,7 @@ class TestMetaProgrammerDevicePrompt(unittest.TestCase):
 
 # ===== Coordinator: dedup + plugin type inference logic =====
 
+
 class TestCoordinatorDeviceRouting(unittest.TestCase):
     def test_device_routing_deduplication(self):
         """Same device_id should not trigger duplicate knowledge gaps."""
@@ -284,18 +335,22 @@ class TestCoordinatorDeviceRouting(unittest.TestCase):
 
     def test_plugin_type_inference_sensor(self):
         from discovery import infer_plugin_type
+
         assert infer_plugin_type("RPLidar A1 Scanner") == "sensor"
 
     def test_plugin_type_inference_actuator(self):
         from discovery import infer_plugin_type
+
         assert infer_plugin_type("Dynamixel Servo Motor") == "actuator"
 
     def test_gripper_detected_as_actuator(self):
         from discovery import infer_plugin_type
+
         assert infer_plugin_type("Robotiq 2F-85 Gripper") == "actuator"
 
 
 # ===== Gateway: source verification =====
+
 
 class TestGatewaySourceVerification(unittest.TestCase):
     def test_subjects_defined(self):

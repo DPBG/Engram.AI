@@ -1,0 +1,20 @@
+# Code owners — enforced maintainer review on the safety-critical layer.
+#
+# GitHub requires a review from a listed owner before a PR that touches these
+# paths can merge (once "Require review from Code Owners" is enabled in branch
+# protection). This turns CONTRIBUTING.md's "safety areas require maintainer
+# review" from a convention into an enforced gate.
+#
+# REPLACE @ykatyhoney with the real maintainer team (e.g. @DPBG/safety-maintainers)
+# once it exists. A team owner scales better than an individual.
+
+# The safety governance layer — never merge changes here unreviewed.
+/kernel/                @ykatyhoney
+/safety-supervisor/     @ykatyhoney
+/beliefs/               @ykatyhoney
+/meta-programmer/       @ykatyhoney
+/overrides/             @ykatyhoney
+
+# CI/CD and deploy plumbing — changes here can weaken every other gate.
+/.github/               @ykatyhoney
+/deploy/                @ykatyhoney

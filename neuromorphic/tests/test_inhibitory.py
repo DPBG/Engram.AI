@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from neuromorphic.config import NeuromorphicConfig, LIFParams, InhibitoryConfig
+from neuromorphic.config import InhibitoryConfig, LIFParams, NeuromorphicConfig
 from neuromorphic.neurons import NeuronPopulation
-from neuromorphic.regions import SensoryCortex, AssociationCortex, BrainRegion
+from neuromorphic.regions import AssociationCortex, SensoryCortex
 
 
 class TestInhibitoryNeurons:
@@ -60,7 +60,7 @@ class TestInhibitoryNeurons:
         pop = NeuronPopulation(100, LIFParams(), inhibitory_config=cfg)
         # Force some spikes
         pop.spikes[:] = False
-        pop.spikes[0] = True   # excitatory
+        pop.spikes[0] = True  # excitatory
         pop.spikes[90] = True  # inhibitory
         signed = pop.signed_spikes
         assert signed[0] == 1.0
@@ -70,8 +70,9 @@ class TestInhibitoryNeurons:
     def test_step_with_inhibitory(self):
         """Network step should work with inhibitory neurons."""
         cfg = InhibitoryConfig(inhibitory_fraction=0.2)
-        pop = NeuronPopulation(100, LIFParams(noise_std=0.0), inhibitory_config=cfg,
-                               rng=np.random.default_rng(42))
+        pop = NeuronPopulation(
+            100, LIFParams(noise_std=0.0), inhibitory_config=cfg, rng=np.random.default_rng(42)
+        )
         current = np.full(100, 50.0, dtype=np.float32)
         spikes = pop.step(current)
         assert spikes.dtype == bool
@@ -84,11 +85,17 @@ class TestInhibitoryRegions:
     @pytest.fixture
     def config(self):
         from neuromorphic.config import PopulationConfig
+
         return NeuromorphicConfig(
             populations=PopulationConfig(
-                sensory_cortex=100, association_cortex=100,
-                brainstem=20, reflex_arc=20, motor_cortex=50,
-                cerebellum=50, predictive_layer=50, working_memory=20,
+                sensory_cortex=100,
+                association_cortex=100,
+                brainstem=20,
+                reflex_arc=20,
+                motor_cortex=50,
+                cerebellum=50,
+                predictive_layer=50,
+                working_memory=20,
             ),
         )
 

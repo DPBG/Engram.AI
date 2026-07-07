@@ -8,7 +8,7 @@ Autopilot mode:
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from activelearning.nats_client import EventBus
 
@@ -40,23 +40,12 @@ class AutopilotController:
         logger.info("Autopilot mode: DISABLED")
         self._enabled = False
 
-    def is_enabled(self) -> bool:
-        """Check if autopilot is enabled."""
-        return self._enabled
-
-    def set_confidence_threshold(self, threshold: float) -> None:
-        """Set confidence threshold for autopilot decisions."""
-        if not 0.0 <= threshold <= 1.0:
-            raise ValueError("Threshold must be between 0.0 and 1.0")
-        self._confidence_threshold = threshold
-        logger.info(f"Autopilot confidence threshold: {threshold}")
-
     async def query_llm(
         self,
         prompt: str,
         model: str = "deepseek-coder:6.7b",
         force_live: bool = False,
-    ) -> Dict:
+    ) -> dict:
         """
         Query LLM with autopilot caching.
 
@@ -72,7 +61,9 @@ class AutopilotController:
         if self._enabled and not force_live:
             cached = await self.llm_cache.get(prompt, model)
             if cached and cached["confidence"] >= self._confidence_threshold:
-                logger.info(f"Autopilot: using cached response (confidence: {cached['confidence']:.3f})")
+                logger.info(
+                    f"Autopilot: using cached response (confidence: {cached['confidence']:.3f})"
+                )
 
                 # Publish cache hit event
                 await self._publish_cache_event("hit", prompt, cached["confidence"])
@@ -123,7 +114,7 @@ class AutopilotController:
         except Exception as e:
             logger.error(f"Error publishing cache event: {e}")
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         """Get autopilot status."""
         return {
             "enabled": self._enabled,

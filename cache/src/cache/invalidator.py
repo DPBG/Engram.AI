@@ -10,9 +10,9 @@ Invalidates cache entries when:
 
 import asyncio
 import logging
-import time
 from typing import Any
 
+from activelearning import current_timestamp
 from activelearning.nats_client import EventBus
 
 logger = logging.getLogger(__name__)
@@ -103,8 +103,7 @@ class CacheInvalidator:
 
                 logger.info("Running periodic cache cleanup...")
 
-                # Get current time
-                now = int(time.time() * 1000)
+                now = current_timestamp()
                 max_age_ms = self.max_age_days * 24 * 60 * 60 * 1000
                 unused_age_ms = self.unused_age_days * 24 * 60 * 60 * 1000
 
@@ -136,31 +135,3 @@ class CacheInvalidator:
                 break
             except Exception as e:
                 logger.error(f"Error in periodic cleanup: {e}", exc_info=True)
-
-    async def invalidate_all(self) -> int:
-        """
-        Invalidate all cache entries.
-
-        Returns:
-            Number of entries deleted
-        """
-        try:
-            logger.warning("Invalidating ALL cache entries")
-
-            # Get all prompt hashes
-            cursor = await self.db.execute("SELECT prompt_hash FROM llm_cache")
-            rows = await cursor.fetchall()
-
-            deleted_count = 0
-            for row in rows:
-                prompt_hash = row[0]
-                success = await self.llm_cache.invalidate(prompt_hash)
-                if success:
-                    deleted_count += 1
-
-            logger.info(f"Deleted {deleted_count} cache entries")
-            return deleted_count
-
-        except Exception as e:
-            logger.error(f"Error invalidating all: {e}", exc_info=True)
-            return 0

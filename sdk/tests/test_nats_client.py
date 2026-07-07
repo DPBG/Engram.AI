@@ -8,7 +8,7 @@ import pytest
 from activelearning.core import generate_trace_id
 from activelearning.nats_client import EventBus
 from activelearning.signing import DECISION_KEY_ENV, sign_decision
-from activelearning.subjects import Subjects, decision_subject
+from activelearning.subjects import Subjects, code_decision_subject, decision_subject
 
 
 @pytest.mark.asyncio
@@ -120,6 +120,59 @@ async def test_wait_for_decision_accepts_signed_decision(
 
 
 @pytest.mark.asyncio
+async def test_wait_for_decision_code_subject(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    key = "test-decision-secret-code"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    async def publish_signed_code_decision():
+        await asyncio.sleep(0.1)
+        decision = sign_decision(
+            {
+                "trace_id": trace_id,
+                "type": "DENY",
+                "reason": "unsafe code",
+                "risk_score": 0.9,
+            },
+            key,
+        )
+        await event_bus.publish(code_decision_subject(trace_id), decision)
+
+    publish_task = asyncio.create_task(publish_signed_code_decision())
+    result = await event_bus.wait_for_decision(trace_id, timeout=2.0, code=True)
+    await publish_task
+    assert result["trace_id"] == trace_id
+    assert result["type"] == "DENY"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_code_subject_ignores_action_decision(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    key = "test-decision-secret-code-2"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    forged_allow = sign_decision(
+        {
+            "trace_id": trace_id,
+            "type": "ALLOW",
+            "reason": "forged action decision",
+            "risk_score": 0.0,
+        },
+        key,
+    )
+    await event_bus.publish(decision_subject(trace_id), forged_allow)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await event_bus.wait_for_decision(trace_id, timeout=0.5, code=True)
+
+
+@pytest.mark.asyncio
 async def test_js_subscribe_delivers_proposal(event_bus: EventBus, wait_for_message):
     received: list[dict] = []
 
@@ -135,5 +188,7 @@ async def test_js_subscribe_delivers_proposal(event_bus: EventBus, wait_for_mess
         "provenance": "nats-test",
     }
     await event_bus.publish(Subjects.PROPOSAL_NEW, payload)
-    await wait_for_message(lambda: len(received) == 1)
-    assert received[0]["trace_id"] == payload["trace_id"]
+    # A fresh durable replays the stream's retained history (DeliverPolicy ALL),
+    # so proposal.new messages from earlier tests in the session may arrive too.
+    # Assert OUR message was delivered rather than assuming it is the only one.
+    await wait_for_message(lambda: any(m.get("trace_id") == payload["trace_id"] for m in received))

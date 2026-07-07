@@ -8,23 +8,40 @@ import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from activelearning import BaseService
 from activelearning.core import generate_trace_id
+from activelearning.subjects import Subjects
 
 from neuromorphic.auditory_stm import AuditorySTM, AuditorySTMConfig
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.encoding import _resolve_modality
 from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.persistence import NeuromorphicPersistence
-from neuromorphic.watchdog import NeuralWatchdog, WatchdogConfig, WatchdogStatus, AlertLevel
+from neuromorphic.sleep_phase import SleepPhaseManager
+from neuromorphic.watchdog import AlertLevel, NeuralWatchdog, WatchdogConfig, WatchdogStatus
 
 if TYPE_CHECKING:
     from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
 
 logger = logging.getLogger(__name__)
+
+
+class _SleepGroupAdapter:
+    """Adapts a SynapseGroup to the interface sleep replay needs.
+
+    SynapseGroup stores weights as a scipy CSR matrix; the mutable values are
+    ``weights.data``. ``w_max`` lives on ``stdp_params``. This exposes the three
+    fields ``apply_capped_replay`` mutates without leaking CSR details.
+    """
+
+    __slots__ = ("weights", "eligibility", "w_max")
+
+    def __init__(self, weights, eligibility, w_max: float):
+        self.weights = weights  # CSR .data slice (ndarray, mutated in place)
+        self.eligibility = eligibility
+        self.w_max = float(w_max)
 
 
 class NeuromorphicService(BaseService):
@@ -49,14 +66,14 @@ class NeuromorphicService(BaseService):
     def __init__(self):
         super().__init__("neuromorphic", use_database=False, use_event_bus=True)
         self._config = NeuromorphicConfig.from_env()
-        self._network: Optional[NeuromorphicNetwork] = None
-        self._persistence: Optional[NeuromorphicPersistence] = None
+        self._network: NeuromorphicNetwork | None = None
+        self._persistence: NeuromorphicPersistence | None = None
 
         # Background task handles
-        self._sim_task: Optional[asyncio.Task] = None
-        self._drive_task: Optional[asyncio.Task] = None
-        self._metrics_task: Optional[asyncio.Task] = None
-        self._save_task: Optional[asyncio.Task] = None
+        self._sim_task: asyncio.Task | None = None
+        self._drive_task: asyncio.Task | None = None
+        self._metrics_task: asyncio.Task | None = None
+        self._save_task: asyncio.Task | None = None
 
         # Latest observation per modality — written by _handle_observation,
         # atomically swapped by the simulation loop.  Replaces the old
@@ -65,10 +82,12 @@ class NeuromorphicService(BaseService):
         self._latest_obs: dict[str, dict[str, Any]] = {}
 
         # Auditory short-term memory (echoic memory buffer)
-        self._auditory_stm = AuditorySTM(AuditorySTMConfig(
-            window_steps=self._config.auditory_stm_window,
-            decay_rate=self._config.auditory_stm_decay,
-        ))
+        self._auditory_stm = AuditorySTM(
+            AuditorySTMConfig(
+                window_steps=self._config.auditory_stm_window,
+                decay_rate=self._config.auditory_stm_decay,
+            )
+        )
 
         # Thread executor for running network.step() off the event loop.
         # This keeps the asyncio event loop responsive so the NATS client
@@ -94,7 +113,9 @@ class NeuromorphicService(BaseService):
         # read ONLY from _step_in_thread (inside _net_lock).  Safe because
         # writes happen after the lock is released, reads happen under lock.
         self._motor_echo_steps: dict[str, int] = {}  # channel → step when fired
-        self._motor_echo_ts: dict[str, float] = {}  # channel → monotonic time when fired (for wall-clock mode)
+        self._motor_echo_ts: dict[str, float] = (
+            {}
+        )  # channel → monotonic time when fired (for wall-clock mode)
         # Queued motor outcomes — outcomes that arrive via NATS are queued
         # here and consumed by the next simulation loop iteration.  This
         # avoids blocking on _net_lock inside the outcome handler.
@@ -121,7 +142,7 @@ class NeuromorphicService(BaseService):
         self._timing_log_counter: int = 0
 
         # Motor feedback adapter — routes commands to MuJoCo or real hardware
-        self._motor_adapter: Optional["MotorFeedbackAdapter"] = None
+        self._motor_adapter: MotorFeedbackAdapter | None = None
 
         # Safety gate — pending Kernel decisions keyed by trace_id.
         # Motor proposals register a Future here; the decision handler resolves it.
@@ -131,20 +152,20 @@ class NeuromorphicService(BaseService):
         # Track background decision-waiting tasks for clean shutdown
         self._decision_tasks: set[asyncio.Task] = set()
         # Cap on concurrent pending decisions to prevent unbounded growth
-        _MAX_PENDING_DECISIONS = 500
+        _MAX_PENDING_DECISIONS = 500  # noqa: N806
 
         # Neural watchdog — monitors brain state for pathological patterns
-        self._watchdog = NeuralWatchdog(WatchdogConfig(
-            weight_oscillation_min_amplitude=float(
-                os.environ.get("NEURO_WATCHDOG_MIN_AMPLITUDE", "0.0")
-            ),
-            weight_oscillation_window=int(
-                os.environ.get("NEURO_WATCHDOG_OSC_WINDOW", "6")
-            ),
-            weight_oscillation_threshold=int(
-                os.environ.get("NEURO_WATCHDOG_OSC_THRESHOLD", "4")
-            ),
-        ))
+        self._watchdog = NeuralWatchdog(
+            WatchdogConfig(
+                weight_oscillation_min_amplitude=float(
+                    os.environ.get("NEURO_WATCHDOG_MIN_AMPLITUDE", "0.0")
+                ),
+                weight_oscillation_window=int(os.environ.get("NEURO_WATCHDOG_OSC_WINDOW", "6")),
+                weight_oscillation_threshold=int(
+                    os.environ.get("NEURO_WATCHDOG_OSC_THRESHOLD", "4")
+                ),
+            )
+        )
         # Cooldown: prevent watchdog escalation spam (min steps between escalations)
         self._last_escalation_step: int = -10000
         # Persistent governor corrections — applied EVERY step until next check
@@ -160,6 +181,16 @@ class NeuromorphicService(BaseService):
 
         # Create network
         self._network = NeuromorphicNetwork(self._config)
+
+        # Offline sleep consolidation — config-gated, OFF by default. When the
+        # NEURO_SLEEP_PHASE env flag is set, enable it for this run. maybe_tick()
+        # is a no-op while disabled, so the default simulation path is unchanged.
+        sleep_cfg = self._config.sleep_phase
+        if os.environ.get("NEURO_SLEEP_PHASE") == "1":
+            sleep_cfg.enabled = True
+        self._sleep = SleepPhaseManager(sleep_cfg)
+        self._sleep_enabled = sleep_cfg.enabled
+        self._sleep_replay_interval = 200  # steps between replay passes while asleep
 
         # Load saved state if available
         if await self._persistence.has_saved_state():
@@ -180,15 +211,15 @@ class NeuromorphicService(BaseService):
                     self.logger.info("Restored watchdog state")
                 phase = self._network.neuromodulation.phase
                 self.logger.info(
-                    f"Resumed from step {self._network.step_count} "
-                    f"(phase: {phase})"
+                    f"Resumed from step {self._network.step_count} " f"(phase: {phase})"
                 )
         else:
             self.logger.info("No saved state — starting as newborn infant")
 
         # Subscribe to NATS subjects
         await self.event_bus.subscribe(
-            "observation.>", self._handle_observation,
+            "observation.>",
+            self._handle_observation,
             pending_msgs_limit=256 * 1024,
             pending_bytes_limit=256 * 1024 * 1024,
         )
@@ -197,13 +228,16 @@ class NeuromorphicService(BaseService):
         await self.event_bus.subscribe("neuromorphic.teach", self._handle_teach)
         await self.event_bus.subscribe("neuromorphic.train_bulk", self._handle_train_bulk)
         await self.event_bus.subscribe("neuromorphic.concept.probe", self._handle_concept_probe)
-        await self.event_bus.subscribe("cognitive.response.validated", self._handle_cognitive_response)
+        await self.event_bus.subscribe(
+            "cognitive.response.validated", self._handle_cognitive_response
+        )
         # Motor feedback loop — subscribe to outcome signals from actuators,
         # sensors (IMU, camera, joints), simulators, or human teachers.
         if self._config.motor_feedback.enabled:
             await self.event_bus.subscribe("motor.outcome.>", self._handle_motor_outcome)
             # Start motor feedback adapter (MuJoCo virtual body + real actuator detection)
             from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
+
             self._motor_adapter = MotorFeedbackAdapter(self._config.motor_feedback, self.event_bus)
             await self._motor_adapter.start()
             # Teach mode DA boost — adapter publishes neuromod.teach.da when
@@ -211,7 +245,9 @@ class NeuromorphicService(BaseService):
             # boost sustains eligibility traces through the feedback window.
             await self.event_bus.subscribe("neuromod.teach.da", self._handle_teach_da)
             await self.event_bus.subscribe("body.posture", self._handle_body_posture)
-            self.logger.info("Motor feedback loop enabled — MuJoCo body + actuator detection active")
+            self.logger.info(
+                "Motor feedback loop enabled — MuJoCo body + actuator detection active"
+            )
         # Safety gate — subscribe to Kernel decisions so DENY/TRANSFORM can
         # feed back as negative/corrective learning signals.
         if self._config.safety_gate.enabled:
@@ -360,13 +396,16 @@ class NeuromorphicService(BaseService):
 
         # Store teaching event in memory
         try:
-            await self.event_bus.publish("memory.store", {
-                "trace_id": generate_trace_id(),
-                "type": "teaching",
-                "description": description,
-                "modalities": list(inputs.keys()),
-                "step": step_count,
-            })
+            await self.event_bus.publish(
+                "memory.store",
+                {
+                    "trace_id": generate_trace_id(),
+                    "type": "teaching",
+                    "description": description,
+                    "modalities": list(inputs.keys()),
+                    "step": step_count,
+                },
+            )
         except Exception as e:
             self.logger.warning(f"Failed to publish teaching event: {e}")
 
@@ -389,13 +428,12 @@ class NeuromorphicService(BaseService):
             return
 
         # Cap corpus and reps
-        corpus = corpus[:self.MAX_BULK_CORPUS]
+        corpus = corpus[: self.MAX_BULK_CORPUS]
         reps = min(int(data.get("repetitions_per_item", 5)), self.MAX_BULK_REPS)
         stdp_override = data.get("stdp_interval_override")
 
         self.logger.info(
-            f"Bulk training: {len(corpus)} items × {reps} reps "
-            f"= {len(corpus) * reps} steps"
+            f"Bulk training: {len(corpus)} items × {reps} reps " f"= {len(corpus) * reps} steps"
         )
 
         # Optionally override STDP interval for faster training
@@ -435,14 +473,17 @@ class NeuromorphicService(BaseService):
             try:
                 async with self._net_lock:
                     step_count = self._network.step_count
-                await self.event_bus.publish("memory.store", {
-                    "trace_id": generate_trace_id(),
-                    "type": "bulk_training",
-                    "description": f"Bulk training: {len(corpus)} items × {reps} reps",
-                    "total_steps": total_steps,
-                    "rate": round(rate, 1),
-                    "step": step_count,
-                })
+                await self.event_bus.publish(
+                    "memory.store",
+                    {
+                        "trace_id": generate_trace_id(),
+                        "type": "bulk_training",
+                        "description": f"Bulk training: {len(corpus)} items × {reps} reps",
+                        "total_steps": total_steps,
+                        "rate": round(rate, 1),
+                        "step": step_count,
+                    },
+                )
             except Exception as e:
                 self.logger.warning(f"Failed to publish bulk training event: {e}")
 
@@ -473,9 +514,12 @@ class NeuromorphicService(BaseService):
         concept = self._network.concept
         if concept is None:
             self.logger.warning("Concept probe: no concept layer (NEURO_CONCEPT_N=0)")
-            await self.event_bus.publish("neuromorphic.concept.result", {
-                "error": "no concept layer",
-            })
+            await self.event_bus.publish(
+                "neuromorphic.concept.result",
+                {
+                    "error": "no concept layer",
+                },
+            )
             return
 
         stimulus = data.get("stimulus", {})
@@ -498,9 +542,7 @@ class NeuromorphicService(BaseService):
             for i in range(propagation_steps):
                 if i == 0:
                     # Inject stimulus on first step
-                    sensory_current = self._network.inject_multimodal(
-                        {provenance: stim_data}
-                    )
+                    sensory_current = self._network.inject_multimodal({provenance: stim_data})
                     self._network.step(sensory_current)
                 else:
                     # Let activity propagate without new input
@@ -612,9 +654,13 @@ class NeuromorphicService(BaseService):
         if not channel:
             return
 
-        _VALID_MOTOR_CHANNELS = {
-            "locomotion", "manipulation", "head",
-            "expression", "speech", "cognitive",
+        _VALID_MOTOR_CHANNELS = {  # noqa: N806
+            "locomotion",
+            "manipulation",
+            "head",
+            "expression",
+            "speech",
+            "cognitive",
         }
         if channel not in _VALID_MOTOR_CHANNELS:
             self.logger.warning("Invalid motor outcome channel: %s", channel)
@@ -639,13 +685,15 @@ class NeuromorphicService(BaseService):
         # Queue the outcome — the simulation loop will drain it on the next
         # iteration while holding _net_lock.  This avoids blocking here for
         # the duration of a full sim step (~1.6s at 1M neurons).
-        self._pending_motor_outcomes.append({
-            "proprio_data": proprio_data,
-            "provenance": provenance,
-            "gain": gain,
-            "channel": channel,
-            "success": success,
-        })
+        self._pending_motor_outcomes.append(
+            {
+                "proprio_data": proprio_data,
+                "provenance": provenance,
+                "gain": gain,
+                "channel": channel,
+                "success": success,
+            }
+        )
 
         # Outcome-contingent DA: success -> DA burst, failure -> DA dip.
         # This makes three-factor learning (STDP * eligibility * DA)
@@ -688,7 +736,8 @@ class NeuromorphicService(BaseService):
 
         self.logger.info(
             "Teach DA boost: channel=%s at step %d (echo window=%d steps)",
-            channel, step_count,
+            channel,
+            step_count,
             self._config.motor_feedback.echo_window_steps,
         )
 
@@ -754,7 +803,9 @@ class NeuromorphicService(BaseService):
             channel = outcome.get("channel", "")
             if channel:
                 network.inject_motor_teaching(
-                    channel, outcome.get("success", True), outcome["gain"],
+                    channel,
+                    outcome.get("success", True),
+                    outcome["gain"],
                 )
 
         # Compute combined DA multiplier for this step.
@@ -784,9 +835,7 @@ class NeuromorphicService(BaseService):
                 now_mono = time.monotonic()
                 window_s = mfb.echo_window_ms / 1000.0
                 ts_snapshot = dict(self._motor_echo_ts)
-                any_active = any(
-                    (now_mono - ts) < window_s for ts in ts_snapshot.values()
-                )
+                any_active = any((now_mono - ts) < window_s for ts in ts_snapshot.values())
             else:
                 step_now = network.step_count
                 echo_snapshot = dict(self._motor_echo_steps)
@@ -832,8 +881,9 @@ class NeuromorphicService(BaseService):
             self._apply_governor_corrections(self._persistent_governor)
 
         _sensory_gap = network.step_count - self._last_obs_step
-        result = network.step(sensory_current, da_multiplier=da_multiplier,
-                              sensory_gap=_sensory_gap)
+        result = network.step(
+            sensory_current, da_multiplier=da_multiplier, sensory_gap=_sensory_gap
+        )
         # Clear expired echo channels
         if mfb.enabled and self._motor_echo_steps:
             if use_wallclock:
@@ -845,7 +895,8 @@ class NeuromorphicService(BaseService):
                 step_now = network.step_count
                 echo_snapshot = dict(self._motor_echo_steps)
                 expired = [
-                    ch for ch, fire_step in echo_snapshot.items()
+                    ch
+                    for ch, fire_step in echo_snapshot.items()
                     if (step_now - fire_step) > mfb.echo_window_steps
                 ]
             for ch in expired:
@@ -864,6 +915,30 @@ class NeuromorphicService(BaseService):
                 self._persistent_governor = {}
 
         return result, step_count, network.drives.get_state()
+
+    def _maybe_sleep_consolidate(self, step_count: int) -> None:
+        """Config-gated offline sleep consolidation. No-op unless enabled + asleep.
+
+        Called once per simulation step under the network lock. Advances the
+        sleep scheduler; while in a sleep window, periodically replays
+        eligibility traces into weights with a HARD-CAPPED, ``w_max``-clipped
+        boost (see ``sleep_phase.apply_capped_replay``).
+        """
+        transition = self._sleep.maybe_tick()
+        if transition == "entered":
+            self.logger.info("Sleep phase ENTER at step %d", step_count)
+        elif transition == "exited":
+            self.logger.info("Sleep phase EXIT at step %d", step_count)
+        if not self._sleep.in_sleep or step_count % self._sleep_replay_interval != 0:
+            return
+        groups = [
+            _SleepGroupAdapter(s.weights.data, s.eligibility, s.stdp_params.w_max)
+            for s in self._network.synapses.values()
+            if getattr(s, "eligibility", None) is not None and s.weights.nnz > 0
+        ]
+        if groups:
+            diagnostics = self._sleep.apply_capped_replay(groups)
+            self.logger.debug("Sleep replay across %d synapse groups", len(diagnostics))
 
     async def _simulation_loop(self) -> None:
         """Main simulation loop — processes observations through the network.
@@ -899,9 +974,9 @@ class NeuromorphicService(BaseService):
                         if self._obs_warning_logged:
                             silent_gap = step_now - self._last_obs_step
                             logger.info(
-                                "Sensory input restored at step %d "
-                                "(was silent for %d steps)",
-                                step_now, silent_gap,
+                                "Sensory input restored at step %d " "(was silent for %d steps)",
+                                step_now,
+                                silent_gap,
                             )
                             self._obs_warning_logged = False
                             self._gateway_restart_requested = False
@@ -917,8 +992,10 @@ class NeuromorphicService(BaseService):
                     # After prolonged starvation, ask the gateway to restart.
                     # Published once per starvation episode (reset when data returns).
                     starvation_gap = step_now - self._last_obs_step
-                    if (starvation_gap >= self._gateway_restart_threshold
-                            and not self._gateway_restart_requested):
+                    if (
+                        starvation_gap >= self._gateway_restart_threshold
+                        and not self._gateway_restart_requested
+                    ):
                         self._gateway_restart_requested = True
                         logger.warning(
                             "Sensory starvation for %d steps -- "
@@ -953,6 +1030,12 @@ class NeuromorphicService(BaseService):
                             pain_snap,
                             posture_snap,
                         )
+
+                    # Offline sleep consolidation tick (OFF by default; a single
+                    # bool check when disabled, so the hot path is unchanged).
+                    if self._sleep_enabled:
+                        async with self._net_lock:
+                            self._maybe_sleep_consolidate(step_count)
 
                     # Process outputs (no lock needed — using captured snapshots)
                     for cmd in result.get("motor_commands", []):
@@ -1011,13 +1094,16 @@ class NeuromorphicService(BaseService):
                         step = self._network.step_count
 
                     if is_critical:
-                        await self.event_bus.publish("beliefs.add_node", {
-                            "id": f"drive-state-{step}",
-                            "type": "fact",
-                            "content": f"Critical drive state: {summary}",
-                            "confidence": 0.9,
-                            "source": "neuromorphic.drives",
-                        })
+                        await self.event_bus.publish(
+                            "beliefs.add_node",
+                            {
+                                "id": f"drive-state-{step}",
+                                "type": "fact",
+                                "content": f"Critical drive state: {summary}",
+                                "confidence": 0.9,
+                                "source": "neuromorphic.drives",
+                            },
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -1062,7 +1148,9 @@ class NeuromorphicService(BaseService):
                     consecutive_errors += 1
                     if consecutive_errors <= 3 or consecutive_errors % 30 == 0:
                         self.logger.error(
-                            "Metrics loop error (#%d): %s", consecutive_errors, e,
+                            "Metrics loop error (#%d): %s",
+                            consecutive_errors,
+                            e,
                             exc_info=True,
                         )
                     if consecutive_errors > 3:
@@ -1191,11 +1279,13 @@ class NeuromorphicService(BaseService):
         sg = self._config.safety_gate
         try:
             decision = await asyncio.wait_for(fut, timeout=sg.decision_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if sg.fail_open:
                 self.logger.debug(f"Safety gate timeout for {trace_id} — fail-open, allowing")
             else:
-                self.logger.warning(f"Safety gate timeout for {trace_id} — fail-closed, injecting deny")
+                self.logger.warning(
+                    f"Safety gate timeout for {trace_id} — fail-closed, injecting deny"
+                )
                 await self._inject_safety_feedback(cmd["channel"], success=False, confidence=0.5)
             return
         except asyncio.CancelledError:
@@ -1247,13 +1337,16 @@ class NeuromorphicService(BaseService):
             # A human operator will ALLOW or DENY via approval.response.{trace_id}.
             self.logger.info(f"Safety DEFER: {cmd['channel']} — requesting human approval")
             try:
-                await self.event_bus.publish("approval.request", {
-                    "trace_id": trace_id,
-                    "channel": cmd["channel"],
-                    "intensity": cmd["intensity"],
-                    "reason": decision.get("reason", "Elevated risk — requires human approval"),
-                    "risk_score": decision.get("risk_score", 0.0),
-                })
+                await self.event_bus.publish(
+                    "approval.request",
+                    {
+                        "trace_id": trace_id,
+                        "channel": cmd["channel"],
+                        "intensity": cmd["intensity"],
+                        "reason": decision.get("reason", "Elevated risk — requires human approval"),
+                        "risk_score": decision.get("risk_score", 0.0),
+                    },
+                )
             except Exception as e:
                 self.logger.warning(f"Failed to publish approval request: {e}")
 
@@ -1289,16 +1382,22 @@ class NeuromorphicService(BaseService):
             outcome["proprioceptive_state"] = proprio_data
 
         # Queue via the existing motor outcome handler
-        self._pending_motor_outcomes.append({
-            "proprio_data": proprio_data if proprio_data is not None else [1.0 if success else 0.0],
-            "provenance": f"motor.outcome.{channel}",
-            "gain": (
-                self._config.motor_feedback.success_gain if success
-                else self._config.motor_feedback.failure_gain
-            ) * confidence,
-            "channel": channel,
-            "success": success,
-        })
+        self._pending_motor_outcomes.append(
+            {
+                "proprio_data": (
+                    proprio_data if proprio_data is not None else [1.0 if success else 0.0]
+                ),
+                "provenance": f"motor.outcome.{channel}",
+                "gain": (
+                    self._config.motor_feedback.success_gain
+                    if success
+                    else self._config.motor_feedback.failure_gain
+                )
+                * confidence,
+                "channel": channel,
+                "success": success,
+            }
+        )
 
     async def _handle_kernel_decision(self, data: dict[str, Any]) -> None:
         """Handle Kernel decisions arriving on decision.{trace_id}."""
@@ -1338,20 +1437,25 @@ class NeuromorphicService(BaseService):
     async def _emit_reflex_proposal(self, reflex: dict[str, Any]) -> None:
         """Emit a high-priority reflex action proposal."""
         try:
-            await self.event_bus.publish("proposal.new", {
-                "trace_id": generate_trace_id(),
-                "provenance": "neuromorphic.reflex",
-                "action": reflex["action"],
-                "priority": reflex["priority"],
-                "metadata": {
-                    "source": "neuromorphic.reflex",
-                    "reflex": reflex["name"],
+            await self.event_bus.publish(
+                "proposal.new",
+                {
+                    "trace_id": generate_trace_id(),
+                    "provenance": "neuromorphic.reflex",
+                    "action": reflex["action"],
+                    "priority": reflex["priority"],
+                    "metadata": {
+                        "source": "neuromorphic.reflex",
+                        "reflex": reflex["name"],
+                    },
                 },
-            })
+            )
         except Exception as e:
             self.logger.warning(f"Failed to publish reflex proposal: {e}")
 
-    async def _emit_cognitive_query(self, cmd: dict[str, Any], step_count: int, drives_state: dict) -> None:
+    async def _emit_cognitive_query(
+        self, cmd: dict[str, Any], step_count: int, drives_state: dict
+    ) -> None:
         """Emit a cognitive query — the brain is asking for help.
 
         All cognitive queries route through the Kernel via proposal.new.
@@ -1361,30 +1465,36 @@ class NeuromorphicService(BaseService):
         action_type = cmd.get("type", "query_llm")
         try:
             if action_type == "query_llm":
-                await self.event_bus.publish("proposal.new", {
-                    "trace_id": generate_trace_id(),
-                    "provenance": "neuromorphic.cognitive",
-                    "action": {
-                        "type": "cognitive_query",
-                        "query_type": action_type,
-                        "intensity": cmd.get("intensity", 0.0),
-                        "prediction_error": cmd.get("prediction_error", 0.0),
+                await self.event_bus.publish(
+                    "proposal.new",
+                    {
+                        "trace_id": generate_trace_id(),
+                        "provenance": "neuromorphic.cognitive",
+                        "action": {
+                            "type": "cognitive_query",
+                            "query_type": action_type,
+                            "intensity": cmd.get("intensity", 0.0),
+                            "prediction_error": cmd.get("prediction_error", 0.0),
+                        },
+                        "priority": 3,
+                        "metadata": {
+                            "source": "neuromorphic.cognitive",
+                            "step": step_count,
+                            "query_number": cmd.get("query_number", 0),
+                            "drives": drives_state,
+                        },
                     },
-                    "priority": 3,
-                    "metadata": {
-                        "source": "neuromorphic.cognitive",
-                        "step": step_count,
-                        "query_number": cmd.get("query_number", 0),
-                        "drives": drives_state,
-                    },
-                })
+                )
             elif action_type == "save_memory":
-                await self.event_bus.publish("memory.store", {
-                    "trace_id": generate_trace_id(),
-                    "type": "cognitive_save",
-                    "description": "Brain-initiated memory consolidation",
-                    "step": step_count,
-                })
+                await self.event_bus.publish(
+                    "memory.store",
+                    {
+                        "trace_id": generate_trace_id(),
+                        "type": "cognitive_save",
+                        "description": "Brain-initiated memory consolidation",
+                        "step": step_count,
+                    },
+                )
         except Exception as e:
             self.logger.warning(f"Failed to emit cognitive query: {e}")
 
@@ -1396,46 +1506,54 @@ class NeuromorphicService(BaseService):
         dashboard display, logging).
         """
         try:
-            await self.event_bus.publish("proposal.new", {
-                "trace_id": generate_trace_id(),
-                "provenance": "neuromorphic.speech",
-                "action": {
-                    "type": "speech_output",
-                    "channel": "speech",
-                    "token_idx": cmd.get("token_idx", 0),
-                    "confidence": cmd.get("confidence", 0.0),
-                    "intensity": cmd.get("intensity", 0.0),
-                    "output_number": cmd.get("output_number", 0),
+            await self.event_bus.publish(
+                "proposal.new",
+                {
+                    "trace_id": generate_trace_id(),
+                    "provenance": "neuromorphic.speech",
+                    "action": {
+                        "type": "speech_output",
+                        "channel": "speech",
+                        "token_idx": cmd.get("token_idx", 0),
+                        "confidence": cmd.get("confidence", 0.0),
+                        "intensity": cmd.get("intensity", 0.0),
+                        "output_number": cmd.get("output_number", 0),
+                    },
+                    "metadata": {
+                        "source": "neuromorphic.speech",
+                        "step": step_count,
+                    },
                 },
-                "metadata": {
-                    "source": "neuromorphic.speech",
-                    "step": step_count,
-                },
-            })
+            )
         except Exception as e:
             self.logger.warning(f"Failed to publish speech proposal: {e}")
 
-    async def _emit_knowledge_gap(self, prediction_error: float, step_count: int, drives_state: dict) -> None:
+    async def _emit_knowledge_gap(
+        self, prediction_error: float, step_count: int, drives_state: dict
+    ) -> None:
         """Signal a knowledge gap when prediction error is high."""
         try:
-            await self.event_bus.publish("knowledge.gap", {
-                "trace_id": generate_trace_id(),
-                "description": f"High prediction error ({prediction_error:.2f}) — world model surprised",
-                "context": {
-                    "prediction_error": prediction_error,
-                    "step": step_count,
-                    "drives": drives_state,
+            await self.event_bus.publish(
+                "knowledge.gap",
+                {
+                    "trace_id": generate_trace_id(),
+                    "description": f"High prediction error ({prediction_error:.2f}) — world model surprised",
+                    "context": {
+                        "prediction_error": prediction_error,
+                        "step": step_count,
+                        "drives": drives_state,
+                    },
+                    "confidence": 1.0 - prediction_error,
+                    "source": "neuromorphic.predictive",
                 },
-                "confidence": 1.0 - prediction_error,
-                "source": "neuromorphic.predictive",
-            })
+            )
         except Exception as e:
             self.logger.warning(f"Failed to publish knowledge gap: {e}")
 
     async def _publish_watchdog_status(self, status: WatchdogStatus) -> None:
         """Publish watchdog alerts to NATS for dashboard / cloud monitoring."""
         try:
-            level_name = status.level.name
+            _level_name = status.level.name
             status_dict = status.to_dict()
             await self.event_bus.publish("safety.watchdog.status", status_dict)
 
@@ -1459,15 +1577,14 @@ class NeuromorphicService(BaseService):
         if not self._network:
             return
         import numpy as np
+
         for region_name, gain in corrections.items():
             region = self._network.regions.get(region_name)
             if region is not None:
                 # Inject uniform inhibitory current across all neurons
                 inhibitory = np.full(region.n, gain, dtype=np.float32)
                 region.inject_current(inhibitory)
-                self.logger.debug(
-                    f"Governor: injected {gain:.2f} inhibitory to '{region_name}'"
-                )
+                self.logger.debug(f"Governor: injected {gain:.2f} inhibitory to '{region_name}'")
 
     async def _escalate_watchdog(self, status: WatchdogStatus) -> None:
         """Automated response to CRITICAL/EMERGENCY watchdog alerts.
@@ -1488,35 +1605,38 @@ class NeuromorphicService(BaseService):
         self._last_escalation_step = status.step
 
         try:
-            has_motor_spam = any(
-                a.check_name == "motor_spam" for a in status.alerts
-            )
+            has_motor_spam = any(a.check_name == "motor_spam" for a in status.alerts)
             if status.level >= AlertLevel.EMERGENCY:
-                # Request full motor halt — all channels to 0
-                await self.event_bus.publish("policy.restrict", {
-                    "motor_limits": {
-                        ch: {"max_intensity": 0.0}
-                        for ch in ("locomotion", "manipulation", "head", "speech")
+                # Request full motor halt — all channels to 0.
+                # Brain cannot publish policy.restrict directly (ADR 0001 §3);
+                # publish policy.restrict.request and the Kernel re-publishes as
+                # authoritative policy.restrict after validation.
+                await self.event_bus.publish(
+                    Subjects.POLICY_RESTRICT_REQUEST,
+                    {
+                        "motor_limits": {
+                            ch: {"max_intensity": 0.0}
+                            for ch in ("locomotion", "manipulation", "head", "speech")
+                        },
+                        "reason": f"EMERGENCY watchdog escalation at step {status.step}",
+                        "operator_id": "system:watchdog",
                     },
-                    "reason": f"EMERGENCY watchdog escalation at step {status.step}",
-                    "operator_id": "system:watchdog",
-                })
-                self.logger.error(
-                    f"WATCHDOG EMERGENCY: requested motor halt at step {status.step}"
                 )
+                self.logger.error(f"WATCHDOG EMERGENCY: requested motor halt at step {status.step}")
             elif has_motor_spam:
                 # Motor spam: halve motor intensity
-                await self.event_bus.publish("policy.restrict", {
-                    "motor_limits": {
-                        "locomotion": {"max_intensity": 0.5},
-                        "manipulation": {"max_intensity": 0.5},
+                await self.event_bus.publish(
+                    Subjects.POLICY_RESTRICT_REQUEST,
+                    {
+                        "motor_limits": {
+                            "locomotion": {"max_intensity": 0.5},
+                            "manipulation": {"max_intensity": 0.5},
+                        },
+                        "reason": f"Motor spam detected at step {status.step}",
+                        "operator_id": "system:watchdog",
                     },
-                    "reason": f"Motor spam detected at step {status.step}",
-                    "operator_id": "system:watchdog",
-                })
-                self.logger.warning(
-                    f"WATCHDOG CRITICAL: motor spam — requested intensity reduction"
                 )
+                self.logger.warning("WATCHDOG CRITICAL: motor spam — requested intensity reduction")
         except Exception as e:
             self.logger.warning(f"Failed to escalate watchdog: {e}")
 

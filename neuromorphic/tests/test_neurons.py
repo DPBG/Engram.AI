@@ -1,7 +1,6 @@
 """Tests for LIF neuron populations."""
 
 import numpy as np
-import pytest
 
 from neuromorphic.config import LIFParams
 from neuromorphic.neurons import NeuronPopulation
@@ -35,8 +34,11 @@ class TestNeuronPopulation:
 
     def test_refractory_period(self):
         params = LIFParams(
-            threshold=-55.0, resting=-65.0, tau=20.0,
-            refractory_ms=5.0, noise_std=0.0,
+            threshold=-55.0,
+            resting=-65.0,
+            tau=20.0,
+            refractory_ms=5.0,
+            noise_std=0.0,
         )
         pop = NeuronPopulation(10, params)
         current = np.full(10, 100.0, dtype=np.float32)
@@ -109,8 +111,13 @@ class TestNeuronPopulation:
     def test_sfa_raises_effective_threshold(self):
         """SFA should raise effective threshold for frequently-firing neurons."""
         params = LIFParams(
-            threshold=-55.0, resting=-65.0, tau=20.0, refractory_ms=2.0,
-            noise_std=0.0, sfa_increment=0.5, sfa_decay=0.99,
+            threshold=-55.0,
+            resting=-65.0,
+            tau=20.0,
+            refractory_ms=2.0,
+            noise_std=0.0,
+            sfa_increment=0.5,
+            sfa_decay=0.99,
         )
         pop = NeuronPopulation(100, params)
         current = np.full(100, 30.0, dtype=np.float32)
@@ -120,21 +127,31 @@ class TestNeuronPopulation:
             pop.step(current)
 
         # SFA offset should be meaningfully positive for all neurons
-        assert pop._sfa_offset.min() > 0.1, (
-            f"SFA offset should accumulate: min={pop._sfa_offset.min():.4f}"
-        )
+        assert (
+            pop._sfa_offset.min() > 0.1
+        ), f"SFA offset should accumulate: min={pop._sfa_offset.min():.4f}"
 
     def test_sfa_reduces_high_firing_rate(self):
         """Strong SFA should reduce firing rate vs no SFA under identical input."""
         # No SFA baseline
         params_none = LIFParams(
-            threshold=-55.0, resting=-65.0, tau=20.0, refractory_ms=2.0,
-            noise_std=0.0, sfa_increment=0.0, sfa_decay=0.99,
+            threshold=-55.0,
+            resting=-65.0,
+            tau=20.0,
+            refractory_ms=2.0,
+            noise_std=0.0,
+            sfa_increment=0.0,
+            sfa_decay=0.99,
         )
         # Aggressive SFA (5mV per spike, fast accumulation)
         params_strong = LIFParams(
-            threshold=-55.0, resting=-65.0, tau=20.0, refractory_ms=2.0,
-            noise_std=0.0, sfa_increment=5.0, sfa_decay=0.99,
+            threshold=-55.0,
+            resting=-65.0,
+            tau=20.0,
+            refractory_ms=2.0,
+            noise_std=0.0,
+            sfa_increment=5.0,
+            sfa_decay=0.99,
         )
         pop_none = NeuronPopulation(100, params_none)
         pop_strong = NeuronPopulation(100, params_strong)
@@ -147,9 +164,9 @@ class TestNeuronPopulation:
             total_strong += int(pop_strong.step(current).sum())
 
         # Strong SFA should meaningfully reduce firing
-        assert total_strong < total_none * 0.8, (
-            f"Strong SFA should reduce firing: none={total_none}, strong={total_strong}"
-        )
+        assert (
+            total_strong < total_none * 0.8
+        ), f"Strong SFA should reduce firing: none={total_none}, strong={total_strong}"
         assert total_strong > 0, "SFA should not completely silence all neurons"
 
     def test_sfa_state_persistence(self):
@@ -182,9 +199,9 @@ class TestNeuronPopulation:
         for _ in range(50):
             pop.step(np.zeros(10, dtype=np.float32))
 
-        assert pop._sfa_offset[0] < offset_after_spike * 0.01, (
-            "SFA should decay to near-zero without spikes"
-        )
+        assert (
+            pop._sfa_offset[0] < offset_after_spike * 0.01
+        ), "SFA should decay to near-zero without spikes"
 
 
 class TestDualInhibition:
@@ -192,15 +209,21 @@ class TestDualInhibition:
 
     def _make_dual_pop(self, n=200, pv_fraction=0.6):
         """Helper: create a population with dual inhibition enabled."""
-        from neuromorphic.config import InhibitoryConfig, DualInhibitionConfig
+        from neuromorphic.config import DualInhibitionConfig, InhibitoryConfig
+
         params = LIFParams(threshold=-55.0, resting=-65.0, tau=20.0, noise_std=0.0)
         inh_cfg = InhibitoryConfig(inhibitory_fraction=0.2)
         dual_cfg = DualInhibitionConfig(
-            enabled=True, pv_fraction=pv_fraction,
-            gaba_b_tau=150.0, gaba_b_conductance_increment=0.05,
+            enabled=True,
+            pv_fraction=pv_fraction,
+            gaba_b_tau=150.0,
+            gaba_b_conductance_increment=0.05,
         )
         return NeuronPopulation(
-            n, params, inhibitory_config=inh_cfg, dual_inhibition_config=dual_cfg,
+            n,
+            params,
+            inhibitory_config=inh_cfg,
+            dual_inhibition_config=dual_cfg,
         )
 
     def test_pv_sst_split(self):
@@ -210,7 +233,7 @@ class TestDualInhibition:
         n_pv = int((pop.is_inhibitory & ~pop.is_sst).sum())
         n_sst = int(pop.is_sst.sum())
         assert n_inh == 40  # 20% of 200
-        assert n_pv == 24   # 60% of 40
+        assert n_pv == 24  # 60% of 40
         assert n_sst == 16  # 40% of 40
         # SST neurons are a subset of inhibitory
         assert (pop.is_sst & ~pop.is_inhibitory).sum() == 0
@@ -286,9 +309,9 @@ class TestDualInhibition:
         # Excitatory neurons should be hyperpolarized below resting
         exc_mask = ~pop.is_inhibitory
         # GABA-B reversal is -90mV, resting is -65mV, so current is negative
-        assert pop.v_membrane[exc_mask].mean() < pop.params.resting, (
-            f"GABA-B should hyperpolarize: mean={pop.v_membrane[exc_mask].mean():.2f}"
-        )
+        assert (
+            pop.v_membrane[exc_mask].mean() < pop.params.resting
+        ), f"GABA-B should hyperpolarize: mean={pop.v_membrane[exc_mask].mean():.2f}"
 
     def test_gaba_b_suppresses_longer_than_gaba_a(self):
         """SST (GABA-B) inhibition should outlast PV (GABA-A) by 10x+."""
@@ -305,18 +328,21 @@ class TestDualInhibition:
                 steps_above_10pct += 1
         # GABA-B should persist for >100 steps (100ms+)
         # GABA-A (instant, tau ~10ms) would be gone in ~30 steps
-        assert steps_above_10pct > 100, (
-            f"GABA-B should persist >100ms, only lasted {steps_above_10pct} steps"
-        )
+        assert (
+            steps_above_10pct > 100
+        ), f"GABA-B should persist >100ms, only lasted {steps_above_10pct} steps"
 
     def test_backward_compat_disabled(self):
         """When dual inhibition is disabled, behavior should be unchanged."""
-        from neuromorphic.config import InhibitoryConfig, DualInhibitionConfig
+        from neuromorphic.config import DualInhibitionConfig, InhibitoryConfig
+
         params = LIFParams(threshold=-55.0, resting=-65.0, noise_std=0.0)
         inh_cfg = InhibitoryConfig(inhibitory_fraction=0.2)
         disabled_cfg = DualInhibitionConfig(enabled=False)
         pop = NeuronPopulation(
-            100, params, inhibitory_config=inh_cfg,
+            100,
+            params,
+            inhibitory_config=inh_cfg,
             dual_inhibition_config=disabled_cfg,
         )
         assert pop.is_sst.sum() == 0
@@ -338,9 +364,7 @@ class TestDualInhibition:
         # Restore into fresh population
         pop2 = self._make_dual_pop(100)
         pop2.set_state(state)
-        np.testing.assert_allclose(
-            pop._gaba_b_conductance, pop2._gaba_b_conductance
-        )
+        np.testing.assert_allclose(pop._gaba_b_conductance, pop2._gaba_b_conductance)
         np.testing.assert_array_equal(pop.is_sst, pop2.is_sst)
 
     def test_sst_params_differ_from_pv(self):

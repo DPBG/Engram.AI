@@ -16,11 +16,9 @@ Tests the critical message flows:
 import asyncio
 import json
 import uuid
-from typing import Optional
 
 import pytest
 from nats.aio.client import Client as NATSClient
-
 
 # =============================================================================
 # KERNEL TESTS - Decision Flow
@@ -31,7 +29,7 @@ from nats.aio.client import Client as NATSClient
 async def test_kernel_allow_decision(nats_client: NATSClient):
     """Test Kernel ALLOW decision for safe action."""
     trace_id = str(uuid.uuid4())
-    decision_received: Optional[dict] = None
+    decision_received: dict | None = None
 
     async def decision_handler(msg):
         nonlocal decision_received
@@ -65,7 +63,7 @@ async def test_kernel_allow_decision(nats_client: NATSClient):
 async def test_kernel_decision_timeout(nats_client: NATSClient):
     """Test kernel decision timeout handling."""
     trace_id = str(uuid.uuid4())
-    decision_received: Optional[dict] = None
+    decision_received: dict | None = None
 
     async def decision_handler(msg):
         nonlocal decision_received
@@ -89,7 +87,7 @@ async def test_kernel_decision_timeout(nats_client: NATSClient):
             asyncio.sleep(2.0),  # Wait for decision
             timeout=3.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     # Decision may or may not be received depending on kernel availability
@@ -168,7 +166,7 @@ async def test_observation_subject_routing(nats_client: NATSClient):
 @pytest.mark.asyncio
 async def test_memory_store_episode(nats_client: NATSClient):
     """Test storing an episode in memory."""
-    response_received: Optional[dict] = None
+    response_received: dict | None = None
 
     async def response_handler(msg):
         nonlocal response_received
@@ -198,7 +196,7 @@ async def test_memory_store_episode(nats_client: NATSClient):
 @pytest.mark.asyncio
 async def test_memory_recall_query(nats_client: NATSClient):
     """Test memory recall query."""
-    response_received: Optional[dict] = None
+    response_received: dict | None = None
 
     async def response_handler(msg):
         nonlocal response_received
@@ -245,16 +243,14 @@ async def test_beliefs_update_node(nats_client: NATSClient):
 @pytest.mark.asyncio
 async def test_beliefs_find_contradictions(nats_client: NATSClient):
     """Test finding contradictions in belief graph."""
-    response_received: Optional[dict] = None
+    response_received: dict | None = None
 
     async def response_handler(msg):
         nonlocal response_received
         response_received = json.loads(msg.data.decode())
 
     query_id = str(uuid.uuid4())
-    await nats_client.subscribe(
-        f"beliefs.contradictions.result.{query_id}", cb=response_handler
-    )
+    await nats_client.subscribe(f"beliefs.contradictions.result.{query_id}", cb=response_handler)
     await asyncio.sleep(0.1)
 
     query = {"query_id": query_id, "node_id": str(uuid.uuid4())}
@@ -279,7 +275,7 @@ async def test_cache_query(nats_client: NATSClient):
         timeout=5.0,
     )
 
-    result = json.loads(response.data.decode())
+    _result = json.loads(response.data.decode())
     # Cache service may return hit or miss
 
 
@@ -292,7 +288,7 @@ async def test_cache_status(nats_client: NATSClient):
         timeout=2.0,
     )
 
-    status = json.loads(response.data.decode())
+    _status = json.loads(response.data.decode())
     # Status should have 'status' field
 
 
@@ -304,7 +300,7 @@ async def test_cache_status(nats_client: NATSClient):
 @pytest.mark.asyncio
 async def test_coordinator_task_request(nats_client: NATSClient):
     """Test coordinator task request."""
-    result_received: Optional[dict] = None
+    result_received: dict | None = None
 
     async def result_handler(msg):
         nonlocal result_received
@@ -325,7 +321,7 @@ async def test_coordinator_task_request(nats_client: NATSClient):
 @pytest.mark.asyncio
 async def test_coordinator_status(nats_client: NATSClient):
     """Test coordinator status query."""
-    status_received: Optional[dict] = None
+    status_received: dict | None = None
 
     async def status_handler(msg):
         nonlocal status_received
@@ -333,9 +329,17 @@ async def test_coordinator_status(nats_client: NATSClient):
 
     await nats_client.subscribe("coordinator.status.result", cb=status_handler)
     await asyncio.sleep(0.1)
+    """Test coordinator status query via request-reply."""
+    response = await nats_client.request(
+        "coordinator.status",
+        json.dumps({}).encode(),
+        timeout=2.0,
+    )
 
-    await nats_client.publish("coordinator.status", json.dumps({}).encode())
-    await asyncio.sleep(1.0)
+    status = json.loads(response.data.decode())
+    assert status.get("status") == "running"
+    assert "sensors" in status
+    assert "learning" in status
 
 
 # =============================================================================
@@ -346,7 +350,7 @@ async def test_coordinator_status(nats_client: NATSClient):
 @pytest.mark.asyncio
 async def test_override_request(nats_client: NATSClient):
     """Test human override request."""
-    result_received: Optional[dict] = None
+    result_received: dict | None = None
 
     trace_id = str(uuid.uuid4())
 
@@ -378,7 +382,7 @@ async def test_override_status(nats_client: NATSClient):
         timeout=2.0,
     )
 
-    status = json.loads(response.data.decode())
+    _status = json.loads(response.data.decode())
     # Should have metrics
 
 
@@ -402,7 +406,7 @@ async def test_external_api_query(nats_client: NATSClient):
         timeout=5.0,
     )
 
-    result = json.loads(response.data.decode())
+    _result = json.loads(response.data.decode())
     # Should have 'success' field
 
 
@@ -436,8 +440,8 @@ async def test_end_to_end_observation_to_decision(nats_client: NATSClient):
     3. Kernel makes decision
     """
     trace_id = str(uuid.uuid4())
-    proposal_received: Optional[dict] = None
-    decision_received: Optional[dict] = None
+    proposal_received: dict | None = None
+    decision_received: dict | None = None
 
     async def proposal_handler(msg):
         nonlocal proposal_received
@@ -449,7 +453,7 @@ async def test_end_to_end_observation_to_decision(nats_client: NATSClient):
 
     # Subscribe to proposal and decision
     await nats_client.subscribe("proposal.new", cb=proposal_handler)
-    await nats_client.subscribe(f"decision.*", cb=decision_handler)
+    await nats_client.subscribe("decision.*", cb=decision_handler)
     await asyncio.sleep(0.1)
 
     # Publish observation
@@ -525,9 +529,7 @@ async def test_concurrent_message_processing(nats_client: NATSClient):
 
     # Publish multiple messages rapidly
     for i in range(10):
-        await nats_client.publish(
-            test_subject, json.dumps({"message_id": i}).encode()
-        )
+        await nats_client.publish(test_subject, json.dumps({"message_id": i}).encode())
 
     await asyncio.sleep(0.5)
 

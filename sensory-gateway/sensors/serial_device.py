@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 
-from activelearning.plugins import SensorPlugin, PluginCapability, RiskClass
+from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +45,13 @@ class SerialSensor(SensorPlugin[dict]):
         self._provenance_type = provenance_type
         self._serial = None
 
-        self.add_capability(PluginCapability(
-            name="serial_read",
-            description=f"Reads JSON data from {port}",
-            parameters={"baud_rate": str(baud_rate), "protocol": "json_lines"},
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="serial_read",
+                description=f"Reads JSON data from {port}",
+                parameters={"baud_rate": str(baud_rate), "protocol": "json_lines"},
+            )
+        )
 
     async def start(self, bus=None) -> None:
         """Open the serial port."""
@@ -90,7 +92,7 @@ class SerialSensor(SensorPlugin[dict]):
                 loop.run_in_executor(None, self._read_line),
                 timeout=1.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Serial read timeout on {self._port}")
             return {}
         return data

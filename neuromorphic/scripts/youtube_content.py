@@ -27,13 +27,14 @@ deletes raw file before downloading next. Needs ~2 GB free.
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 # ── Staging directories ──────────────────────────────────────────────
-STAGING_ROOT = Path(os.environ.get("STAGING_ROOT", str(Path.home() / "engram-staging" / "staging_videos")))
+STAGING_ROOT = Path(
+    os.environ.get("STAGING_ROOT", str(Path.home() / "engram-staging" / "staging_videos"))
+)
 RAW_DIR = STAGING_ROOT / "raw"
 COMPRESSED_DIR = STAGING_ROOT / "compressed"
 
@@ -80,7 +81,6 @@ CATALOG: dict[str, list[tuple[str, str, int | None]]] = {
         ("https://www.youtube.com/watch?v=9FppammO1zk", "kurzgesagt_most_dangerous_weapon", None),
         ("https://www.youtube.com/watch?v=wwSzpaTHyS8", "kurzgesagt_paradox_of_time", None),
     ],
-
     # ── ROBOTICS & AI ────────────────────────────────────────────────
     "robotics": [
         # Boston Dynamics (verified)
@@ -104,13 +104,20 @@ CATALOG: dict[str, list[tuple[str, str, int | None]]] = {
         ("https://www.youtube.com/watch?v=xwgaMdHzW40", "unitree_g1_spin", None),
         ("https://www.youtube.com/watch?v=a5RKLjZs_ts", "unitree_g1_h2_robots", None),
     ],
-
     # ── HOW-TO / HANDS-ON ────────────────────────────────────────────
     "howto": [
         # Practical Engineering (verified)
         ("https://www.youtube.com/watch?v=OwS9aTE2Go4", "practical_eng_transistor", None),
-        ("https://www.youtube.com/watch?v=cZINeaDjisY", "practical_eng_concrete_reinforcement", None),
-        ("https://www.youtube.com/watch?v=VE1wM4oIh8Y", "practical_eng_infrastructure_hacked", None),
+        (
+            "https://www.youtube.com/watch?v=cZINeaDjisY",
+            "practical_eng_concrete_reinforcement",
+            None,
+        ),
+        (
+            "https://www.youtube.com/watch?v=VE1wM4oIh8Y",
+            "practical_eng_infrastructure_hacked",
+            None,
+        ),
         ("https://www.youtube.com/watch?v=Y_729CQdG50", "practical_eng_mindblowing_infra", None),
         ("https://www.youtube.com/watch?v=qt2j2gn0yWc", "practical_eng_earthquake_isolation", None),
         # Technology Connections (verified)
@@ -132,7 +139,6 @@ CATALOG: dict[str, list[tuple[str, str, int | None]]] = {
         ("https://www.youtube.com/watch?v=nCKkHqlx9dE", "primitive_tech_wattle_daub_hut", None),
         ("https://www.youtube.com/watch?v=eesj3pJF3lA", "primitive_tech_wood_ash_cement", None),
     ],
-
     # ── NATURE & MOVEMENT ────────────────────────────────────────────
     "nature": [
         # BBC Earth (verified)
@@ -151,7 +157,6 @@ CATALOG: dict[str, list[tuple[str, str, int | None]]] = {
         ("https://www.youtube.com/watch?v=JrO_tvMjqjo", "wendover_hawaii_logistics", None),
         ("https://www.youtube.com/watch?v=2qanMpnYsjk", "wendover_amazon_shipping", None),
     ],
-
     # ── CONVERSATIONS & INTERVIEWS ───────────────────────────────────
     "interviews": [
         # Lex Fridman (verified, trim to 30 min)
@@ -185,9 +190,9 @@ CATALOG: dict[str, list[tuple[str, str, int | None]]] = {
 
 def sanitize_filename(name: str) -> str:
     """Remove non-ASCII, spaces, and special chars from filename."""
-    name = re.sub(r'[^\w\-.]', '_', name)
-    name = re.sub(r'_+', '_', name)
-    return name.strip('_')
+    name = re.sub(r"[^\w\-.]", "_", name)
+    name = re.sub(r"_+", "_", name)
+    return name.strip("_")
 
 
 def download_video(url: str, name: str, max_duration: int | None, output_dir: Path) -> Path | None:
@@ -196,13 +201,18 @@ def download_video(url: str, name: str, max_duration: int | None, output_dir: Pa
 
     cmd = [
         "yt-dlp",
-        "-f", "bestvideo[height<=480]+bestaudio/best[height<=480]/best",
-        "--merge-output-format", "mp4",
-        "-o", str(output_path),
+        "-f",
+        "bestvideo[height<=480]+bestaudio/best[height<=480]/best",
+        "--merge-output-format",
+        "mp4",
+        "-o",
+        str(output_path),
         "--no-playlist",
         "--no-overwrites",
-        "--socket-timeout", "30",
-        "--retries", "3",
+        "--socket-timeout",
+        "30",
+        "--retries",
+        "3",
     ]
 
     if max_duration:
@@ -218,7 +228,7 @@ def download_video(url: str, name: str, max_duration: int | None, output_dir: Pa
             print(f"    FAILED: {result.stderr[:200]}")
             return None
     except subprocess.TimeoutExpired:
-        print(f"    TIMEOUT after 10 min")
+        print("    TIMEOUT after 10 min")
         return None
 
     # Find the actual output file
@@ -229,11 +239,11 @@ def download_video(url: str, name: str, max_duration: int | None, output_dir: Pa
 
     # Try glob
     matches = list(output_dir.glob(f"{name}.*"))
-    video_matches = [m for m in matches if m.suffix in ('.mp4', '.mkv', '.webm', '.m4a')]
+    video_matches = [m for m in matches if m.suffix in (".mp4", ".mkv", ".webm", ".m4a")]
     if video_matches:
         return video_matches[0]
 
-    print(f"    WARNING: Download succeeded but file not found")
+    print("    WARNING: Download succeeded but file not found")
     return None
 
 
@@ -247,17 +257,28 @@ def compress_video(input_path: Path, output_dir: Path) -> Path | None:
         return output_path
 
     cmd = [
-        "ffmpeg", "-y",
-        "-i", str(input_path),
-        "-vf", "scale=128:128,format=gray",
-        "-c:v", "libx264",
-        "-crf", "32",
-        "-r", "10",
-        "-c:a", "aac",
-        "-b:a", "32k",
-        "-ac", "1",
-        "-ar", "16000",
-        "-movflags", "+faststart",
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_path),
+        "-vf",
+        "scale=128:128,format=gray",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "32",
+        "-r",
+        "10",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "32k",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-movflags",
+        "+faststart",
         str(output_path),
     ]
 
@@ -267,7 +288,7 @@ def compress_video(input_path: Path, output_dir: Path) -> Path | None:
             print(f"    COMPRESS FAILED: {result.stderr[:200]}")
             return None
     except subprocess.TimeoutExpired:
-        print(f"    COMPRESS TIMEOUT")
+        print("    COMPRESS TIMEOUT")
         if output_path.exists():
             output_path.unlink()
         return None
@@ -313,7 +334,7 @@ def download_category(category: str, entries: list) -> dict:
         # Delete raw file to save disk space
         if raw_path.exists():
             raw_path.unlink()
-            print(f"    Cleaned raw file")
+            print("    Cleaned raw file")
 
     return stats
 
@@ -335,14 +356,22 @@ def cmd_download(args):
         print(f"Category: {cat} ({len(entries)} videos)")
         print(f"{'='*60}")
         stats = download_category(cat, entries)
-        print(f"\n  Results: {stats['downloaded']} downloaded, "
-              f"{stats['compressed']} compressed, "
-              f"{stats['skipped']} skipped, "
-              f"{stats['failed']} failed")
+        print(
+            f"\n  Results: {stats['downloaded']} downloaded, "
+            f"{stats['compressed']} compressed, "
+            f"{stats['skipped']} skipped, "
+            f"{stats['failed']} failed"
+        )
 
     # Summary
-    total_compressed = sum(1 for _ in COMPRESSED_DIR.rglob("*.mp4")) if COMPRESSED_DIR.exists() else 0
-    total_size_mb = sum(f.stat().st_size for f in COMPRESSED_DIR.rglob("*.mp4")) / (1024 * 1024) if COMPRESSED_DIR.exists() else 0
+    total_compressed = (
+        sum(1 for _ in COMPRESSED_DIR.rglob("*.mp4")) if COMPRESSED_DIR.exists() else 0
+    )
+    total_size_mb = (
+        sum(f.stat().st_size for f in COMPRESSED_DIR.rglob("*.mp4")) / (1024 * 1024)
+        if COMPRESSED_DIR.exists()
+        else 0
+    )
     print(f"\n{'='*60}")
     print(f"Total staged: {total_compressed} videos, {total_size_mb:.1f} MB")
     print(f"Location: {COMPRESSED_DIR}")
@@ -354,9 +383,11 @@ def cmd_upload(args):
         print("No compressed videos found. Run 'download' first.")
         sys.exit(1)
 
-    categories = [args.category] if args.category else [
-        d.name for d in COMPRESSED_DIR.iterdir() if d.is_dir()
-    ]
+    categories = (
+        [args.category]
+        if args.category
+        else [d.name for d in COMPRESSED_DIR.iterdir() if d.is_dir()]
+    )
 
     for cat in categories:
         cat_dir = COMPRESSED_DIR / cat
@@ -371,17 +402,21 @@ def cmd_upload(args):
         print(f"\nUploading {len(videos)} videos to {HETZNER_HOST}:{remote_dir}")
 
         # Create remote directory
-        subprocess.run([
-            "ssh", "-i", os.path.expanduser(HETZNER_KEY),
-            HETZNER_HOST, f"mkdir -p {remote_dir}"
-        ], check=True)
+        subprocess.run(
+            ["ssh", "-i", os.path.expanduser(HETZNER_KEY), HETZNER_HOST, f"mkdir -p {remote_dir}"],
+            check=True,
+        )
 
         # Upload
-        cmd = [
-            "scp", "-i", os.path.expanduser(HETZNER_KEY),
-        ] + [str(v) for v in videos] + [
-            f"{HETZNER_HOST}:{remote_dir}/"
-        ]
+        cmd = (
+            [
+                "scp",
+                "-i",
+                os.path.expanduser(HETZNER_KEY),
+            ]
+            + [str(v) for v in videos]
+            + [f"{HETZNER_HOST}:{remote_dir}/"]
+        )
 
         result = subprocess.run(cmd)
         if result.returncode == 0:
@@ -389,10 +424,10 @@ def cmd_upload(args):
         else:
             print(f"  Upload FAILED for {cat}")
 
-    print(f"\nTo activate: restart the gateway tmux session on Hetzner")
+    print("\nTo activate: restart the gateway tmux session on Hetzner")
     print(f"  ssh -i {HETZNER_KEY} {HETZNER_HOST}")
-    print(f"  tmux attach -t gateway")
-    print(f"  # Ctrl-C, then restart with --batch-size 25 --batch-delay 3.0")
+    print("  tmux attach -t gateway")
+    print("  # Ctrl-C, then restart with --batch-size 25 --batch-delay 3.0")
 
 
 def cmd_status(args):
@@ -404,13 +439,17 @@ def cmd_status(args):
         cat_compressed = COMPRESSED_DIR / cat
         done = len(list(cat_compressed.glob("*.mp4"))) if cat_compressed.exists() else 0
         total = len(CATALOG[cat])
-        size_mb = sum(f.stat().st_size for f in cat_compressed.glob("*.mp4")) / (1024*1024) if cat_compressed.exists() else 0
+        size_mb = (
+            sum(f.stat().st_size for f in cat_compressed.glob("*.mp4")) / (1024 * 1024)
+            if cat_compressed.exists()
+            else 0
+        )
         bar = f"[{'#' * done}{'.' * (total - done)}]"
         print(f"  {cat:15s} {bar} {done}/{total}  ({size_mb:.1f} MB)")
 
     if COMPRESSED_DIR.exists():
         total_files = sum(1 for _ in COMPRESSED_DIR.rglob("*.mp4"))
-        total_mb = sum(f.stat().st_size for f in COMPRESSED_DIR.rglob("*.mp4")) / (1024*1024)
+        total_mb = sum(f.stat().st_size for f in COMPRESSED_DIR.rglob("*.mp4")) / (1024 * 1024)
         print(f"\n  Total: {total_files} videos, {total_mb:.1f} MB compressed")
 
 
