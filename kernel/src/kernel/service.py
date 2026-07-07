@@ -12,7 +12,13 @@ import os
 import time
 from typing import Any
 
-from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
+from activelearning import (
+    BaseService,
+    current_timestamp,
+    generate_trace_id,
+    sign_decision,
+    verify_operator_action,
+)
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import (
     Subjects,
@@ -282,16 +288,36 @@ class KernelService(BaseService):
         Resume is deliberately narrow: it re-enables the Kernel but does NOT
         auto-restore motor limits or planner mode — an operator must restore
         those explicitly, so the system never silently un-halts itself.
+
+        The payload must carry a valid HMAC signature (``_op_sig``) and a
+        fresh ``timestamp`` (epoch ms) when ``ENGRAM_OPERATOR_KEY`` is set.
+        Fail-closed: an unauthenticated, tampered, or replayed resume is
+        REJECTED and the system remains halted.
         """
         operator = data.get("operator_id", "unknown")
+
+        if not verify_operator_action(data, "resume"):
+            self.logger.critical(
+                "SAFE_HALT resume REJECTED — unauthenticated, tampered, or "
+                "replayed request (operator_id=%r). System remains halted.",
+                operator,
+            )
+            # Confirm still-halted so consumers don't assume resumption occurred.
+            await self.event_bus.publish(
+                Subjects.SAFETY_HALT_STATUS,
+                {
+                    "halted": True,
+                    "operator_id": operator,
+                    "rejection_reason": "unauthenticated_resume",
+                },
+            )
+            return
+
         self._evaluator.resume()
         self.logger.warning(f"SAFE_HALT released by {operator}")
         await self.event_bus.publish(
             Subjects.SAFETY_HALT_STATUS,
-            {
-                "halted": False,
-                "operator_id": operator,
-            },
+            {"halted": False, "operator_id": operator},
         )
 
     async def _handle_load_profile(self, data: dict) -> None:
@@ -684,6 +710,16 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
+                sign_decision(
+                    {
+                        "trace_id": decision.trace_id,
+                        "type": decision.type.value,
+                        "reason": decision.reason,
+                        "risk_score": decision.risk_score,
+                        "issued_at": decision.issued_at,
+                        "expires_at": decision.expires_at,
+                    }
+                ),
                 self._signed_code_decision(decision),
             )
 

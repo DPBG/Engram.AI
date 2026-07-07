@@ -45,6 +45,7 @@ class AutopilotController:
         prompt: str,
         model: str = "deepseek-coder:6.7b",
         force_live: bool = False,
+        tags: list[str] | None = None,
     ) -> dict:
         """
         Query LLM with autopilot caching.
@@ -53,6 +54,8 @@ class AutopilotController:
             prompt: LLM prompt
             model: Model name
             force_live: Force live LLM call, bypass cache
+            tags: Invalidation categories recorded on the cached response (see
+                :class:`~cache.llm_cache.CacheTag`).
 
         Returns:
             dict with response and metadata
@@ -87,7 +90,7 @@ class AutopilotController:
 
         # Cache the response
         if self._enabled:
-            await self.llm_cache.set(prompt, response, model)
+            await self.llm_cache.set(prompt, response, model, tags=tags)
 
         return {
             "response": response,
