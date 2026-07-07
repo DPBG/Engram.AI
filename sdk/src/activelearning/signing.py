@@ -19,6 +19,11 @@ Design notes
   and verification passes (legacy/dev mode) — but a one-time warning is logged
   so operators know the gate is unauthenticated.
 - ``hmac.compare_digest`` is used for constant-time comparison.
+- **Key rotation (issue #206):** ``ENGRAM_DECISION_KEY_SECONDARY`` is an
+  optional, verify-only second key — never used for signing — that lets a
+  verifier accept decisions signed with either the current or a rotating-out
+  key during a dual-key overlap window. See
+  ``docs/DECISION-KEY-ROTATION.md`` for the operational procedure.
 """
 
 from __future__ import annotations
@@ -36,6 +41,11 @@ logger = logging.getLogger(__name__)
 #: Environment variable holding the shared decision-signing secret.
 DECISION_KEY_ENV = "ENGRAM_DECISION_KEY"
 
+#: Environment variable holding an additional, verify-only decision key.
+#: Never used for signing — only to let verifiers accept a second key during
+#: a zero-downtime key rotation. See docs/DECISION-KEY-ROTATION.md.
+DECISION_KEY_SECONDARY_ENV = "ENGRAM_DECISION_KEY_SECONDARY"
+
 #: Field name used to carry the signature inside a decision payload.
 SIGNATURE_FIELD = "_sig"
 
@@ -49,6 +59,17 @@ _warned_unsigned = False
 def get_decision_key() -> str | None:
     """Return the configured signing key, or ``None`` if signing is disabled."""
     key = os.environ.get(DECISION_KEY_ENV, "").strip()
+    return key or None
+
+
+def get_decision_key_secondary() -> str | None:
+    """Return the configured secondary verify-only key, or ``None`` if unset.
+
+    Only meaningful mid-rotation (see docs/DECISION-KEY-ROTATION.md) — a
+    decision signed with this key is accepted by :func:`verify_decision`,
+    but :func:`sign_decision` never signs with it.
+    """
+    key = os.environ.get(DECISION_KEY_SECONDARY_ENV, "").strip()
     return key or None
 
 
@@ -87,8 +108,14 @@ def verify_decision(payload: dict[str, Any], key: str | None = None) -> bool:
     """Return ``True`` if ``payload`` is an authentic Kernel decision.
 
     - Signing disabled (no key) → ``True`` (legacy mode), with a one-time warning.
-    - Signing enabled → the payload must carry a signature matching its signed
-      fields; missing/invalid signatures (i.e. forgeries or tampering) → ``False``.
+    - Signing enabled → the payload must carry a signature matching the
+      primary key's signed fields, **or**, if
+      :data:`DECISION_KEY_SECONDARY_ENV` is configured, the secondary key's —
+      the secondary key exists solely to let a verifier accept both the old
+      and new key during a zero-downtime rotation overlap window (see
+      docs/DECISION-KEY-ROTATION.md); it is never used for signing. Missing
+      or invalid signatures against both (i.e. forgeries or tampering) →
+      ``False``.
     """
     global _warned_unsigned
     key = key or get_decision_key()
@@ -105,8 +132,12 @@ def verify_decision(payload: dict[str, Any], key: str | None = None) -> bool:
     sig = payload.get(SIGNATURE_FIELD)
     if not isinstance(sig, str) or not sig:
         return False
-    expected = compute_signature(payload, key)
-    return hmac.compare_digest(sig, expected)
+    if hmac.compare_digest(sig, compute_signature(payload, key)):
+        return True
+    secondary = get_decision_key_secondary()
+    if secondary and hmac.compare_digest(sig, compute_signature(payload, secondary)):
+        return True
+    return False
 
 
 # ── Operator-action signing (SAFE_HALT resume and similar privileged commands) ─
