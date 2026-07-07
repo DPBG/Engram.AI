@@ -40,6 +40,7 @@ from kernel.service import _LATENCY_WINDOW, _SLO_MIN_SAMPLES, _compute_percentil
 # Unit tests for _compute_percentiles
 # ---------------------------------------------------------------------------
 
+
 class TestComputePercentiles(unittest.TestCase):
     def test_empty(self):
         result = _compute_percentiles([])
@@ -86,14 +87,18 @@ class TestComputePercentiles(unittest.TestCase):
 # Integration-style tests for _record_latency via a minimal stub service
 # ---------------------------------------------------------------------------
 
+
 def _make_service(threshold_ms: float = 50.0):
     """Build a KernelService with all heavy dependencies stubbed."""
     with patch.dict(os.environ, {"KERNEL_LATENCY_SLO_MS": str(threshold_ms)}):
-        with patch("kernel.service.BaseService.__init__", lambda self, *a, **kw: None), \
-             patch("kernel.service.KernelEvaluator"), \
-             patch("kernel.service.PolicyRollbackManager"), \
-             patch("kernel.service.DecisionSequenceTracker"):
+        with (
+            patch("kernel.service.BaseService.__init__", lambda self, *a, **kw: None),
+            patch("kernel.service.KernelEvaluator"),
+            patch("kernel.service.PolicyRollbackManager"),
+            patch("kernel.service.DecisionSequenceTracker"),
+        ):
             from kernel.service import _LATENCY_WINDOW, KernelService
+
             svc = KernelService.__new__(KernelService)
             svc.logger = MagicMock()
             svc.event_bus = MagicMock()
@@ -101,7 +106,7 @@ def _make_service(threshold_ms: float = 50.0):
             svc._SLO_P99_MS = threshold_ms
             svc._latency_samples = deque(maxlen=_LATENCY_WINDOW)
             svc._slo_breach_count = 0
-            svc._last_slo_breach_at = 0.0
+            svc._last_slo_breach_at = float("-inf")
             return svc
 
 
