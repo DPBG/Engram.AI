@@ -111,7 +111,7 @@ class Database:
         conn = self._connection
         if conn is None:
             raise RuntimeError("Database not initialized")
-        return await conn.execute(sql, params)
+        return await conn.execute(sql, params)  # type: ignore[union-attr]
 
     async def executemany(
         self,
@@ -122,7 +122,7 @@ class Database:
         conn = self._connection
         if conn is None:
             raise RuntimeError("Database not initialized")
-        return await conn.executemany(sql, params_list)
+        return await conn.executemany(sql, params_list)  # type: ignore[union-attr]
 
     async def fetchone(
         self,
