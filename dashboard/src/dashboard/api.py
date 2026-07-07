@@ -703,7 +703,7 @@ class DashboardService:
             return {
                 "metrics": _kernel_metrics,
                 "slo_breaches": list(_kernel_slo_breaches),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
         # ── API: Benchmark Results ─────────────────────────────────────

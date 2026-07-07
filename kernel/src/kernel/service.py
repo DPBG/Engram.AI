@@ -743,40 +743,6 @@ class KernelService(BaseService):
         finally:
             self._record_latency(time.perf_counter() - _t0)
 
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status requests."""
-        try:
-            status = {
-                "status": "running",
-                "body_profile": self._body_profile,
-                "has_rollback": self._rollback.has_rollback,
-                "deny_sequences": self._deny_tracker.get_state(),
-                "metrics": {
-                    "allow_count": self._allow_count,
-                    "transform_count": self._transform_count,
-                    "deny_count": self._deny_count,
-                    "defer_count": self._defer_count,
-                },
-                "latency_slo": self._compute_latency_stats(),
-            }
-            # Always publish a decision so the meta-programmer's Future doesn't hang.
-            # Fail-safe: DENY on internal errors.
-            try:
-                deny = KernelDecision(
-                    trace_id=trace_id,
-                    type=DecisionType.DENY,
-                    reason=f"Kernel internal error: {e}",
-                    risk_score=1.0,
-                )
-                await self._log_decision(trace_id, "code", source, deny)
-                await self.event_bus.publish(
-                    code_decision_subject(trace_id),
-                    self._signed_code_decision(deny),
-                )
-                self._deny_count += 1
-            except Exception:
-                pass  # best-effort — caller will timeout
-
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
         status = {
@@ -790,6 +756,7 @@ class KernelService(BaseService):
                 "deny_count": self._deny_count,
                 "defer_count": self._defer_count,
             },
+            "latency_slo": self._compute_latency_stats(),
         }
         if msg.reply:
             await msg.respond(serialize_message(status))
