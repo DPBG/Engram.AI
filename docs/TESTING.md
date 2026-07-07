@@ -79,6 +79,10 @@ merges — the `Tests` workflow is the gate):
   same hooks locally with `pre-commit install`.
 - **Dependabot** (`.github/dependabot.yml`) — weekly grouped dependency and
   Actions update PRs against `dev`.
+- **PR Labeler** (`.github/workflows/label.yml`) — auto-labels PRs from the
+  paths they touch (`neuromorphic`, `safety-layer`, `tests`, …) and the branch
+  prefix (`feat/` → `enhancement`, `fix/` → `bug`); rules in
+  `.github/labeler.yml`.
 
 ## Writing new tests
 

@@ -1,0 +1,83 @@
+# Config for the PR auto-labeler (.github/workflows/label.yml).
+# Two kinds of rules: component labels from the paths a PR touches, and
+# type labels from the branch prefix (CONTRIBUTING.md branch naming).
+
+# ── Component labels (by changed paths) ────────────────────────────────────
+neuromorphic:
+  - changed-files:
+      - any-glob-to-any-file: ["neuromorphic/**"]
+
+sdk:
+  - changed-files:
+      - any-glob-to-any-file: ["sdk/**"]
+
+safety-layer:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "kernel/**"
+          - "safety-supervisor/**"
+          - "beliefs/**"
+          - "meta-programmer/**"
+          - "overrides/**"
+          - "sandbox/**"
+
+dashboard:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "dashboard/**"
+          - "brain-viz/**"
+
+services:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "coordinator/**"
+          - "planner/**"
+          - "memory/**"
+          - "cache/**"
+          - "external-api/**"
+          - "sensory-gateway/**"
+          - "launcher/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**"]
+
+deploy:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "deploy/**"
+          - "docker-compose.yml"
+          - "Dockerfile"
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/tests/**"
+          - "test-runner/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "constraints.txt"
+          - "**/pyproject.toml"
+          - "**/requirements*.txt"
+          - "**/uv.lock"
+
+# ── Type labels (by branch prefix — CONTRIBUTING.md naming) ────────────────
+enhancement:
+  - head-branch: ["^feat/"]
+
+bug:
+  - head-branch: ["^fix/"]
+
+documentation:
+  - head-branch: ["^docs/"]
+
+refactor:
+  - head-branch: ["^refactor/", "^chore/"]

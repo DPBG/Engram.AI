@@ -1,0 +1,37 @@
+name: PR Labeler
+
+# Auto-labels PRs from the paths they touch and their branch prefix, per
+# .github/labeler.yml — so reviewers can triage at a glance and safety-layer
+# changes are visibly flagged.
+#
+# Trigger note: pull_request_target (not pull_request) so fork PRs can be
+# labeled too — labeling needs a write token, which fork pull_request runs
+# don't get. This is the labeler's documented safe usage: it never checks out
+# or executes PR code, it only reads the changed-file list via the API.
+# Like all pull_request_target workflows, it runs from the default branch's
+# definition, so it takes effect once merged to dev.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Label PR by paths and branch prefix
+        uses: actions/labeler@v6
+        with:
+          configuration-path: .github/labeler.yml
+          # Keep labels in sync as the PR evolves: if a later push no longer
+          # touches a path, its label is removed rather than left stale.
+          sync-labels: true
