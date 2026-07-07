@@ -9,22 +9,22 @@ import asyncio
 import json
 import math
 import os
-import uuid
-from typing import Any
-
-from activelearning import BaseService, sign_decision, verify_operator_action
 import time
 from typing import Any
 
-from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
+from activelearning import (
+    BaseService,
+    current_timestamp,
+    generate_trace_id,
+    sign_decision,
+    verify_operator_action,
+)
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import (
     Subjects,
     code_decision_subject,
     decision_subject,
 )
-
-from kernel.evaluator import DecisionType, KernelDecision, KernelEvaluator, RiskAnalysis
 from nats.aio.msg import Msg
 
 from kernel.evaluator import (
@@ -255,17 +255,6 @@ class KernelService(BaseService):
             await self.event_bus.publish(
                 Subjects.PLANNER_MODE, {"mode": "SAFE_HALT", "reason": reason}
             )
-            await self.event_bus.publish(
-                Subjects.POLICY_RESTRICT,
-                {
-                    "motor_limits": {
-                        ch: {"max_intensity": 0.0}
-                        for ch in ("locomotion", "manipulation", "head", "speech")
-                    },
-                    "reason": f"SAFE_HALT: {reason}",
-                    "operator_id": operator,
-                },
-            )
             restrict_data = {
                 "motor_limits": {
                     ch: {"max_intensity": 0.0}
@@ -324,10 +313,6 @@ class KernelService(BaseService):
         await self.event_bus.publish(
             Subjects.SAFETY_HALT_STATUS,
             {"halted": False, "operator_id": operator},
-            {
-                "halted": False,
-                "operator_id": operator,
-            },
         )
 
     async def _handle_load_profile(self, data: dict) -> None:
@@ -521,7 +506,6 @@ class KernelService(BaseService):
                     "reason": "No body profile loaded — cannot apply restrictions",
                 },
             )
-            return
             return False
 
         try:
