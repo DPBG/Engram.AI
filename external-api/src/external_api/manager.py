@@ -15,6 +15,8 @@ from typing import Any
 
 from activelearning import EventBus, current_timestamp, generate_trace_id
 
+from external_api.conflict_detection import detect_knowledge_conflict
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,9 +25,10 @@ class ExternalAPIManager:
     Manages external API queries with safety checks.
     """
 
-    def __init__(self, event_bus: EventBus, db: Any):
+    def __init__(self, event_bus: EventBus, db: Any, embedding_service: Any | None = None):
         self.event_bus = event_bus
         self.db = db
+        self._embedding_service = embedding_service
 
         # API keys from environment
         self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -104,7 +107,7 @@ class ExternalAPIManager:
             # Step 3: Compare with local knowledge
             conflict = False
             if local_knowledge:
-                conflict = self._detect_conflict(response, local_knowledge)
+                conflict = await self._detect_conflict(response, local_knowledge)
 
             # Step 4: Log query
             await self._log_query(query, response, conflict)
@@ -199,27 +202,13 @@ class ExternalAPIManager:
             logger.error(f"OpenAI API error: {e}")
             raise
 
-    def _detect_conflict(self, external_response: str, local_knowledge: dict) -> bool:
-        """
-        Detect if external response conflicts with local knowledge.
-
-        Simple heuristic: check if responses are similar.
-        A real implementation would use semantic similarity.
-        """
-        local_text = str(local_knowledge.get("description", ""))
-
-        # Simple check: if responses are very different, flag as conflict
-        # TODO: Use semantic similarity instead
-        if len(local_text) > 0 and len(external_response) > 0:
-            # If no overlap in major words, likely a conflict
-            local_words = set(local_text.lower().split())
-            external_words = set(external_response.lower().split())
-            overlap = local_words & external_words
-
-            if len(overlap) < min(len(local_words), len(external_words)) * 0.3:
-                return True
-
-        return False
+    async def _detect_conflict(self, external_response: str, local_knowledge: dict) -> bool:
+        """Detect if external response conflicts with local knowledge."""
+        return await detect_knowledge_conflict(
+            external_response,
+            local_knowledge,
+            embedding_service=self._embedding_service,
+        )
 
     async def _log_query(self, query: str, response: str, conflict: bool) -> None:
         """Log external API query."""

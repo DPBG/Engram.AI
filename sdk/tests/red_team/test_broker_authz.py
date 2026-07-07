@@ -27,6 +27,8 @@ import nats.errors
 import pytest
 
 from .conftest import (
+    DASHBOARD_PASS,
+    DASHBOARD_USER,
     KERNEL_PASS,
     KERNEL_USER,
     META_PASS,
@@ -48,6 +50,10 @@ PRIVILEGED_SUBJECTS = [
 NON_KERNEL_IDENTITIES = [
     pytest.param(PLANNER_USER, PLANNER_PASS, id="planner"),
     pytest.param(META_USER, META_PASS, id="meta_programmer"),
+    # Dashboard has operator-level privileges (safety.halt/resume, motor guidance,
+    # observations) but must never publish to Kernel-only subjects — the
+    # "confused deputy" threat (issue #189).
+    pytest.param(DASHBOARD_USER, DASHBOARD_PASS, id="dashboard"),
 ]
 
 
@@ -127,8 +133,8 @@ async def test_non_kernel_publish_privileged_is_broker_rejected(
 ) -> None:
     """Broker must refuse every non-Kernel identity publishing on privileged subjects.
 
-    Covers all combinations of (planner, meta_programmer) × (decision.>,
-    code.decision.>, policy.*, cognitive.response.validated) — 10 cases total.
+    Covers all combinations of (planner, meta_programmer, dashboard) × (decision.>,
+    code.decision.>, policy.*, cognitive.response.validated) — 15 cases total.
     A single failure means the broker's allowlist has a gap.
     """
     async with _connect(authz_nats_url, user, password) as (nc, violations):
