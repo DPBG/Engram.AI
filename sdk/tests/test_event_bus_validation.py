@@ -1,11 +1,16 @@
-"""Tests for validate-on-receive in the EventBus subscribe wrapper."""
+"""Tests for validate-on-receive in the EventBus subscribe wrapper.
+
+Uses the shared session fixtures from conftest.py (``nats_url`` starts an
+embedded nats-server on an ephemeral port; ``event_bus`` and
+``wait_for_message`` build on it). This module previously shadowed those
+fixtures with a hardcoded ``nats://localhost:4222`` default — with no broker
+on 4222, every test here burned its full per-test timeout in fixture setup.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
-from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 import pytest
@@ -13,53 +18,6 @@ from nats.aio.msg import Msg
 
 from activelearning.nats_client import EventBus
 from activelearning.subjects import Subjects
-
-
-async def _can_connect(nats_url: str) -> bool:
-    try:
-        import nats
-
-        nc = await nats.connect(nats_url, connect_timeout=1)
-        await nc.close()
-        return True
-    except Exception:
-        return False
-
-
-@pytest.fixture
-def nats_url() -> str:
-    return os.environ.get("NATS_URL", "nats://localhost:4222")
-
-
-@pytest.fixture
-async def event_bus(nats_url: str) -> AsyncGenerator[EventBus, None]:
-    if not await _can_connect(nats_url):
-        pytest.skip("NATS server not available")
-
-    bus = EventBus(nats_url=nats_url, name=f"validation-test-{uuid.uuid4().hex[:8]}")
-    await bus.connect()
-    yield bus
-    await bus.close()
-
-
-@pytest.fixture
-def wait_for_message() -> Callable[
-    [Callable[[], bool], float, float],
-    Coroutine[Any, Any, None],
-]:
-    async def _wait(
-        predicate: Callable[[], bool],
-        timeout: float = 2.0,
-        interval: float = 0.05,
-    ) -> None:
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
-            if predicate():
-                return
-            await asyncio.sleep(interval)
-        raise AssertionError("timed out waiting for condition")
-
-    return _wait
 
 
 async def _wait_without_handler_call(

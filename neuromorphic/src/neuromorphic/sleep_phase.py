@@ -21,8 +21,9 @@ Integration in `service.py` calls `maybe_tick` once per brain step.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Protocol
 
 import numpy as np
 
@@ -75,6 +76,7 @@ class SleepPhaseManager:
         if self._clock is not None:
             return self._clock()
         import time
+
         return time.monotonic()
 
     @property
@@ -125,9 +127,7 @@ class SleepPhaseManager:
         if boost > 1.5:
             # Safety net: refuse to apply boost factors that exceed the
             # Phase 2.1.3 inf-overflow safety budget.
-            raise ValueError(
-                f"Sleep replay boost_factor {boost} exceeds hard cap 1.5"
-            )
+            raise ValueError(f"Sleep replay boost_factor {boost} exceeds hard cap 1.5")
         diagnostics: dict[str, float] = {}
         for idx, grp in enumerate(synapse_groups):
             before = grp.weights.copy() if hasattr(grp.weights, "copy") else None

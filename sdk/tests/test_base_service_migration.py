@@ -24,6 +24,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from activelearning.base_service import BaseService
+from activelearning.messages import ObservationMessage
 from activelearning.nats_client import EventBus, serialize_message
 from activelearning.signing import sign_decision
 
@@ -48,7 +49,11 @@ class MinimalService(BaseService):
 
     async def _setup(self) -> None:
         self.setup_called = True
-        await self.event_bus.subscribe("test.topic", self._handle_topic)
+        # 'test.topic' is not in SUBJECT_SCHEMAS, so pass the wire model
+        # explicitly — receive-side validation only runs with a model resolved.
+        await self.event_bus.subscribe(
+            "test.topic", self._handle_topic, message_model=ObservationMessage
+        )
         await self.event_bus.subscribe("test.status", self._handle_status, is_request_handler=True)
 
     async def _cleanup(self) -> None:
@@ -295,11 +300,15 @@ async def test_request_reply_validation_error_returns_error_dict(
     """A request with invalid payload causes an error reply, not a timeout."""
     from activelearning.messages import ActionProposalMessage
 
-    # Register a handler for a modelled subject so validation kicks in.
+    # Register a handler with an explicit wire model so validation kicks in.
+    # Deliberately NOT 'proposal.new': that subject is captured by the
+    # SAFETY_CRITICAL JetStream stream, and a core-NATS request on a
+    # stream-captured subject gets answered by the server's pub-ack
+    # ({'stream': ..., 'seq': ...}) before the service can reply.
     class ProposalService(MinimalService):
         async def _setup(self) -> None:
             await self.event_bus.subscribe(
-                "proposal.new",
+                "test.rpc.proposal",
                 self._handle_proposal,
                 is_request_handler=True,
                 message_model=ActionProposalMessage,
@@ -314,7 +323,7 @@ async def test_request_reply_validation_error_returns_error_dict(
     try:
         # Missing required 'trace_id' — validation fails.
         response = await probe_bus.request(
-            "proposal.new", {"action": {}, "provenance": "test"}, timeout=5.0
+            "test.rpc.proposal", {"action": {}, "provenance": "test"}, timeout=5.0
         )
         assert response.get("type") == "error"
         assert response.get("error") == "validation_failed"

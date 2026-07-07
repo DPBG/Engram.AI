@@ -3,8 +3,8 @@
 import json
 
 import pytest
-
 from activelearning.database import Database
+
 from memory.service import MemoryService
 
 
@@ -19,8 +19,7 @@ async def tag_db(tmp_path):
     db = Database(str(tmp_path / "memory-tags.db"))
     await db.initialize()
     await db.execute("DROP TABLE IF EXISTS memory_episodes")
-    await db.execute(
-        """
+    await db.execute("""
         CREATE TABLE memory_episodes (
             id TEXT PRIMARY KEY,
             trace_id TEXT NOT NULL,
@@ -29,8 +28,7 @@ async def tag_db(tmp_path):
             utility_score REAL DEFAULT 0.0,
             data TEXT
         )
-        """
-    )
+        """)
     await db.commit()
     return db
 

@@ -19,7 +19,8 @@ synapse group").  No mechanism is disabled; LTP still runs.
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 
 # Lazy import to avoid circulars; matches watchdog.WatchdogAlert at runtime.
@@ -88,9 +89,7 @@ class StdpBiasAutoTuner:
         _abs_cap_ceiling = 2.0
         for k, v in self._per_group_cap.items():
             if not 0.0 < v <= _abs_cap_ceiling:
-                raise ValueError(
-                    f"per_group_cap[{k!r}]={v} must be in (0, {_abs_cap_ceiling}]"
-                )
+                raise ValueError(f"per_group_cap[{k!r}]={v} must be in (0, {_abs_cap_ceiling}]")
 
         self._warning_history: dict[str, deque[int]] = {}
         self._last_quiet_check: dict[str, int] = {}
@@ -192,18 +191,14 @@ class StdpBiasAutoTuner:
         post-restart behavior continues smoothly.
         """
         return {
-            "warning_history": {
-                g: list(h) for g, h in self._warning_history.items()
-            },
+            "warning_history": {g: list(h) for g, h in self._warning_history.items()},
             "last_quiet_check": dict(self._last_quiet_check),
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore tuner state from persistence."""
         hist_state = state.get("warning_history", {}) or {}
-        self._warning_history = {
-            g: deque(int(s) for s in v) for g, v in hist_state.items()
-        }
+        self._warning_history = {g: deque(int(s) for s in v) for g, v in hist_state.items()}
         self._last_quiet_check = {
             g: int(s) for g, s in (state.get("last_quiet_check", {}) or {}).items()
         }

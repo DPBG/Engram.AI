@@ -28,7 +28,10 @@ async def _can_connect(nats_url: str) -> bool:
     try:
         import nats
 
-        nc = await nats.connect(nats_url, connect_timeout=1)
+        # allow_reconnect=False: fail in ~1s when the broker is unreachable.
+        # With reconnects on, nats-py cycles retries for minutes, which turns a
+        # "server not available" skip into a per-test timeout burn.
+        nc = await nats.connect(nats_url, connect_timeout=1, allow_reconnect=False)
         await nc.close()
         return True
     except Exception:

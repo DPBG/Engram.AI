@@ -46,7 +46,6 @@ import numpy as np
 
 from .speech_synth import mel_filterbank_energies
 
-
 logger = logging.getLogger(__name__)
 
 

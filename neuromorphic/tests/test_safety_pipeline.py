@@ -279,7 +279,13 @@ class TestKernelNormViolations:
             "trace_id": "test-123",
             "action": {"type": "motor_command", "channel": "locomotion", "intensity": 0.5},
         }
-        decision = ev.evaluate_action_proposal(proposal, norm_violations=[])
+        # With no risk analysis the Kernel fails closed (DENY); supply a
+        # low-risk analysis so the "no violations -> ALLOW" path is exercised.
+        decision = ev.evaluate_action_proposal(
+            proposal,
+            risk_analysis=types.SimpleNamespace(risk_score=0.0, flags=[]),
+            norm_violations=[],
+        )
         assert decision.type.value == "ALLOW"
 
     def test_norm_violation_boosts_risk(self):
@@ -294,7 +300,13 @@ class TestKernelNormViolations:
             {"norm_id": "norm.force_limit", "content": "force limit", "risk_boost": 0.3},
             {"norm_id": "norm.gradual_motor", "content": "gradual", "risk_boost": 0.15},
         ]
-        decision = ev.evaluate_action_proposal(proposal, norm_violations=violations)
+        # Base risk 0.0 comes from a low-risk analysis; without one the Kernel
+        # fails closed to max risk and the boost math below would not hold.
+        decision = ev.evaluate_action_proposal(
+            proposal,
+            risk_analysis=types.SimpleNamespace(risk_score=0.0, flags=[]),
+            norm_violations=violations,
+        )
 
         # 0.0 base + 0.3 + 0.15 = 0.45, which is below defer threshold (0.5)
         # But risk_score should reflect the boost

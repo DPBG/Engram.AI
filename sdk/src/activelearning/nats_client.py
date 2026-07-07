@@ -399,6 +399,10 @@ class EventBus:
 
         async def _js_message_callback(msg: Msg) -> None:
             # Structurally bad messages can never succeed on retry → poison now.
+            # This block only parses and validates — the handler runs exactly
+            # once, in the delivery block below. (A duplicated handler+ack here
+            # used to double-invoke every JS handler and double-ack the message,
+            # surfacing as MsgAlreadyAckdError and spurious redeliveries.)
             try:
                 data = deserialize_message(msg.data)
                 if not isinstance(data, dict):
@@ -407,8 +411,6 @@ class EventBus:
                         f"expected JSON object, got {type(data).__name__}",
                     )
                 data = validate_payload(subject, data, wire_model)
-                await handler(data)
-                await msg.ack()
             except MessageValidationError as e:
                 logger.error("Poisoning unprocessable message on %s: %s", subject, e)
                 await self._route_to_poison(subject, msg, f"validation_error: {e}")

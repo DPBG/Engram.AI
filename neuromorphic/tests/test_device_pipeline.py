@@ -73,6 +73,7 @@ class _FakeRiskAnalysis:
 
 class _FakeActionProposal:
     """Minimal ActionProposal stub — satisfies lazy imports in motor_feedback_adapter."""
+
     def __init__(self, trace_id: str = "", provenance: str = "", action=None, **kw):
         self.trace_id = trace_id
         self.provenance = provenance
@@ -225,7 +226,12 @@ class TestKernelEnvelopeExtension(unittest.TestCase):
             "trace_id": "test-123",
             "action": {"intensity": 0.5, "channel": "locomotion"},
         }
-        decision = self.evaluator.evaluate_action_proposal(proposal)
+        # The Kernel fails closed (DENY) when no Safety-Supervisor risk analysis
+        # is supplied (fix/kernel-fail-closed-missing-safety-analysis). Provide a
+        # low-risk analysis so this exercises the intended ALLOW path.
+        decision = self.evaluator.evaluate_action_proposal(
+            proposal, risk_analysis=_FakeRiskAnalysis(risk_score=0.0)
+        )
         assert decision.type.value == "ALLOW"
 
     def test_full_proposal_deny_bad_channel(self):

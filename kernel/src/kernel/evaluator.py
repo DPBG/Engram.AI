@@ -150,7 +150,7 @@ class KernelEvaluator:
 
     def _risk_from_analysis(
         self,
-        risk_analysis: Optional[RiskAnalysis],
+        risk_analysis: RiskAnalysis | None,
     ) -> tuple[float, list[str]]:
         """Map Safety Supervisor output to a clamped score and flags.
 
