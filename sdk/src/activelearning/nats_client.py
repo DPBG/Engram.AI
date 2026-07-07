@@ -21,6 +21,7 @@ from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
 
+from activelearning.core import current_timestamp
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -593,6 +594,22 @@ class EventBus:
                         subject,
                     )
                     await msg.ack()  # remove from stream; retrying won't fix a bad sig
+                    return
+                # Expiry is itself a signed field (activelearning.signing.
+                # SIGNED_FIELDS), so a valid signature alone isn't enough — a
+                # captured, still-validly-signed old decision must not be
+                # replayable past its TTL. Reject at accept time, same as a
+                # bad signature: ignore and keep waiting for the real thing.
+                expires_at = data.get("expires_at")
+                if expires_at is not None and current_timestamp() > expires_at:
+                    logger.error(
+                        "Rejected decision on %s: expired at %s (now %s) — "
+                        "possible replay of a stale decision.",
+                        subject,
+                        expires_at,
+                        current_timestamp(),
+                    )
+                    await msg.ack()  # remove from stream; it will never become valid
                     return
                 result = data
                 decision_received.set()

@@ -19,6 +19,21 @@ Design notes
   and verification passes (legacy/dev mode) — but a one-time warning is logged
   so operators know the gate is unauthenticated.
 - ``hmac.compare_digest`` is used for constant-time comparison.
+
+Replay resistance (issue #190)
+-------------------------------
+A valid signature alone only proves a decision was issued by the Kernel at
+*some* point — it does not prove it is still current. Because ``expires_at``
+is one of the signed fields, an attacker cannot extend a captured decision's
+lifetime without invalidating its signature, but nothing stopped a captured,
+still-validly-signed old decision (e.g. a stale ``ALLOW``) from being
+*replayed* as-is. ``EventBus.wait_for_decision`` (``nats_client.py``) closes
+this by checking ``expires_at`` against the current time immediately after
+signature verification and before accepting the decision — an expired
+decision is rejected exactly like a forged one (logged and ignored; the
+waiter keeps waiting and ultimately times out, i.e. fails closed). A
+decision with no ``expires_at`` set never expires, matching
+``KernelDecision.is_expired()``'s semantics in ``core.py``.
 """
 
 from __future__ import annotations
