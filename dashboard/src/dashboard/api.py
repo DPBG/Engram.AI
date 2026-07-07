@@ -71,6 +71,10 @@ _video_sessions: dict[str, dict] = {}  # session_id -> status dict
 _watchdog_status: dict[str, Any] = {}
 _deny_escalations: deque = deque(maxlen=50)
 
+# Kernel decision-latency metrics (updated via NATS)
+_kernel_metrics: dict[str, Any] = {}
+_kernel_slo_breaches: deque = deque(maxlen=50)
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # SKILL REGISTRY — abstracted capabilities
@@ -760,6 +764,16 @@ class DashboardService:
         @self.app.get("/api/neuromorphic")
         async def get_neuromorphic():
             return {"neuromorphic": _neuro_metrics, "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        # ── API: Kernel Metrics ───────────────────────────────────────
+
+        @self.app.get("/api/kernel/metrics")
+        async def get_kernel_metrics():
+            return {
+                "metrics": _kernel_metrics,
+                "slo_breaches": list(_kernel_slo_breaches),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
 
         # ── API: Benchmark Results ─────────────────────────────────────
 
@@ -1622,6 +1636,28 @@ class DashboardService:
                 except Exception as e:
                     self.logger.error(f"Error handling deny escalation: {e}")
 
+            async def handle_kernel_metrics(msg):
+                global _kernel_metrics
+                try:
+                    data = json.loads(msg.data.decode())
+                    _kernel_metrics = data
+                    await self._broadcast({"type": "kernel_metrics", "data": data})
+                except Exception as e:
+                    self.logger.error(f"Error handling kernel.metrics: {e}")
+
+            async def handle_kernel_slo_breach(msg):
+                try:
+                    data = json.loads(msg.data.decode())
+                    _kernel_slo_breaches.append(data)
+                    self.logger.warning(
+                        "Kernel SLO breach: p99=%.1fms > threshold=%.1fms",
+                        data.get("p99_ms", 0),
+                        data.get("threshold_ms", 0),
+                    )
+                    await self._broadcast({"type": "kernel_slo_breach", "data": data})
+                except Exception as e:
+                    self.logger.error(f"Error handling kernel.slo.breach: {e}")
+
             async def handle_speech_execute(msg):
                 """Log speech execute events for dashboard display.
 
@@ -1654,6 +1690,8 @@ class DashboardService:
             _dedicated_subjects.add("speech.execute")
             _dedicated_subjects.add("observation.visual.body")
             _dedicated_subjects.add("safety.halt.status")
+            _dedicated_subjects.add("kernel.metrics")
+            _dedicated_subjects.add("kernel.slo.breach")
 
             await nc.subscribe(">", cb=handle_msg)
             await nc.subscribe("heartbeat.*", cb=handle_heartbeat)
@@ -1669,6 +1707,8 @@ class DashboardService:
             await nc.subscribe("speech.execute", cb=handle_speech_execute)
             await nc.subscribe("observation.visual.body", cb=handle_visual_body)
             await nc.subscribe("safety.halt.status", cb=handle_safe_halt_status)
+            await nc.subscribe("kernel.metrics", cb=handle_kernel_metrics)
+            await nc.subscribe("kernel.slo.breach", cb=handle_kernel_slo_breach)
         except Exception as e:
             self.logger.warning(f"NATS failed (non-fatal): {e}")
             self._nats_connected = False

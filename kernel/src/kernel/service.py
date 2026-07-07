@@ -8,7 +8,9 @@ Body profiles are loaded from BODY_PROFILE env var on startup.
 import asyncio
 import json
 import os
+import time
 import uuid
+from collections import deque
 from typing import Any, Optional
 
 from activelearning import BaseService, sign_decision
@@ -25,6 +27,37 @@ from kernel.policy import (
     validate_cognitive_response,
     validate_policy_update,
 )
+
+
+# ── Decision-latency SLO ─────────────────────────────────────────────────────
+# Rolling window size for percentile computation.
+_LATENCY_WINDOW = 200
+# Minimum samples required before the SLO check activates (avoids false
+# alerts during a cold-start burst where the first few calls may be slow).
+_SLO_MIN_SAMPLES = 10
+# Minimum seconds between successive breach alerts on the same breach event
+# to avoid flooding the NATS bus.
+_SLO_ALERT_COOLDOWN_S = 60.0
+# Periodic interval at which kernel.metrics is broadcast (seconds).
+_METRICS_BROADCAST_INTERVAL_S = 30.0
+
+
+def _compute_percentiles(samples: list) -> dict:
+    """Compute p50, p99, and max from a list of latency samples (milliseconds).
+
+    Returns a dict with ``p50_ms``, ``p99_ms``, ``max_ms``, and ``count``.
+    All latency values are ``None`` when *samples* is empty.
+    """
+    if not samples:
+        return {"p50_ms": None, "p99_ms": None, "max_ms": None, "count": 0}
+    s = sorted(samples)
+    n = len(s)
+    return {
+        "p50_ms": round(s[int(0.50 * n)], 2),
+        "p99_ms": round(s[min(int(0.99 * n), n - 1)], 2),
+        "max_ms": round(s[-1], 2),
+        "count": n,
+    }
 
 
 class KernelService(BaseService):
@@ -54,6 +87,13 @@ class KernelService(BaseService):
 
         # Load body profile from env if set
         self._load_body_profile()
+
+        # Decision-latency SLO state
+        self._SLO_P99_MS: float = float(os.environ.get("KERNEL_LATENCY_SLO_MS", "50"))
+        self._latency_samples: deque = deque(maxlen=_LATENCY_WINDOW)
+        self._slo_breach_count: int = 0
+        self._last_slo_breach_at: float = 0.0
+        self._metrics_task: Optional[asyncio.Task] = None
 
     def _load_body_profile(self) -> None:
         """Load body profile from BODY_PROFILE env var (if set).
@@ -122,11 +162,16 @@ class KernelService(BaseService):
         # SAFE_HALT kill switch (Phase 1.9)
         await self.event_bus.subscribe(Subjects.SAFETY_HALT, self._handle_safety_halt)
         await self.event_bus.subscribe(Subjects.SAFETY_RESUME, self._handle_safety_resume)
+        self._metrics_task = asyncio.create_task(self._broadcast_kernel_metrics())
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
-        # No kernel-specific resources to cleanup
-        pass
+        if self._metrics_task is not None:
+            self._metrics_task.cancel()
+            try:
+                await self._metrics_task
+            except asyncio.CancelledError:
+                pass
 
     async def _handle_safety_halt(self, data: dict) -> None:
         """Engage the system-wide kill switch (Phase 1.9).
@@ -374,6 +419,7 @@ class KernelService(BaseService):
         else:
             proposal_type = "action"
 
+        _t0 = time.perf_counter()
         try:
             self.logger.debug(f"Evaluating {proposal_type} proposal: {trace_id}")
 
@@ -438,9 +484,12 @@ class KernelService(BaseService):
                 self._deny_count += 1
             except Exception:
                 pass  # best-effort — caller will timeout
+        finally:
+            self._record_latency(time.perf_counter() - _t0)
 
     async def _handle_code_proposal(self, data: dict) -> None:
         """Handle code proposals from Meta-Programmer."""
+        _t0 = time.perf_counter()
         try:
             proposal = data
             trace_id = proposal.get("trace_id", "")
@@ -483,6 +532,8 @@ class KernelService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
+        finally:
+            self._record_latency(time.perf_counter() - _t0)
 
     async def _handle_status(self, data: dict) -> None:
         """Handle status requests."""
@@ -498,6 +549,7 @@ class KernelService(BaseService):
                     "deny_count": self._deny_count,
                     "defer_count": self._defer_count,
                 },
+                "latency_slo": self._compute_latency_stats(),
             }
 
             # Publish status response
@@ -742,6 +794,71 @@ class KernelService(BaseService):
             self._deny_count += 1
         elif decision_type == DecisionType.DEFER:
             self._defer_count += 1
+
+    def _record_latency(self, elapsed_s: float) -> None:
+        """Record one decision latency sample and fire an SLO breach alert when needed."""
+        elapsed_ms = elapsed_s * 1000.0
+        self._latency_samples.append(elapsed_ms)
+
+        if len(self._latency_samples) < _SLO_MIN_SAMPLES:
+            return
+
+        stats = _compute_percentiles(list(self._latency_samples))
+        p99 = stats["p99_ms"]
+        if p99 is None or p99 <= self._SLO_P99_MS:
+            return
+
+        # Throttle breach alerts.
+        now = time.monotonic()
+        if now - self._last_slo_breach_at < _SLO_ALERT_COOLDOWN_S:
+            return
+
+        self._last_slo_breach_at = now
+        self._slo_breach_count += 1
+        asyncio.create_task(
+            self.event_bus.publish(
+                Subjects.KERNEL_SLO_BREACH,
+                {
+                    "p99_ms": p99,
+                    "threshold_ms": self._SLO_P99_MS,
+                    "p50_ms": stats["p50_ms"],
+                    "max_ms": stats["max_ms"],
+                    "sample_count": stats["count"],
+                    "breach_count": self._slo_breach_count,
+                },
+            )
+        )
+        self.logger.warning(
+            "Decision-latency SLO breach: p99=%.1fms > threshold=%.1fms",
+            p99,
+            self._SLO_P99_MS,
+        )
+
+    def _compute_latency_stats(self) -> dict:
+        """Return current latency percentiles plus SLO metadata."""
+        stats = _compute_percentiles(list(self._latency_samples))
+        stats["threshold_ms"] = self._SLO_P99_MS
+        stats["breach_count"] = self._slo_breach_count
+        return stats
+
+    async def _broadcast_kernel_metrics(self) -> None:
+        """Periodically publish kernel.metrics to the NATS bus."""
+        while True:
+            try:
+                await asyncio.sleep(_METRICS_BROADCAST_INTERVAL_S)
+                payload = {
+                    "allow_count": self._allow_count,
+                    "transform_count": self._transform_count,
+                    "deny_count": self._deny_count,
+                    "defer_count": self._defer_count,
+                    "body_profile": self._body_profile,
+                    "latency_slo": self._compute_latency_stats(),
+                }
+                await self.event_bus.publish(Subjects.KERNEL_METRICS, payload)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.warning("Failed to broadcast kernel metrics: %s", e)
 
     async def _auto_disable_channel(self, channel: str) -> None:
         """Auto-disable a motor channel after too many consecutive DENYs.
