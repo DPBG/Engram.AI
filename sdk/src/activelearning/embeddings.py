@@ -198,7 +198,9 @@ class EmbeddingService(_OllamaSession):
                 if not is_zero_vector(embedding):
                     self._add_to_cache(self._cache_key(text), embedding)
 
-        return [embedding if embedding is not None else self._zero_vector() for embedding in results]
+        return [
+            embedding if embedding is not None else self._zero_vector() for embedding in results
+        ]
 
     def _zero_vector(self) -> list[float]:
         """Sentinel vector returned when embedding generation fails."""

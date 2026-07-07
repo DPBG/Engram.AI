@@ -178,9 +178,7 @@ async def test_embed_batch_fetches_uncached_texts_in_single_request():
 
     mock_response = MagicMock()
     mock_response.status = 200
-    mock_response.json = AsyncMock(
-        return_value={"embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]}
-    )
+    mock_response.json = AsyncMock(return_value={"embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]})
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
     mock_response.__aexit__ = AsyncMock(return_value=False)
 
