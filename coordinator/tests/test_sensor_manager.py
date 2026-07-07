@@ -7,9 +7,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-_SM_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "coordinator", "sensor_manager.py"
-)
+_SM_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "coordinator", "sensor_manager.py")
 _spec = importlib.util.spec_from_file_location("coord_sensor_manager", _SM_PATH)
 sm = importlib.util.module_from_spec(_spec)
 sys.modules["coord_sensor_manager"] = sm
@@ -24,12 +22,12 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _fake_serial_modules(*, ports: list[str] | None = None, serial_instance: MagicMock | None = None):
+def _fake_serial_modules(
+    *, ports: list[str] | None = None, serial_instance: MagicMock | None = None
+):
     """Inject a fake pyserial module tree into sys.modules."""
     list_ports = MagicMock()
-    list_ports.comports.return_value = [
-        SimpleNamespace(device=port) for port in (ports or [])
-    ]
+    list_ports.comports.return_value = [SimpleNamespace(device=port) for port in (ports or [])]
     serial_tools = ModuleType("serial.tools")
     serial_tools.list_ports = list_ports  # type: ignore[attr-defined]
 

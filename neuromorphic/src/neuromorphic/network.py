@@ -1048,11 +1048,7 @@ class NeuromorphicNetwork:
         Falls back to serial execution when no thread pool is available or
         when the network is below NEURO_PARALLEL_ROUTE_MIN_NEURONS (ADR 0002).
         """
-        if (
-            len(routes) <= 1
-            or self._stdp_executor is None
-            or not self._parallel_routing_enabled
-        ):
+        if len(routes) <= 1 or self._stdp_executor is None or not self._parallel_routing_enabled:
             # Serial fallback
             for syn_name, pre_sp, pre_sign, target in routes:
                 self._route_current(syn_name, pre_sp, pre_sign, target)

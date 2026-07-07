@@ -116,6 +116,8 @@ class Database:
         Tracks progress with PRAGMA user_version; a fresh database starts at 0
         and the pending statements are no-ops on it.
         """
+        if not self._connection:
+            raise RuntimeError("Database not initialized")
         cursor = await self._connection.execute("PRAGMA user_version")
         row = await cursor.fetchone()
         version = row[0] if row else 0
