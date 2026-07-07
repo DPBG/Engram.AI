@@ -10,9 +10,7 @@ import json
 import math
 import os
 import time
-import uuid
 from collections import deque
-from typing import Any, Optional
 from typing import Any
 
 from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
@@ -152,7 +150,7 @@ class KernelService(BaseService):
         self._latency_samples: deque = deque(maxlen=_LATENCY_WINDOW)
         self._slo_breach_count: int = 0
         self._last_slo_breach_at: float = 0.0
-        self._metrics_task: Optional[asyncio.Task] = None
+        self._metrics_task: asyncio.Task | None = None
 
     def _load_body_profile(self) -> None:
         """Load body profile from BODY_PROFILE env var (if set).
@@ -740,6 +738,23 @@ class KernelService(BaseService):
 
         except Exception as e:
             self.logger.error(f"Error handling code proposal: {e}")
+            # Always publish a decision so the caller's Future doesn't hang.
+            # Fail-safe: DENY on internal errors.
+            try:
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=f"Kernel internal error: {e}",
+                    risk_score=1.0,
+                )
+                await self._log_decision(trace_id, "code", source, deny)
+                await self.event_bus.publish(
+                    code_decision_subject(trace_id),
+                    self._signed_code_decision(deny),
+                )
+                self._deny_count += 1
+            except Exception:
+                pass  # best-effort — caller will timeout
         finally:
             self._record_latency(time.perf_counter() - _t0)
 

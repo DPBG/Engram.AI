@@ -28,13 +28,13 @@ sys.path.insert(
 # The installed activelearning package may lag behind sdk/ source changes.
 # Backfill missing constants so these tests work regardless.
 from activelearning.subjects import Subjects as _Subjects
+
 if not hasattr(_Subjects, "KERNEL_SLO_BREACH"):
     _Subjects.KERNEL_SLO_BREACH = "kernel.slo.breach"
 if not hasattr(_Subjects, "KERNEL_METRICS"):
     _Subjects.KERNEL_METRICS = "kernel.metrics"
 
-from kernel.service import _compute_percentiles, _LATENCY_WINDOW, _SLO_MIN_SAMPLES
-
+from kernel.service import _LATENCY_WINDOW, _SLO_MIN_SAMPLES, _compute_percentiles
 
 # ---------------------------------------------------------------------------
 # Unit tests for _compute_percentiles
@@ -93,7 +93,7 @@ def _make_service(threshold_ms: float = 50.0):
              patch("kernel.service.KernelEvaluator"), \
              patch("kernel.service.PolicyRollbackManager"), \
              patch("kernel.service.DecisionSequenceTracker"):
-            from kernel.service import KernelService, _LATENCY_WINDOW, _SLO_MIN_SAMPLES
+            from kernel.service import _LATENCY_WINDOW, KernelService
             svc = KernelService.__new__(KernelService)
             svc.logger = MagicMock()
             svc.event_bus = MagicMock()
@@ -128,10 +128,9 @@ class TestRecordLatency(unittest.IsolatedAsyncioTestCase):
 
         svc.event_bus.publish = capture_publish
 
-        with patch("asyncio.create_task", lambda coro: asyncio.ensure_future(coro)):
-            svc._record_latency(0.200)  # triggers SLO check
+        svc._record_latency(0.200)  # triggers SLO check synchronously
 
-        # Give create_task coroutines a chance to run
+        # Let the create_task coroutine run
         await asyncio.sleep(0)
 
         self.assertEqual(svc._slo_breach_count, 1)

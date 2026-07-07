@@ -7,12 +7,13 @@ the async handlers through ``asyncio.run``, and bypass ``KernelService.__init__`
 
 import asyncio
 import logging
+from collections import deque
 
 from activelearning import KernelDecisionType as DecisionType
 from activelearning.subjects import code_decision_subject
 
 from kernel.evaluator import unavailable_risk_analysis
-from kernel.service import KernelService
+from kernel.service import _LATENCY_WINDOW, KernelService
 
 
 class _FakeBus:
@@ -36,6 +37,10 @@ def _make_service():
     svc._deny_count = 0
     svc._evaluator = _RaisingEvaluator()
     svc.event_bus = _FakeBus()
+    svc._latency_samples = deque(maxlen=_LATENCY_WINDOW)
+    svc._SLO_P99_MS = 50.0
+    svc._slo_breach_count = 0
+    svc._last_slo_breach_at = 0.0
 
     async def _no_risk(*args, **kwargs):
         return None
