@@ -170,9 +170,14 @@ class KernelService(BaseService):
         # Brain/dashboard may not publish policy.restrict directly (ADR 0001 §3).
         # They publish policy.restrict.request; the Kernel validates and re-publishes
         # as authoritative policy.restrict that consumers (planner, brain) act on.
+        # Two separate calls: a single call with 4 positional args would silently
+        # pass the second subject as the queue-group parameter and the second
+        # handler as pending_msgs_limit, dropping the subscription entirely.
         await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT,
             self._handle_restrict,
+        )
+        await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT_REQUEST,
             self._handle_restrict_request,
         )
