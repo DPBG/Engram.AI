@@ -108,7 +108,7 @@ class Database:
         params: tuple[Any, ...] = (),
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement."""
-        if not self._connection:
+        if self._connection is None:
             raise RuntimeError("Database not initialized")
         return await self._connection.execute(sql, params)
 
@@ -118,7 +118,7 @@ class Database:
         params_list: list[tuple[Any, ...]],
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement with multiple parameter sets."""
-        if not self._connection:
+        if self._connection is None:
             raise RuntimeError("Database not initialized")
         return await self._connection.executemany(sql, params_list)
 
