@@ -16,6 +16,7 @@ _spec.loader.exec_module(sm)
 SensorManager = sm.SensorManager
 SensorType = sm.SensorType
 _looks_like_imu_reading = sm._looks_like_imu_reading
+_looks_like_nmea_sentence = sm._looks_like_nmea_sentence
 
 
 def _run(coro):
@@ -122,3 +123,80 @@ def test_probe_imu_port_sync_skips_banner_before_valid_json():
     ]
     with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
         assert SensorManager._probe_imu_port_sync("/dev/ttyUSB0") is True
+
+
+def test_looks_like_nmea_sentence_accepts_gpgga():
+    assert (
+        _looks_like_nmea_sentence(
+            "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"
+        )
+        is True
+    )
+
+
+def test_looks_like_nmea_sentence_accepts_gnrmc():
+    assert (
+        _looks_like_nmea_sentence(
+            "$GNRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
+        )
+        is True
+    )
+
+
+def test_looks_like_nmea_sentence_rejects_non_nmea():
+    assert _looks_like_nmea_sentence("GPS firmware v2.0") is False
+    assert _looks_like_nmea_sentence('{"lat": 48.1, "lon": 11.5}') is False
+
+
+@patch.object(SensorManager, "_probe_gps_port_sync", return_value=True)
+def test_detect_gps_registers_serial_device(_mock_probe):
+    manager = SensorManager()
+    with patch.dict(sys.modules, _fake_serial_modules(ports=["/dev/ttyUSB1"])):
+        assert _run(manager._detect_gps()) is True
+    sensors = manager.get_available_sensors(SensorType.GPS)
+    assert len(sensors) == 1
+    assert sensors[0].sensor_id == "gps_ttyUSB1"
+    assert "nmea" in sensors[0].capabilities
+
+
+@patch.object(SensorManager, "_probe_gps_port_sync", return_value=False)
+def test_detect_gps_returns_false_when_no_compatible_ports(_mock_probe):
+    manager = SensorManager()
+    with patch.dict(sys.modules, _fake_serial_modules(ports=["/dev/ttyUSB1"])):
+        assert _run(manager._detect_gps()) is False
+    assert manager.get_available_sensors(SensorType.GPS) == []
+
+
+def test_detect_gps_skips_when_pyserial_missing():
+    manager = SensorManager()
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _import(name, *args, **kwargs):
+        if name == "serial":
+            raise ImportError("no pyserial")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_import):
+        assert _run(manager._detect_gps()) is False
+
+
+def test_probe_gps_port_sync_parses_nmea_line():
+    fake_serial = MagicMock()
+    fake_serial.readline.return_value = (
+        b"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\n"
+    )
+    with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
+        assert SensorManager._probe_gps_port_sync("/dev/ttyUSB1") is True
+    fake_serial.close.assert_called_once()
+
+
+def test_probe_gps_port_sync_skips_banner_before_valid_nmea():
+    fake_serial = MagicMock()
+    fake_serial.readline.side_effect = [
+        b"u-blox AG GPS receiver\n",
+        b"$GNRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A\n",
+    ]
+    with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
+        assert SensorManager._probe_gps_port_sync("/dev/ttyUSB1") is True
