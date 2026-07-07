@@ -3,8 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from activelearning.embeddings import zero_vector
+
 from memory.models import Episode
 from memory.service import EMBEDDING_DIMENSIONS, MemoryService
 

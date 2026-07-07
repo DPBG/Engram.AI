@@ -6,21 +6,21 @@ import numpy as np
 import pytest
 
 from neuromorphic.config import (
+    CognitiveActionConfig,
+    DecodingConfig,
+    DendriticCompartmentConfig,
     NeuromorphicConfig,
     PopulationConfig,
-    DecodingConfig,
-    CognitiveActionConfig,
-    DendriticCompartmentConfig,
 )
-from neuromorphic.decoding import CognitiveDecoder, SpikeDecoder, PredictionDecoder
-from neuromorphic.regions import MotorCortex
-from neuromorphic.network import NeuromorphicNetwork
+from neuromorphic.decoding import CognitiveDecoder
 from neuromorphic.encoding import _resolve_modality
-
+from neuromorphic.network import NeuromorphicNetwork
+from neuromorphic.regions import MotorCortex
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _small_config(
     cognitive_enabled: bool = True,
@@ -42,7 +42,7 @@ def _small_config(
         decoding=DecodingConfig(expression_end=expression_end),
         cognitive_action=CognitiveActionConfig(
             enabled=cognitive_enabled,
-            sustained_window=5,   # short for testing
+            sustained_window=5,  # short for testing
             error_threshold=0.3,
             confidence_threshold=0.1,
             cooldown_steps=10,
@@ -54,6 +54,7 @@ def _small_config(
 # ---------------------------------------------------------------------------
 # Config tests
 # ---------------------------------------------------------------------------
+
 
 class TestCognitiveActionConfig:
     def test_default_disabled(self):
@@ -90,6 +91,7 @@ class TestCognitiveActionConfig:
 # ---------------------------------------------------------------------------
 # Motor cortex sub-range tests
 # ---------------------------------------------------------------------------
+
 
 class TestMotorCortexCognitiveSubRange:
     def test_no_cognitive_subrange_by_default(self):
@@ -147,6 +149,7 @@ class TestMotorCortexCognitiveSubRange:
 # Encoding tests
 # ---------------------------------------------------------------------------
 
+
 class TestCognitiveEncoding:
     def test_cognitive_response_maps_to_auditory(self):
         """cognitive.response provenance maps to auditory modality."""
@@ -161,6 +164,7 @@ class TestCognitiveEncoding:
 # ---------------------------------------------------------------------------
 # CognitiveDecoder tests
 # ---------------------------------------------------------------------------
+
 
 class TestCognitiveDecoder:
     def test_disabled_returns_empty(self):
@@ -286,6 +290,7 @@ class TestCognitiveDecoder:
 # Network integration tests
 # ---------------------------------------------------------------------------
 
+
 class TestNetworkCognitiveIntegration:
     def test_step_returns_cognitive_commands(self):
         """Network step() returns cognitive_commands key."""
@@ -314,9 +319,14 @@ class TestNetworkCognitiveIntegration:
         """Default config without cognitive still works."""
         cfg = NeuromorphicConfig(
             populations=PopulationConfig(
-                brainstem=100, reflex_arc=50, sensory_cortex=200,
-                motor_cortex=200, cerebellum=100, association_cortex=200,
-                predictive_layer=100, working_memory=50,
+                brainstem=100,
+                reflex_arc=50,
+                sensory_cortex=200,
+                motor_cortex=200,
+                cerebellum=100,
+                association_cortex=200,
+                predictive_layer=100,
+                working_memory=50,
             ),
         )
         net = NeuromorphicNetwork(cfg, seed=42)
@@ -385,6 +395,7 @@ class TestNetworkCognitiveIntegration:
 
 try:
     import aiohttp as _aiohttp  # noqa: F401
+
     _HAS_AIOHTTP = True
 except ImportError:
     _HAS_AIOHTTP = False
@@ -395,6 +406,7 @@ class TestCognitiveBridgeService:
     def test_build_context(self):
         """Bridge builds meaningful context from brain state."""
         from neuromorphic.cognitive_bridge import CognitiveBridgeService
+
         bridge = CognitiveBridgeService()
 
         ctx = bridge._build_context(
@@ -408,6 +420,7 @@ class TestCognitiveBridgeService:
     def test_build_context_no_drives(self):
         """Context works with empty drives."""
         from neuromorphic.cognitive_bridge import CognitiveBridgeService
+
         bridge = CognitiveBridgeService()
 
         ctx = bridge._build_context(prediction_error=0.5, step=0, drives={})

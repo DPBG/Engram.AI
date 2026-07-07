@@ -9,6 +9,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Developed by Gittensor · Bittensor SN74](https://img.shields.io/badge/Developed%20by-Gittensor%20·%20Bittensor%20SN74-6e40c9.svg)](https://gittensor.io)
+
+<sub>Contributed & developed by <strong>Gittensor</strong> — <strong>Bittensor Subnet 74</strong>.</sub>
 
 <img src="docs/engram-hero.jpg" alt="Engram — a humanoid body and a ~1M-neuron spiking neural network perceiving, moving, and learning in real time" width="100%" />
 
@@ -530,6 +533,7 @@ python run.py --only dashboard
 
 | Document | Content |
 |----------|---------|
+| [`ROADMAP.md`](ROADMAP.md) | Technical plan & current-state audit — phases M1–M7, tracking issues, status |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full system design, component relationships, NATS message schemas |
 | [`DESIGN-PRINCIPLES.md`](DESIGN-PRINCIPLES.md) | 6 core architecture invariants and implementation file map |
 | [`docs/SENSORY-GATEWAY.md`](docs/SENSORY-GATEWAY.md) | Gateway architecture, sensor types, discovery |
@@ -555,8 +559,10 @@ Engram is a research system, and we believe in being honest about its current st
   sandbox, but generated drivers are experimental, not production-grade.
 - **Hardware integration.** Built-in sensors cover camera, microphone, and serial
   devices; IMU / depth / real-actuator support is partial or planned.
-- **Some stubs remain.** A few subsystems contain placeholders (see the `TODO`s
-  in the code). Contributions here are especially welcome.
+- **Contribution opportunities.** The `good first issue` backlog (issues labelled
+  [`good first issue`](https://github.com/DPBG/Engram.AI/labels/good%20first%20issue))
+  lists small, well-scoped tasks across `neuromorphic/`, `sdk/`, and
+  `sensory-gateway/`. Contributions are especially welcome.
 
 If something doesn't match the docs, please open an issue — accurate docs are a priority.
 
@@ -572,6 +578,12 @@ Contributions are welcome! A few essentials:
 - Run the tests before pushing — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
   full workflow, code standards, and the architecture invariants in
   [CLAUDE.md](CLAUDE.md).
+
+## Gittensor Driven Development
+
+Engram is developed by **[Gittensor](https://gittensor.io)** — **Bittensor Subnet 74 (SN74)**, a decentralized network that rewards open-source contributions. Its contributors deliver Engram's features and fixes through the [`dev`-branch PR workflow](CONTRIBUTING.md).
+
+**Without Gittensor, this project couldn't have come so far** — its contributor network drives Engram's development forward.
 
 ## License
 

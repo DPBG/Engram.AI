@@ -10,9 +10,7 @@ import importlib.util
 import os
 import sys
 
-_SCHED_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "planner", "scheduler.py"
-)
+_SCHED_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "planner", "scheduler.py")
 _spec = importlib.util.spec_from_file_location("planner_scheduler", _SCHED_PATH)
 scheduler = importlib.util.module_from_spec(_spec)
 sys.modules["planner_scheduler"] = scheduler
@@ -38,6 +36,7 @@ def run(coro):
 
 # ── initial state ───────────────────────────────────────────────────────────
 
+
 def test_starts_in_execution_mode_with_empty_queue():
     s = Scheduler()
     assert s.mode == SchedulerMode.EXECUTION
@@ -46,6 +45,7 @@ def test_starts_in_execution_mode_with_empty_queue():
 
 
 # ── priority ordering ─────────────────────────────────────────────────────────
+
 
 def test_enqueue_orders_highest_priority_first():
     s = Scheduler()
@@ -79,6 +79,7 @@ def test_get_queue_status_reports_front_action():
 
 # ── dequeue edge cases ────────────────────────────────────────────────────────
 
+
 def test_dequeue_empty_returns_none():
     s = Scheduler()
     assert run(s.dequeue()) is None
@@ -95,6 +96,7 @@ def test_dequeue_drops_expired_actions():
 
 # ── SAFE_HALT behavior ────────────────────────────────────────────────────────
 
+
 def test_safe_halt_clears_pending_and_rejects_enqueue():
     s = Scheduler()
     run(s.enqueue(_action("a", 1)))
@@ -106,6 +108,7 @@ def test_safe_halt_clears_pending_and_rejects_enqueue():
 
 
 # ── mode-based priority adjustment ────────────────────────────────────────────
+
 
 def test_learning_mode_boosts_learning_tagged_actions():
     s = Scheduler()
@@ -134,6 +137,7 @@ def test_untagged_action_is_not_boosted_in_learning_mode():
 
 
 # ── housekeeping helpers ──────────────────────────────────────────────────────
+
 
 def test_clear_pending_returns_count_and_empties():
     s = Scheduler()

@@ -38,17 +38,19 @@ def discover_cameras(max_index: int = 10) -> list[DiscoveredDevice]:
         if cap.isOpened():
             ret, _ = cap.read()
             if ret:
-                cameras.append(DiscoveredDevice(
-                    device_type="camera",
-                    device_id=f"camera:{i}",
-                    name=f"Camera {i} ({cap.getBackendName()})",
-                    metadata={
-                        "index": i,
-                        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                        "backend": cap.getBackendName(),
-                    },
-                ))
+                cameras.append(
+                    DiscoveredDevice(
+                        device_type="camera",
+                        device_id=f"camera:{i}",
+                        name=f"Camera {i} ({cap.getBackendName()})",
+                        metadata={
+                            "index": i,
+                            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                            "backend": cap.getBackendName(),
+                        },
+                    )
+                )
             cap.release()
     return cameras
 
@@ -64,18 +66,34 @@ def discover_microphones() -> list[DiscoveredDevice]:
     mics = []
     for i, dev in enumerate(sd.query_devices()):
         if dev["max_input_channels"] > 0:
-            mics.append(DiscoveredDevice(
-                device_type="mic",
-                device_id=f"mic:{i}",
-                name=dev["name"],
-                metadata={
-                    "index": i,
-                    "channels": dev["max_input_channels"],
-                    "sample_rate": dev["default_samplerate"],
-                },
-            ))
+            mics.append(
+                DiscoveredDevice(
+                    device_type="mic",
+                    device_id=f"mic:{i}",
+                    name=dev["name"],
+                    metadata={
+                        "index": i,
+                        "channels": dev["max_input_channels"],
+                        "sample_rate": dev["default_samplerate"],
+                    },
+                )
+            )
     return mics
 
+
+# Description substrings (lower-cased) that identify IMU devices on serial ports.
+# A matching serial port is classified as device_type="imu" so the gateway
+# instantiates IMUSensor instead of the generic SerialSensor.
+_IMU_KEYWORDS = (
+    "imu",
+    "mpu",  # MPU-6050 / MPU-9250
+    "bno",  # BNO055 / BNO085
+    "icm",  # ICM-42688 / ICM-20948
+    "lsm",  # LSM6DS0 / LSM9DS1
+    "inertial",
+    "gyro",
+    "accel",
+)
 
 _SERIAL_SKIP_PATTERNS = (
     "debug-console",
@@ -108,18 +126,26 @@ def discover_serial_devices() -> list[DiscoveredDevice]:
             logger.debug(f"Skipping system serial port: {port.device}")
             continue
 
-        devices.append(DiscoveredDevice(
-            device_type="serial",
-            device_id=f"serial:{port.device}",
-            name=port.description or port.device,
-            metadata={
-                "port": port.device,
-                "vid": port.vid,
-                "pid": port.pid,
-                "serial_number": port.serial_number,
-                "manufacturer": port.manufacturer,
-            },
-        ))
+        # Classify as "imu" when the description matches known IMU keywords,
+        # so the gateway can instantiate IMUSensor instead of SerialSensor.
+        desc_lower = (port.description or "").lower()
+        device_type = "imu" if any(kw in desc_lower for kw in _IMU_KEYWORDS) else "serial"
+        device_id_prefix = "imu" if device_type == "imu" else "serial"
+
+        devices.append(
+            DiscoveredDevice(
+                device_type=device_type,
+                device_id=f"{device_id_prefix}:{port.device}",
+                name=port.description or port.device,
+                metadata={
+                    "port": port.device,
+                    "vid": port.vid,
+                    "pid": port.pid,
+                    "serial_number": port.serial_number,
+                    "manufacturer": port.manufacturer,
+                },
+            )
+        )
     return devices
 
 
@@ -163,7 +189,7 @@ def discover_all(
 
 
 # Device types the gateway knows how to handle natively.
-KNOWN_DEVICE_TYPES = {"camera", "mic", "serial"}
+KNOWN_DEVICE_TYPES = {"camera", "mic", "serial", "imu"}
 
 # Keywords that indicate a device is an actuator rather than a sensor.
 _ACTUATOR_KEYWORDS = ("motor", "servo", "actuator", "gripper")

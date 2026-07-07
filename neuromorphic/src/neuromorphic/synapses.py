@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy import sparse
 
-import logging
-
+from neuromorphic.compiled_kernels import (
+    neuromod_decay_full as _compiled_neuromod_decay_full,
+)
+from neuromorphic.compiled_kernels import (
+    neuromod_decay_sparse as _compiled_neuromod_decay_sparse,
+)
+from neuromorphic.compiled_kernels import (
+    stdp_delta as _compiled_stdp_delta,
+)
 from neuromorphic.config import (
-    STDPParams, RSTDPParams, EligibilityTraceConfig, BCMConfig,
-    PruningConfig, MyelinationConfig, NeighborhoodConsolidationConfig,
+    BCMConfig,
+    EligibilityTraceConfig,
+    MyelinationConfig,
+    NeighborhoodConsolidationConfig,
+    PruningConfig,
+    RSTDPParams,
+    STDPParams,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +62,9 @@ class SynapseGroup:
         self.rstdp_params = rstdp_params
         self.name = name
         self._rng = rng or np.random.default_rng()
-        self.target_compartment = target_compartment  # which dendrite compartment to target (None = direct somatic)
+        self.target_compartment = (
+            target_compartment  # which dendrite compartment to target (None = direct somatic)
+        )
 
         # Build sparse connectivity
         self.weights = self._build_sparse_weights(init_weight)
@@ -64,7 +80,9 @@ class SynapseGroup:
         # concept_lateral has a_plus=0.005 so threshold = 0.0005 (not 1e-5 = 500x too low).
         self._elig_significance: float = 1e-5  # default fallback
         self._base_elig_significance: float = 1e-5  # original value before dynamic boost
-        self._elig_sig_boosted: bool = False  # True when significance doubled due to active set > 30%
+        self._elig_sig_boosted: bool = (
+            False  # True when significance doubled due to active set > 30%
+        )
         self._elig_prune_threshold: float = 1e-6  # for alive check in apply_neuromodulation
         self._elig_untracked_interval: int = 100
         self._elig_step_counter: int = 0  # counts apply_neuromodulation calls
@@ -188,7 +206,9 @@ class SynapseGroup:
         # Convert to CSR (sums duplicates), then clip to enforce weight bounds
         mat = mat.tocsr()
         if self.plastic:
-            mat.data = np.clip(mat.data, self.stdp_params.w_min, self.stdp_params.w_max).astype(np.float32)
+            mat.data = np.clip(mat.data, self.stdp_params.w_min, self.stdp_params.w_max).astype(
+                np.float32
+            )
         else:
             mat.data = np.clip(mat.data, 0.001, np.inf).astype(np.float32)
         mat.eliminate_zeros()
@@ -272,7 +292,9 @@ class SynapseGroup:
 
         # Accumulate into result using bincount (faster than np.add.at)
         return np.bincount(
-            flat_rows, weights=flat_weights, minlength=self.n_post,
+            flat_rows,
+            weights=flat_weights,
+            minlength=self.n_post,
         ).astype(np.float32)
 
     def _expand_ranges(self, starts, lengths):
@@ -322,7 +344,8 @@ class SynapseGroup:
             indptr = self.weights.indptr
             if len(active_post) > 0:
                 flat_idx = self._expand_ranges(
-                    indptr[active_post], indptr[active_post + 1] - indptr[active_post])
+                    indptr[active_post], indptr[active_post + 1] - indptr[active_post]
+                )
                 if len(flat_idx) > 0:
                     mask[flat_idx] = True
             if len(active_pre) > 0:
@@ -339,14 +362,16 @@ class SynapseGroup:
         if len(active_post) > 0:
             indptr = self.weights.indptr
             csr_indices_post = self._expand_ranges(
-                indptr[active_post], indptr[active_post + 1] - indptr[active_post])
+                indptr[active_post], indptr[active_post + 1] - indptr[active_post]
+            )
 
         # Pre-neuron path: CSC column ranges → map to CSR positions
         if len(active_pre) > 0:
             self._ensure_csc()
             csc_indptr = self._csc_indptr
             csc_flat = self._expand_ranges(
-                csc_indptr[active_pre], csc_indptr[active_pre + 1] - csc_indptr[active_pre])
+                csc_indptr[active_pre], csc_indptr[active_pre + 1] - csc_indptr[active_pre]
+            )
             if len(csc_flat) > 0:
                 # Map CSC positions to CSR data positions
                 csr_indices_pre = self._csc_to_csr_perm[csc_flat]
@@ -409,28 +434,27 @@ class SynapseGroup:
         active_idx = active_idx[in_window]
         dt_spike = dt_spike[in_window]
 
-        # LTP: post fires after pre (dt > 0), or simultaneous (dt == 0, Hebbian coincidence)
-        ltp_mask = dt_spike >= 0
-        dw = np.zeros(len(active_idx), dtype=np.float32)
-
         # BCM scaling: modulate A_plus AND A_minus per postsynaptic neuron
         bcm_scale = self._get_bcm_scaling()
-        if bcm_scale is not None and ltp_mask.any():
-            # Per-synapse scaling based on postsynaptic neuron's BCM threshold
-            a_plus_vec = np.float32(p.a_plus) * bcm_scale[rows[active_idx[ltp_mask]]]
-            dw[ltp_mask] = a_plus_vec * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
+        if bcm_scale is None:
+            # Compiled kernel (or NumPy fallback): single fused pass, no temp mask arrays
+            dw = _compiled_stdp_delta(dt_spike, p.a_plus, p.tau_plus, p.a_minus, p.tau_minus)
         else:
-            dw[ltp_mask] = p.a_plus * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
-
-        # LTD: pre fires after post (dt < 0)
-        # H3: BCM also modulates LTD — active neurons resist BOTH potentiation and depression
-        ltd_mask = dt_spike < 0
-        if bcm_scale is not None and ltd_mask.any():
-            # Inverse BCM for LTD: active neurons have reduced depression
-            a_minus_vec = np.float32(p.a_minus) * bcm_scale[rows[active_idx[ltd_mask]]]
-            dw[ltd_mask] = -a_minus_vec * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(np.float32)
-        else:
-            dw[ltd_mask] = -p.a_minus * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(np.float32)
+            # BCM-scaled path: per-neuron amplitude, vectorized NumPy
+            # H3: BCM modulates both LTP and LTD — active neurons resist both
+            ltp_mask = dt_spike >= 0
+            dw = np.zeros(len(active_idx), dtype=np.float32)
+            if ltp_mask.any():
+                a_plus_vec = np.float32(p.a_plus) * bcm_scale[rows[active_idx[ltp_mask]]]
+                dw[ltp_mask] = a_plus_vec * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(
+                    np.float32
+                )
+            ltd_mask = dt_spike < 0
+            if ltd_mask.any():
+                a_minus_vec = np.float32(p.a_minus) * bcm_scale[rows[active_idx[ltd_mask]]]
+                dw[ltd_mask] = -a_minus_vec * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(
+                    np.float32
+                )
 
         # Compartment-aware credit assignment: scale dw by compartment activity
         if compartment_activity < 1.0:
@@ -444,8 +468,7 @@ class SynapseGroup:
             # (plasticity mask is applied later in apply_neuromodulation, not here)
             self.eligibility[active_idx] += dw
             # D2: Cap eligibility traces — only clip modified entries, not all nnz
-            self.eligibility[active_idx] = np.clip(
-                self.eligibility[active_idx], -p.w_max, p.w_max)
+            self.eligibility[active_idx] = np.clip(self.eligibility[active_idx], -p.w_max, p.w_max)
             # Merge only significant updates into active eligibility index set.
             # Filter by |dw| > adaptive threshold to prevent the active set from
             # bloating with trivially small eligibility values that don't affect weights.
@@ -455,7 +478,9 @@ class SynapseGroup:
         else:
             # Classic two-factor: STDP directly updates weights
             # H2: Apply plasticity mask in two-factor path (three-factor uses apply_neuromodulation)
-            if self._adolescent_plasticity_mask is not None and len(self._adolescent_plasticity_mask) == len(data):
+            if self._adolescent_plasticity_mask is not None and len(
+                self._adolescent_plasticity_mask
+            ) == len(data):
                 dw *= self._adolescent_plasticity_mask[active_idx]
             data[active_idx] = np.clip(data[active_idx] + dw, p.w_min, p.w_max)
 
@@ -505,15 +530,8 @@ class SynapseGroup:
 
         dt_spike = post_spike_times[rows[active_idx]] - pre_spike_times[cols[active_idx]]
 
-        # LTP: post fires after pre or simultaneous (Hebbian coincidence)
-        ltp_mask = dt_spike >= 0
-        dw = np.zeros(len(active_idx), dtype=np.float32)
-        dw[ltp_mask] = p.a_plus * np.exp(-dt_spike[ltp_mask] / p.tau_plus).astype(np.float32)
-
-        ltd_mask = dt_spike < 0
-        dw[ltd_mask] = -p.a_minus * np.exp(dt_spike[ltd_mask] / p.tau_minus).astype(np.float32)
-
-        # Modulate by reward signal
+        # Compiled kernel (or NumPy fallback): fused LTP/LTD, then reward modulation
+        dw = _compiled_stdp_delta(dt_spike, p.a_plus, p.tau_plus, p.a_minus, p.tau_minus)
         dw *= np.float32(modulation)
 
         # Compartment-aware credit assignment (before surprise bonus, which is global)
@@ -534,8 +552,7 @@ class SynapseGroup:
             # (plasticity mask is applied later in apply_neuromodulation, not here)
             self.eligibility[active_idx] += dw
             # D2: Cap eligibility traces — only clip modified entries, not all nnz
-            self.eligibility[active_idx] = np.clip(
-                self.eligibility[active_idx], -p.w_max, p.w_max)
+            self.eligibility[active_idx] = np.clip(self.eligibility[active_idx], -p.w_max, p.w_max)
             # Merge only significant updates into active eligibility index set
             significant = np.abs(dw) > self._elig_significance
             if significant.any():
@@ -543,7 +560,9 @@ class SynapseGroup:
         else:
             # Two-factor: directly update weights
             # H2: Apply plasticity mask in two-factor path only
-            if self._adolescent_plasticity_mask is not None and len(self._adolescent_plasticity_mask) == len(data):
+            if self._adolescent_plasticity_mask is not None and len(
+                self._adolescent_plasticity_mask
+            ) == len(data):
                 dw *= self._adolescent_plasticity_mask[active_idx]
             data[active_idx] = np.clip(data[active_idx] + dw, p.w_min, p.w_max)
 
@@ -567,7 +586,7 @@ class SynapseGroup:
         if self.bcm_theta is None or self._bcm_config is None:
             return
         alpha = 1.0 / self._bcm_config.theta_tau
-        rate_sq = post_firing_rates ** 2
+        rate_sq = post_firing_rates**2
         self.bcm_theta += np.float32(alpha) * (rate_sq - self.bcm_theta)
 
     def _get_bcm_scaling(self) -> np.ndarray | None:
@@ -709,18 +728,28 @@ class SynapseGroup:
         # geometric-sum factor below, otherwise it is ~1/N too small (with the
         # default d=0.999, interval=3 this is a 2.997x under-application).
         d = self._eligibility_cfg.trace_decay
-        decay = np.float32(d ** interval)
-        interval_gain = np.float32(
-            interval if d >= 1.0 else (1.0 - d ** interval) / (1.0 - d)
-        )
+        decay = np.float32(d**interval)
+        interval_gain = np.float32(interval if d >= 1.0 else (1.0 - d**interval) / (1.0 - d))
 
         # Full-array path: _elig_active abandoned (>80% active) or never initialized
         if self._elig_active is None:
-            dw = np.float32(modulator_signal) * self.eligibility * interval_gain
-            if plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility):
-                dw *= plasticity_mask
-            data[:] = np.clip(data + dw, p.w_min, p.w_max)
-            self.eligibility *= decay
+            _compiled_neuromod_decay_full(
+                self.eligibility,
+                data,
+                modulator_signal,
+                float(interval_gain),
+                float(decay),
+                p.w_min,
+                p.w_max,
+                (
+                    plasticity_mask
+                    if (
+                        plasticity_mask is not None
+                        and len(plasticity_mask) == len(self.eligibility)
+                    )
+                    else None
+                ),
+            )
             return
 
         # Periodic sweep: must run even when _elig_active is empty, to clean
@@ -736,9 +765,13 @@ class SynapseGroup:
                 if len(all_nonzero) > len(self._elig_active):
                     # Untracked entries exist -- zero them out (they've been decaying
                     # without neuromodulation application, so they're stale)
-                    tracked_set = set(self._elig_active.tolist()) if len(self._elig_active) < 100000 else None
+                    tracked_set = (
+                        set(self._elig_active.tolist()) if len(self._elig_active) < 100000 else None
+                    )
                     if tracked_set is not None:
-                        untracked = np.array([i for i in all_nonzero if i not in tracked_set], dtype=np.int32)
+                        untracked = np.array(
+                            [i for i in all_nonzero if i not in tracked_set], dtype=np.int32
+                        )
                     else:
                         # For large active sets, use sorted merge to find difference
                         mask = np.ones(len(all_nonzero), dtype=bool)
@@ -760,22 +793,24 @@ class SynapseGroup:
         # get_adolescent_plasticity_mask) scales identity synapses to 0.01,
         # satisfying Claim 2's "plasticity->1%" requirement.
 
-        elig_slice = self.eligibility[idx]
-
-        # Apply neuromodulation: dw = modulator * eligibility * geometric-gain * mask
-        # interval_gain restores every-step equivalence over the batched interval
-        # (see the comment where it is computed above).
-        dw = np.float32(modulator_signal) * elig_slice * interval_gain
-        if plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility):
-            dw *= plasticity_mask[idx]
-        data[idx] = np.clip(data[idx] + dw, p.w_min, p.w_max)
-
-        # Decay eligibility traces (compensated for interval)
-        elig_slice *= decay
-        self.eligibility[idx] = elig_slice
-
-        # Prune near-zero entries from active set
-        alive = np.abs(elig_slice) > self._elig_prune_threshold
+        # Fused: neuromod + decay + clip + prune in one pass over the active set.
+        # Per-entry effective gain handles mid-interval pruning correctly.
+        alive = _compiled_neuromod_decay_sparse(
+            self.eligibility,
+            data,
+            idx,
+            modulator_signal,
+            interval,
+            float(d),
+            p.w_min,
+            p.w_max,
+            float(self._elig_prune_threshold),
+            (
+                plasticity_mask
+                if (plasticity_mask is not None and len(plasticity_mask) == len(self.eligibility))
+                else None
+            ),
+        )
         if not alive.all():
             self._elig_active = idx[alive]
 
@@ -1024,8 +1059,12 @@ class SynapseGroup:
             self.myelinated[eligible] = True
         return n_new
 
-    def tag_identity(self, min_survival_rounds: int = 3, stability_multiplier: int = 2,
-                     stability_window: int = 5000) -> int:
+    def tag_identity(
+        self,
+        min_survival_rounds: int = 3,
+        stability_multiplier: int = 2,
+        stability_window: int = 5000,
+    ) -> int:
         """Tag synapses as identity via two paths:
 
         Path 1 (original): myelinated + survived N pruning rounds
@@ -1034,26 +1073,19 @@ class SynapseGroup:
         This ensures stable high-weight synapses that were never weak enough
         to face pruning can still become identity-tagged.
         """
-        if (self.myelinated is None or self.identity is None or
-                self.prune_survival_count is None):
+        if self.myelinated is None or self.identity is None or self.prune_survival_count is None:
             return 0
 
         # Path 1: pruning survival
         path1 = (
-            self.myelinated
-            & (self.prune_survival_count >= min_survival_rounds)
-            & (~self.identity)
+            self.myelinated & (self.prune_survival_count >= min_survival_rounds) & (~self.identity)
         )
 
         # Path 2: extreme stability (C5)
         path2 = np.zeros_like(self.identity)
         if self.stability_counter is not None:
             alt_threshold = stability_multiplier * stability_window
-            path2 = (
-                self.myelinated
-                & (self.stability_counter >= alt_threshold)
-                & (~self.identity)
-            )
+            path2 = self.myelinated & (self.stability_counter >= alt_threshold) & (~self.identity)
 
         eligible = path1 | path2
         n_new = int(eligible.sum())
@@ -1135,9 +1167,7 @@ class SynapseGroup:
             floor = np.float32(config.rescue_floor)
             was_nonzero = np.abs(orig) > 0
             too_small = was_nonzero & (np.abs(boosted) < floor)
-            boosted[too_small] = np.where(
-                boosted[too_small] >= 0, floor, -floor
-            )
+            boosted[too_small] = np.where(boosted[too_small] >= 0, floor, -floor)
             self.eligibility[nearby] = boosted
             # Track newly active eligibility entries
             self._merge_elig_active(np.flatnonzero(nearby))
@@ -1189,6 +1219,7 @@ class SynapseGroup:
         and keeps current (freshly initialized) weights.
         """
         import logging
+
         _log = logging.getLogger(__name__)
 
         saved_shape = state["shape"]
@@ -1201,7 +1232,11 @@ class SynapseGroup:
             return
 
         self.weights = sparse.csr_matrix(
-            (state["weights_data"].copy(), state["weights_indices"].copy(), state["weights_indptr"].copy()),
+            (
+                state["weights_data"].copy(),
+                state["weights_indices"].copy(),
+                state["weights_indptr"].copy(),
+            ),
             shape=saved_shape,
         )
         self._cache_structure()
@@ -1218,10 +1253,14 @@ class SynapseGroup:
                     if len(ea) == 0 or (ea.min() >= 0 and ea.max() < self.weights.nnz):
                         self._elig_active = ea.copy()
                     else:
-                        self._elig_active = np.flatnonzero(np.abs(self.eligibility) > self._elig_prune_threshold).astype(np.int32)
+                        self._elig_active = np.flatnonzero(
+                            np.abs(self.eligibility) > self._elig_prune_threshold
+                        ).astype(np.int32)
                 else:
                     # Old state without elig_active — rebuild from eligibility
-                    self._elig_active = np.flatnonzero(np.abs(self.eligibility) > self._elig_prune_threshold).astype(np.int32)
+                    self._elig_active = np.flatnonzero(
+                        np.abs(self.eligibility) > self._elig_prune_threshold
+                    ).astype(np.int32)
             else:
                 _log.debug(f"Synapse '{self.name}' eligibility length mismatch, re-initializing")
                 self.eligibility = np.zeros(self.weights.nnz, dtype=np.float32)

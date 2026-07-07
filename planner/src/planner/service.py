@@ -6,19 +6,20 @@ and manages the execution flow through the Kernel.
 """
 
 import asyncio
-import json
-from dataclasses import dataclass, field, asdict
-from typing import Any, Optional
-import uuid
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
-from activelearning import BaseService
+from activelearning import BaseService, generate_trace_id
+from activelearning.nats_client import serialize_message
+from nats.aio.msg import Msg
 
-from planner.scheduler import Scheduler, SchedulerMode, PendingAction
+from planner.scheduler import PendingAction, Scheduler, SchedulerMode
 
 
 @dataclass
 class ActionProposal:
     """A proposed action."""
+
     trace_id: str
     provenance: str
     action: dict[str, Any]
@@ -30,10 +31,11 @@ class ActionProposal:
 @dataclass
 class KernelDecision:
     """A decision from the Kernel."""
+
     trace_id: str
     type: str  # ALLOW, TRANSFORM, DENY, DEFER
-    reason: Optional[str] = None
-    transformations: Optional[list[dict]] = None
+    reason: str | None = None
+    transformations: list[dict] | None = None
     risk_score: float = 0.0
 
 
@@ -53,7 +55,7 @@ class PlannerService(BaseService):
         super().__init__("planner", use_database=False, use_event_bus=True)
         self._scheduler = Scheduler()
         self._pending_decisions: dict[str, asyncio.Future] = {}
-        self._process_task: Optional[asyncio.Task] = None
+        self._process_task: asyncio.Task | None = None
 
     async def _setup(self) -> None:
         """Service-specific setup."""
@@ -66,8 +68,12 @@ class PlannerService(BaseService):
         # Subscribe to mode change requests
         await self.event_bus.subscribe("planner.mode", self._handle_mode_change)
 
-        # Subscribe to status requests
-        await self.event_bus.subscribe("planner.status", self._handle_status)
+        # Subscribe to status requests (request-reply)
+        await self.event_bus.subscribe(
+            "planner.status",
+            self._handle_status,
+            is_request_handler=True,
+        )
 
         # Start action processor
         self._process_task = asyncio.create_task(self._process_actions())
@@ -92,7 +98,9 @@ class PlannerService(BaseService):
         try:
             # data is already deserialized by EventBus
             subject = data.get("subject", "observation.unknown")
-            self.logger.debug(f"Received observation on {subject}: {data.get('trace_id', 'unknown')}")
+            self.logger.debug(
+                f"Received observation on {subject}: {data.get('trace_id', 'unknown')}"
+            )
 
             # Generate action proposal from observation
             proposal = await self._generate_proposal(data, subject)
@@ -113,13 +121,13 @@ class PlannerService(BaseService):
         self,
         observation: dict[str, Any],
         subject: str,
-    ) -> Optional[ActionProposal]:
+    ) -> ActionProposal | None:
         """
         Generate an action proposal from an observation.
 
         This is a placeholder that should be extended with actual planning logic.
         """
-        trace_id = observation.get("trace_id", str(uuid.uuid4()))
+        trace_id = observation.get("trace_id", generate_trace_id())
         provenance = observation.get("provenance", subject)
         data = observation.get("data", {})
 
@@ -190,13 +198,11 @@ class PlannerService(BaseService):
         except Exception as e:
             self.logger.error(f"Error changing mode: {e}")
 
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status requests."""
-        try:
-            status = self._scheduler.get_queue_status()
-            self.logger.debug(f"Status requested: {status}")
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = self._scheduler.get_queue_status()
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
     async def _process_actions(self) -> None:
         """Background task to process queued actions."""
@@ -230,7 +236,7 @@ class PlannerService(BaseService):
                     try:
                         decision = await asyncio.wait_for(decision_future, timeout=30.0)
                         await self._handle_kernel_decision(decision, proposal)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.warning(f"Kernel decision timeout for {trace_id}")
                         self._pending_decisions.pop(trace_id, None)
 

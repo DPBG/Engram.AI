@@ -24,9 +24,6 @@ aggregation timing.
 """
 
 import sys
-import os
-import time
-import json
 from pathlib import Path
 
 # Add project paths so we can import actual sensor code
@@ -35,7 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "sensory-gateway"))
 sys.path.insert(0, str(PROJECT_ROOT / "sensory-gateway" / "sensors"))
 sys.path.insert(0, str(PROJECT_ROOT / "sdk" / "src"))
 
-import numpy as np
+import numpy as np  # noqa: E402
 
 # --- Audio pipeline (same as AudioFileSensor) ---
 SAMPLE_RATE = 16000
@@ -49,10 +46,10 @@ AUDIO_HZ = 10  # AudioFileSensor default rate
 
 def extract_audio(video_path: str) -> np.ndarray:
     """Extract audio exactly as AudioFileSensor does."""
+    import shutil
     import subprocess
     import tempfile
     import wave
-    import shutil
 
     if not shutil.which("ffmpeg"):
         raise RuntimeError("ffmpeg not found")
@@ -62,11 +59,23 @@ def extract_audio(video_path: str) -> np.ndarray:
     tmp.close()
     try:
         result = subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path,
-             "-vn", "-acodec", "pcm_s16le",
-             "-ar", str(SAMPLE_RATE), "-ac", "1",
-             tmp_path],
-            capture_output=True, text=True, timeout=120,
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                str(SAMPLE_RATE),
+                "-ac",
+                "1",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {result.stderr[:300]}")
@@ -86,6 +95,7 @@ def compute_mfcc(audio_chunk: np.ndarray) -> np.ndarray | None:
         return None
     try:
         from python_speech_features import mfcc
+
         features = mfcc(
             audio_chunk,
             samplerate=SAMPLE_RATE,
@@ -102,7 +112,7 @@ def compute_mfcc(audio_chunk: np.ndarray) -> np.ndarray | None:
         spectrum = np.abs(np.fft.rfft(windowed, n=512)) ** 2
         log_spectrum = np.log(spectrum + 1e-10)
         step = max(1, len(log_spectrum) // N_MFCC)
-        features = log_spectrum[:N_MFCC * step:step][:N_MFCC]
+        features = log_spectrum[: N_MFCC * step : step][:N_MFCC]
         return features.astype(np.float32)
 
 
@@ -112,14 +122,13 @@ def is_silent(features: np.ndarray) -> bool:
 
 
 # --- Video pipeline (same as VideoFileSensor) ---
-import cv2
+import cv2  # noqa: E402
 
 VIDEO_FPS = 2  # VideoFileSensor default
 SPARSE_THRESHOLD = 0.005  # Production setting on Hetzner
 
 
-def extract_video_frames(video_path: str, fps: float = VIDEO_FPS,
-                         max_seconds: float = 30.0):
+def extract_video_frames(video_path: str, fps: float = VIDEO_FPS, max_seconds: float = 30.0):
     """Extract frames exactly as VideoFileSensor does, yielding (timestamp_s, features)."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -176,6 +185,7 @@ def extract_video_frames(video_path: str, fps: float = VIDEO_FPS,
 
 
 # --- Aggregator simulation ---
+
 
 def simulate_aggregation(audio_events, video_events, flush_hz=2.0):
     """
@@ -235,20 +245,27 @@ def simulate_aggregation(audio_events, video_events, flush_hz=2.0):
 
         # Flush
         if latest_audio is not None or latest_video is not None:
-            results.append({
-                "flush_time_s": flush_time,
-                "audio_timestamp_s": latest_audio_ts,
-                "video_timestamp_s": latest_video_ts,
-                "audio_features": latest_audio.copy() if latest_audio is not None else None,
-                "video_features": latest_video[:10].copy() if latest_video is not None else None,
-                "audio_discarded": audio_count_in_window - (1 if latest_audio is not None else 0),
-                "video_discarded": video_count_in_window - (1 if latest_video is not None else 0),
-                "audio_timestamps_in_window": audio_timestamps_in_window.copy(),
-                "audio_temporal_span_ms": (
-                    (audio_timestamps_in_window[-1] - audio_timestamps_in_window[0]) * 1000
-                    if len(audio_timestamps_in_window) > 1 else 0
-                ),
-            })
+            results.append(
+                {
+                    "flush_time_s": flush_time,
+                    "audio_timestamp_s": latest_audio_ts,
+                    "video_timestamp_s": latest_video_ts,
+                    "audio_features": latest_audio.copy() if latest_audio is not None else None,
+                    "video_features": (
+                        latest_video[:10].copy() if latest_video is not None else None
+                    ),
+                    "audio_discarded": audio_count_in_window
+                    - (1 if latest_audio is not None else 0),
+                    "video_discarded": video_count_in_window
+                    - (1 if latest_video is not None else 0),
+                    "audio_timestamps_in_window": audio_timestamps_in_window.copy(),
+                    "audio_temporal_span_ms": (
+                        (audio_timestamps_in_window[-1] - audio_timestamps_in_window[0]) * 1000
+                        if len(audio_timestamps_in_window) > 1
+                        else 0
+                    ),
+                }
+            )
 
         # Reset for next window
         latest_audio = None
@@ -275,7 +292,7 @@ def analyze_mfcc_temporal_structure(audio: np.ndarray, start_s: float, duration_
     chunks = []
     pos = start_sample
     while pos + chunk_samples <= end_sample:
-        chunk = audio[pos:pos + chunk_samples]
+        chunk = audio[pos : pos + chunk_samples]
         feat = compute_mfcc(chunk)
         if feat is not None:
             chunks.append((pos / SAMPLE_RATE, feat))
@@ -303,8 +320,8 @@ def analyze_mfcc_temporal_structure(audio: np.ndarray, start_s: float, duration_
         "first_mfcc": chunks[0][1].tolist(),
         "last_mfcc": chunks[-1][1].tolist(),
         "first_last_cosine": float(
-            np.dot(chunks[0][1], chunks[-1][1]) /
-            (np.linalg.norm(chunks[0][1]) * np.linalg.norm(chunks[-1][1]) + 1e-10)
+            np.dot(chunks[0][1], chunks[-1][1])
+            / (np.linalg.norm(chunks[0][1]) * np.linalg.norm(chunks[-1][1]) + 1e-10)
         ),
     }
 
@@ -335,7 +352,7 @@ def main():
         consecutive_silent = 0
         pos = 0
         while pos + chunk_samples <= int(test_duration * SAMPLE_RATE):
-            chunk = audio[pos:pos + chunk_samples]
+            chunk = audio[pos : pos + chunk_samples]
             feat = compute_mfcc(chunk)
             timestamp = pos / SAMPLE_RATE
             pos += chunk_samples
@@ -353,11 +370,15 @@ def main():
                 consecutive_silent = 0
                 audio_events.append((timestamp, feat))
 
-        print(f"  MFCC chunks (first {test_duration:.0f}s): {len(audio_events)} emitted, {silent_count} silent")
+        print(
+            f"  MFCC chunks (first {test_duration:.0f}s): {len(audio_events)} emitted, {silent_count} silent"
+        )
 
         # ==== STEP 2: Extract video frames ====
         print("\n--- Video Extraction ---")
-        video_events = list(extract_video_frames(str(video_path), fps=VIDEO_FPS, max_seconds=test_duration))
+        video_events = list(
+            extract_video_frames(str(video_path), fps=VIDEO_FPS, max_seconds=test_duration)
+        )
         print(f"  Video frames (first {test_duration:.0f}s): {len(video_events)} emitted")
 
         # ==== STEP 3: Simulate aggregation ====
@@ -369,26 +390,38 @@ def main():
         total_video_discarded = sum(f["video_discarded"] for f in flushes)
         total_video_delivered = sum(1 for f in flushes if f["video_timestamp_s"] is not None)
 
-        print(f"\n  FLUSH SUMMARY:")
-        print(f"  Audio:  {total_audio_delivered} delivered, {total_audio_discarded} discarded "
-              f"({total_audio_discarded/(total_audio_delivered + total_audio_discarded)*100:.1f}% loss)")
-        print(f"  Video:  {total_video_delivered} delivered, {total_video_discarded} discarded "
-              f"({total_video_discarded/(total_video_delivered + total_video_discarded)*100:.1f}% loss)")
+        print("\n  FLUSH SUMMARY:")
+        print(
+            f"  Audio:  {total_audio_delivered} delivered, {total_audio_discarded} discarded "
+            f"({total_audio_discarded/(total_audio_delivered + total_audio_discarded)*100:.1f}% loss)"
+        )
+        print(
+            f"  Video:  {total_video_delivered} delivered, {total_video_discarded} discarded "
+            f"({total_video_discarded/(total_video_delivered + total_video_discarded)*100:.1f}% loss)"
+        )
 
-        print(f"\n  PER-FLUSH DETAILS (first 10 flushes):")
-        print(f"  {'Flush':>6}  {'Audio_t':>8}  {'Video_t':>8}  {'A/V lag':>8}  {'A_disc':>6}  {'V_disc':>6}  {'A_span_ms':>10}")
+        print("\n  PER-FLUSH DETAILS (first 10 flushes):")
+        print(
+            f"  {'Flush':>6}  {'Audio_t':>8}  {'Video_t':>8}  {'A/V lag':>8}  {'A_disc':>6}  {'V_disc':>6}  {'A_span_ms':>10}"
+        )
         for i, f in enumerate(flushes[:10]):
-            a_t = f"{f['audio_timestamp_s']:.3f}" if f["audio_timestamp_s"] is not None else "  None"
-            v_t = f"{f['video_timestamp_s']:.3f}" if f["video_timestamp_s"] is not None else "  None"
+            a_t = (
+                f"{f['audio_timestamp_s']:.3f}" if f["audio_timestamp_s"] is not None else "  None"
+            )
+            v_t = (
+                f"{f['video_timestamp_s']:.3f}" if f["video_timestamp_s"] is not None else "  None"
+            )
             if f["audio_timestamp_s"] is not None and f["video_timestamp_s"] is not None:
                 lag = f"{(f['audio_timestamp_s'] - f['video_timestamp_s'])*1000:.0f}ms"
             else:
                 lag = "   N/A"
-            print(f"  {f['flush_time_s']:6.2f}  {a_t:>8}  {v_t:>8}  {lag:>8}  {f['audio_discarded']:>6}  "
-                  f"{f['video_discarded']:>6}  {f['audio_temporal_span_ms']:>10.0f}")
+            print(
+                f"  {f['flush_time_s']:6.2f}  {a_t:>8}  {v_t:>8}  {lag:>8}  {f['audio_discarded']:>6}  "
+                f"{f['video_discarded']:>6}  {f['audio_temporal_span_ms']:>10.0f}"
+            )
 
         # ==== STEP 4: Temporal alignment analysis ====
-        print(f"\n--- Temporal Alignment Analysis ---")
+        print("\n--- Temporal Alignment Analysis ---")
         lags_ms = []
         for f in flushes:
             if f["audio_timestamp_s"] is not None and f["video_timestamp_s"] is not None:
@@ -396,26 +429,32 @@ def main():
                 lags_ms.append(lag)
 
         if lags_ms:
-            print(f"  Audio-Video lag (ms): mean={np.mean(lags_ms):.1f}, "
-                  f"std={np.std(lags_ms):.1f}, "
-                  f"min={np.min(lags_ms):.1f}, max={np.max(lags_ms):.1f}")
+            print(
+                f"  Audio-Video lag (ms): mean={np.mean(lags_ms):.1f}, "
+                f"std={np.std(lags_ms):.1f}, "
+                f"min={np.min(lags_ms):.1f}, max={np.max(lags_ms):.1f}"
+            )
             print(f"  Flushes with both modalities: {len(lags_ms)} / {len(flushes)}")
         else:
             print("  WARNING: No flushes had both audio and video!")
 
         # ==== STEP 5: Audio temporal span per window ====
-        print(f"\n--- Audio Temporal Information Loss ---")
+        print("\n--- Audio Temporal Information Loss ---")
         spans = [f["audio_temporal_span_ms"] for f in flushes if f["audio_temporal_span_ms"] > 0]
         if spans:
-            print(f"  Audio data span per window: mean={np.mean(spans):.0f}ms, "
-                  f"max={np.max(spans):.0f}ms")
+            print(
+                f"  Audio data span per window: mean={np.mean(spans):.0f}ms, "
+                f"max={np.max(spans):.0f}ms"
+            )
             print(f"  This means ~{np.mean(spans):.0f}ms of audio CONTEXT arrives each window,")
-            print(f"  but only the LAST 32ms chunk survives (the rest are overwritten).")
-            print(f"  => {np.mean(spans):.0f}ms - 32ms = ~{max(0, np.mean(spans)-32):.0f}ms of temporal context LOST per window")
+            print("  but only the LAST 32ms chunk survives (the rest are overwritten).")
+            print(
+                f"  => {np.mean(spans):.0f}ms - 32ms = ~{max(0, np.mean(spans)-32):.0f}ms of temporal context LOST per window"
+            )
 
         # ==== STEP 6: MFCC feature variation within windows ====
-        print(f"\n--- MFCC Feature Stability Analysis ---")
-        print(f"  (Do consecutive MFCC chunks within a 500ms window carry different info?)")
+        print("\n--- MFCC Feature Stability Analysis ---")
+        print("  (Do consecutive MFCC chunks within a 500ms window carry different info?)")
 
         # Pick 5 windows with audio and measure variation
         windows_with_audio = [f for f in flushes if len(f["audio_timestamps_in_window"]) >= 3]
@@ -427,17 +466,26 @@ def main():
                 duration_s=ts_list[-1] - ts_list[0] + CHUNK_DURATION,
             )
             if analysis:
-                print(f"\n  Window at {f['flush_time_s']:.2f}s ({analysis['n_chunks']} chunks, "
-                      f"{analysis['time_span_ms']:.0f}ms span):")
-                print(f"    Consecutive cosine sim: {analysis['mean_consecutive_cosine_sim']:.4f} "
-                      f"(std={analysis['std_cosine_sim']:.4f})")
+                print(
+                    f"\n  Window at {f['flush_time_s']:.2f}s ({analysis['n_chunks']} chunks, "
+                    f"{analysis['time_span_ms']:.0f}ms span):"
+                )
+                print(
+                    f"    Consecutive cosine sim: {analysis['mean_consecutive_cosine_sim']:.4f} "
+                    f"(std={analysis['std_cosine_sim']:.4f})"
+                )
                 print(f"    First↔Last cosine sim: {analysis['first_last_cosine']:.4f}")
-                print(f"    Interpretation: {'SIMILAR (stable sound)' if analysis['first_last_cosine'] > 0.95 else 'DIFFERENT (evolving sound — information lost!)' if analysis['first_last_cosine'] < 0.8 else 'MODERATE variation'}")
+                print(
+                    f"    Interpretation: {'SIMILAR (stable sound)' if analysis['first_last_cosine'] > 0.95 else 'DIFFERENT (evolving sound — information lost!)' if analysis['first_last_cosine'] < 0.8 else 'MODERATE variation'}"
+                )
 
         # ==== STEP 7: Cross-window MFCC variation ====
-        print(f"\n--- Cross-Window MFCC Variation (are different windows distinguishable?) ---")
-        delivered_mfccs = [(f["audio_timestamp_s"], f["audio_features"])
-                          for f in flushes if f["audio_features"] is not None]
+        print("\n--- Cross-Window MFCC Variation (are different windows distinguishable?) ---")
+        delivered_mfccs = [
+            (f["audio_timestamp_s"], f["audio_features"])
+            for f in flushes
+            if f["audio_features"] is not None
+        ]
         if len(delivered_mfccs) >= 4:
             # Compare consecutive delivered features
             cross_sims = []
@@ -446,32 +494,36 @@ def main():
                 b = delivered_mfccs[i + 1][1]
                 cos = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-10)
                 cross_sims.append(float(cos))
-            print(f"  Cosine similarity between consecutive DELIVERED audio observations:")
+            print("  Cosine similarity between consecutive DELIVERED audio observations:")
             print(f"    Mean: {np.mean(cross_sims):.4f}, Std: {np.std(cross_sims):.4f}")
             print(f"    Min:  {np.min(cross_sims):.4f}, Max: {np.max(cross_sims):.4f}")
             low_sim = sum(1 for s in cross_sims if s < 0.8)
-            print(f"    Distinct transitions (cosine < 0.8): {low_sim}/{len(cross_sims)} = {low_sim/len(cross_sims)*100:.0f}%")
+            print(
+                f"    Distinct transitions (cosine < 0.8): {low_sim}/{len(cross_sims)} = {low_sim/len(cross_sims)*100:.0f}%"
+            )
         else:
-            print(f"  Not enough delivered audio observations to compare")
+            print("  Not enough delivered audio observations to compare")
 
         # ==== STEP 8: What the brain actually sees ====
-        print(f"\n--- Brain's Perspective (what it receives per step @ ~0.74 steps/sec) ---")
+        print("\n--- Brain's Perspective (what it receives per step @ ~0.74 steps/sec) ---")
         brain_step_interval = 1.0 / 0.74  # ~1.35s per step
         print(f"  Brain step interval: ~{brain_step_interval*1000:.0f}ms")
-        print(f"  Aggregator flush interval: 500ms (2 Hz)")
+        print("  Aggregator flush interval: 500ms (2 Hz)")
         print(f"  => Brain gets ~{brain_step_interval/0.5:.1f} potential flushes per step")
-        print(f"     but _latest_obs dict keeps only 1 per modality per step")
+        print("     but _latest_obs dict keeps only 1 per modality per step")
         print(f"  => Of {len(audio_events)} audio chunks in {test_duration:.0f}s,")
         print(f"     brain processes ~{int(test_duration / brain_step_interval)} observations")
-        print(f"     each representing a SINGLE 32ms MFCC snapshot")
+        print("     each representing a SINGLE 32ms MFCC snapshot")
 
         # ==== STEP 9: Sensory buffer decay analysis ====
-        print(f"\n--- Sensory Buffer Decay Analysis ---")
-        print(f"  sensory_decay = 0.97 per step → current halves every ~23 steps")
-        print(f"  At 0.74 steps/sec, new observation arrives every ~{brain_step_interval:.1f}s = 1 step")
-        print(f"  Each MFCC observation persists ~33 steps of decay")
-        print(f"  But new observation REPLACES old one each step (additive in buffer)")
-        print(f"  So temporal structure = series of decaying snapshots, not accumulated sequence")
+        print("\n--- Sensory Buffer Decay Analysis ---")
+        print("  sensory_decay = 0.97 per step → current halves every ~23 steps")
+        print(
+            f"  At 0.74 steps/sec, new observation arrives every ~{brain_step_interval:.1f}s = 1 step"
+        )
+        print("  Each MFCC observation persists ~33 steps of decay")
+        print("  But new observation REPLACES old one each step (additive in buffer)")
+        print("  So temporal structure = series of decaying snapshots, not accumulated sequence")
 
         print(f"\n{'='*80}")
         print(f"VERDICT for {video_path.name}:")
@@ -480,21 +532,29 @@ def main():
             avg_span = np.mean(spans)
             if avg_span > 100:
                 print(f"  PROBLEM CONFIRMED: Each 500ms window contains ~{avg_span:.0f}ms of")
-                print(f"  audio data ({int(avg_span/100)} chunks), but only the last 32ms survives.")
-                print(f"  The brain receives audio SNAPSHOTS, not temporal sequences.")
+                print(
+                    f"  audio data ({int(avg_span/100)} chunks), but only the last 32ms survives."
+                )
+                print("  The brain receives audio SNAPSHOTS, not temporal sequences.")
                 if lags_ms:
-                    print(f"  Cross-modal alignment: audio lags video by {np.mean(lags_ms):.0f}ms on average.")
+                    print(
+                        f"  Cross-modal alignment: audio lags video by {np.mean(lags_ms):.0f}ms on average."
+                    )
                     if abs(np.mean(lags_ms)) > 200:
-                        print(f"  CROSS-MODAL MISALIGNMENT: {abs(np.mean(lags_ms)):.0f}ms lag is too large for STDP binding")
+                        print(
+                            f"  CROSS-MODAL MISALIGNMENT: {abs(np.mean(lags_ms)):.0f}ms lag is too large for STDP binding"
+                        )
                     else:
-                        print(f"  Cross-modal timing is acceptable for STDP binding (<200ms)")
+                        print("  Cross-modal timing is acceptable for STDP binding (<200ms)")
             else:
-                print(f"  Audio spans per window are short ({avg_span:.0f}ms) — less data loss than expected")
+                print(
+                    f"  Audio spans per window are short ({avg_span:.0f}ms) — less data loss than expected"
+                )
 
     print(f"\n\n{'#'*80}")
-    print(f"# OVERALL AUDIT CONCLUSION")
+    print("# OVERALL AUDIT CONCLUSION")
     print(f"{'#'*80}")
-    print(f"""
+    print("""
 The aggregation pipeline has a fundamental temporal coherence problem:
 
 1. AUDIO: Each 500ms flush window contains ~4-5 MFCC chunks (each covering 32ms).

@@ -13,6 +13,7 @@ import importlib
 import os
 import sys
 import types
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -65,27 +66,34 @@ def _import_submodule(package_name: str, module_name: str):
     return mod
 
 
+# beliefs.graph and kernel.evaluator both import names from activelearning, so
+# expose activelearning.core first. Import it directly to avoid the full
+# activelearning __init__ that pulls in aiohttp.
+_al_core = _import_submodule("activelearning", "core")
+sys.modules.setdefault("activelearning", types.ModuleType("activelearning"))
+# Patch the names those modules need from activelearning
+_al_ns = sys.modules["activelearning"]
+_al_ns.KernelDecisionType = _al_core.KernelDecisionType
+_al_ns.RiskAnalysis = _al_core.RiskAnalysis
+_al_ns.current_timestamp = _al_core.current_timestamp
+_al_ns.generate_trace_id = _al_core.generate_trace_id
+
 # Pre-import the two modules we need, bypassing __init__.py
 _beliefs_graph = _import_submodule("beliefs", "graph")
 BeliefGraph = _beliefs_graph.BeliefGraph
 NodeType = _beliefs_graph.NodeType
 
-# For kernel.evaluator we also need activelearning.core (KernelDecisionType, RiskAnalysis).
-# Import it directly to avoid the full activelearning __init__ that pulls in aiohttp.
-_al_core = _import_submodule("activelearning", "core")
-sys.modules.setdefault("activelearning", types.ModuleType("activelearning"))
-# Patch the minimal names kernel.evaluator needs from activelearning
-_al_ns = sys.modules["activelearning"]
-_al_ns.KernelDecisionType = _al_core.KernelDecisionType
-_al_ns.RiskAnalysis = _al_core.RiskAnalysis
-
 _kernel_evaluator = _import_submodule("kernel", "evaluator")
 KernelEvaluator = _kernel_evaluator.KernelEvaluator
 
-from neuromorphic.config import NeuromorphicConfig, SafetyGateConfig, MotorFeedbackConfig
-
+from neuromorphic.config import (  # noqa: E402
+    MotorFeedbackConfig,
+    NeuromorphicConfig,
+    SafetyGateConfig,
+)
 
 # ===== Config tests =====
+
 
 class TestSafetyGateConfig:
     """Test SafetyGateConfig parsing from environment."""
@@ -124,6 +132,7 @@ class TestSafetyGateConfig:
 
 
 # ===== Belief tests =====
+
 
 class TestBeliefConstitution:
     """Test belief graph constitutional seeding and value protection."""
@@ -207,34 +216,37 @@ class TestBeliefConstitution:
     def test_import_enforces_value_floor(self):
         """import_from_dict enforces VALUE confidence floor (anti-tampering)."""
         import time
+
         now = int(time.time() * 1000)
         g = BeliefGraph()
         # Simulate loading corrupted persistence data
-        g.import_from_dict({
-            "nodes": [
-                {
-                    "id": "value.human_safety",
-                    "type": "value",
-                    "content": "Human safety",
-                    "confidence": 0.3,  # corrupted / tampered
-                    "source": "constitutional",
-                    "metadata": {},
-                    "created_at": now,
-                    "updated_at": now,
-                },
-                {
-                    "id": "norm.gradual_motor",
-                    "type": "norm",
-                    "content": "Gradual motor",
-                    "confidence": 0.3,  # norms CAN be low
-                    "source": "constitutional",
-                    "metadata": {},
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            ],
-            "edges": [],
-        })
+        g.import_from_dict(
+            {
+                "nodes": [
+                    {
+                        "id": "value.human_safety",
+                        "type": "value",
+                        "content": "Human safety",
+                        "confidence": 0.3,  # corrupted / tampered
+                        "source": "constitutional",
+                        "metadata": {},
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                    {
+                        "id": "norm.gradual_motor",
+                        "type": "norm",
+                        "content": "Gradual motor",
+                        "confidence": 0.3,  # norms CAN be low
+                        "source": "constitutional",
+                        "metadata": {},
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                ],
+                "edges": [],
+            }
+        )
         # VALUE must be floored at 0.9
         val = g.get_node("value.human_safety")
         assert val.confidence >= 0.9
@@ -255,6 +267,7 @@ class TestBeliefConstitution:
 
 # ===== Kernel tests =====
 
+
 class TestKernelNormViolations:
     """Test Kernel evaluator with norm violations."""
 
@@ -266,7 +279,13 @@ class TestKernelNormViolations:
             "trace_id": "test-123",
             "action": {"type": "motor_command", "channel": "locomotion", "intensity": 0.5},
         }
-        decision = ev.evaluate_action_proposal(proposal, norm_violations=[])
+        # With no risk analysis the Kernel fails closed (DENY); supply a
+        # low-risk analysis so the "no violations -> ALLOW" path is exercised.
+        decision = ev.evaluate_action_proposal(
+            proposal,
+            risk_analysis=types.SimpleNamespace(risk_score=0.0, flags=[]),
+            norm_violations=[],
+        )
         assert decision.type.value == "ALLOW"
 
     def test_norm_violation_boosts_risk(self):
@@ -281,7 +300,13 @@ class TestKernelNormViolations:
             {"norm_id": "norm.force_limit", "content": "force limit", "risk_boost": 0.3},
             {"norm_id": "norm.gradual_motor", "content": "gradual", "risk_boost": 0.15},
         ]
-        decision = ev.evaluate_action_proposal(proposal, norm_violations=violations)
+        # Base risk 0.0 comes from a low-risk analysis; without one the Kernel
+        # fails closed to max risk and the boost math below would not hold.
+        decision = ev.evaluate_action_proposal(
+            proposal,
+            risk_analysis=types.SimpleNamespace(risk_score=0.0, flags=[]),
+            norm_violations=violations,
+        )
 
         # 0.0 base + 0.3 + 0.15 = 0.45, which is below defer threshold (0.5)
         # But risk_score should reflect the boost
@@ -307,6 +332,7 @@ class TestKernelNormViolations:
 
 # ===== Feedback injection tests =====
 
+
 class TestSafetyFeedbackInjection:
     """Test that safety decisions inject motor outcome feedback.
 
@@ -327,14 +353,18 @@ class TestSafetyFeedbackInjection:
         """Replicate the service method for unit testing."""
         if not cfg.motor_feedback.enabled:
             return
-        pending_outcomes.append({
-            "proprio_data": proprio_data if proprio_data is not None else [1.0 if success else 0.0],
-            "provenance": f"motor.outcome.{channel}",
-            "gain": (
-                cfg.motor_feedback.success_gain if success
-                else cfg.motor_feedback.failure_gain
-            ) * confidence,
-        })
+        pending_outcomes.append(
+            {
+                "proprio_data": (
+                    proprio_data if proprio_data is not None else [1.0 if success else 0.0]
+                ),
+                "provenance": f"motor.outcome.{channel}",
+                "gain": (
+                    cfg.motor_feedback.success_gain if success else cfg.motor_feedback.failure_gain
+                )
+                * confidence,
+            }
+        )
 
     def test_deny_queues_negative_feedback(self):
         """DENY decision queues negative motor outcome for brain STDP."""

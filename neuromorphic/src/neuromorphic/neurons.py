@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from neuromorphic.config import LIFParams, InhibitoryConfig, DendriticCompartmentConfig, DualInhibitionConfig, NMDAConfig
+from neuromorphic.config import (
+    DendriticCompartmentConfig,
+    DualInhibitionConfig,
+    InhibitoryConfig,
+    LIFParams,
+    NMDAConfig,
+)
 
 
 class NeuronPopulation:
@@ -34,7 +40,7 @@ class NeuronPopulation:
         self.is_inhibitory = np.zeros(n, dtype=bool)
         if inhibitory_config is not None and inhibitory_config.inhibitory_fraction > 0:
             n_inh = int(n * inhibitory_config.inhibitory_fraction)
-            self.is_inhibitory[n - n_inh:] = True  # last n_inh neurons are inhibitory
+            self.is_inhibitory[n - n_inh :] = True  # last n_inh neurons are inhibitory
             self._inh_cfg = inhibitory_config
         else:
             self._inh_cfg = None
@@ -42,9 +48,11 @@ class NeuronPopulation:
         # Dual inhibition: PV-fast (GABA-A) vs SST-slow (GABA-B) subtypes (CIP-21)
         self._dual_inh_cfg = dual_inhibition_config
         self.is_sst = np.zeros(n, dtype=bool)
-        if (dual_inhibition_config is not None
-                and dual_inhibition_config.enabled
-                and self._inh_cfg is not None):
+        if (
+            dual_inhibition_config is not None
+            and dual_inhibition_config.enabled
+            and self._inh_cfg is not None
+        ):
             n_inh = int(self.is_inhibitory.sum())
             n_pv = int(n_inh * dual_inhibition_config.pv_fraction)
             n_sst = n_inh - n_pv
@@ -190,11 +198,14 @@ class NeuronPopulation:
             v = self.v_dendrite[c]
             rest = np.float32(cfg.resting[c])
             tau = self._tau_dend[c]
-            I_c = compartment_input[c]
+            I_c = compartment_input[c]  # noqa: N806
 
             # Decrease dendritic refractory timers
-            np.maximum(self._dend_refractory[c] - np.float32(dt), np.float32(0.0),
-                       out=self._dend_refractory[c])
+            np.maximum(
+                self._dend_refractory[c] - np.float32(dt),
+                np.float32(0.0),
+                out=self._dend_refractory[c],
+            )
             active = self._dend_refractory[c] <= 0.0
 
             # Leaky integration (in-place to avoid temporary arrays)
@@ -241,8 +252,8 @@ class NeuronPopulation:
             if thresh is not None:
                 half = rest_c + (thresh - rest_c) * 0.5
                 # Include dendritic spike — voltage was reset but compartment was active
-                self.compartment_active_at_spike[c] = (
-                    dend_spike_fired[c] | (self.v_dendrite[c] > half)
+                self.compartment_active_at_spike[c] = dend_spike_fired[c] | (
+                    self.v_dendrite[c] > half
                 )
             else:
                 self.compartment_active_at_spike[c] = self.v_dendrite[c] > (rest_c + 2.0)
@@ -273,9 +284,7 @@ class NeuronPopulation:
             self._gaba_b_conductance *= self._gaba_b_decay
             # I_gaba_b = g_b * (V - E_gaba_b); E_gaba_b = -90mV, V ~ -65mV
             # → negative current (hyperpolarizing) since V > E_gaba_b
-            gaba_b_current = self._gaba_b_conductance * (
-                self.v_membrane - self._gaba_b_reversal
-            )
+            gaba_b_current = self._gaba_b_conductance * (self.v_membrane - self._gaba_b_reversal)
             input_current = input_current - gaba_b_current
 
         # Phase 0b: NMDA slow excitatory current (CIP-24)
@@ -287,7 +296,8 @@ class NeuronPopulation:
             self._nmda_conductance *= self._nmda_decay
             # B(V) = 1 / (1 + [Mg2+]/3.57 * exp(-slope * V))
             mg_block = np.float32(1.0) / (
-                np.float32(1.0) + (self._nmda_mg / np.float32(3.57))
+                np.float32(1.0)
+                + (self._nmda_mg / np.float32(3.57))
                 * np.exp(-self._nmda_slope * self.v_membrane, dtype=np.float32)
             )
             # I_nmda = g_nmda * B(V) * (E_nmda - V); E_nmda=0mV, V~-65mV → positive (depolarizing)
@@ -303,7 +313,9 @@ class NeuronPopulation:
         self._pre_spike_drive = input_current
 
         # Decrease refractory timers FIRST (before integration)
-        np.maximum(self.refractory_timer - np.float32(dt), np.float32(0.0), out=self.refractory_timer)
+        np.maximum(
+            self.refractory_timer - np.float32(dt), np.float32(0.0), out=self.refractory_timer
+        )
 
         # Which neurons are NOT in refractory period
         active = self.refractory_timer <= 0.0
@@ -314,7 +326,9 @@ class NeuronPopulation:
 
         # Add noise
         if p.noise_std > 0:
-            dv += self._rng.normal(0, p.noise_std, size=self.n).astype(np.float32) * np.sqrt(dt / self._tau)
+            dv += self._rng.normal(0, p.noise_std, size=self.n).astype(np.float32) * np.sqrt(
+                dt / self._tau
+            )
 
         # Only update active neurons
         self.v_membrane += dv * active
@@ -471,6 +485,7 @@ class NeuronPopulation:
         saved_n = len(state["v_membrane"])
         if saved_n != self.n:
             import logging
+
             logging.getLogger(__name__).warning(
                 f"Neuron population size changed ({saved_n} → {self.n}), "
                 "re-initializing instead of loading saved state"
@@ -517,6 +532,7 @@ class NeuronPopulation:
             else:
                 # Shape mismatch (compartment count changed) — reset dendrites
                 import logging
+
                 logging.getLogger(__name__).warning(
                     f"Dendrite shape mismatch ({saved.shape} → {self.v_dendrite.shape}), resetting"
                 )

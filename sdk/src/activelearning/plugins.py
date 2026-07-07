@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Generic, Optional, TypeVar
+from typing import Any, Generic, TypeVar
 
 from activelearning.core import (
     ActionProposal,
@@ -29,15 +29,17 @@ T = TypeVar("T")
 
 class RiskClass(Enum):
     """Risk classification for plugins."""
-    LOW = "low"          # Simple data collection
-    MEDIUM = "medium"    # Some physical interaction
-    HIGH = "high"        # Significant physical actions
+
+    LOW = "low"  # Simple data collection
+    MEDIUM = "medium"  # Some physical interaction
+    HIGH = "high"  # Significant physical actions
     CRITICAL = "critical"  # Safety-critical operations
 
 
 @dataclass
 class PluginCapability:
     """Describes a capability provided by a plugin."""
+
     name: str
     description: str
     parameters: dict[str, str] = field(default_factory=dict)  # param_name -> type
@@ -47,6 +49,7 @@ class PluginCapability:
 @dataclass
 class SensorMetadata:
     """Metadata for a registered sensor."""
+
     sensor_id: str
     name: str
     description: str
@@ -58,6 +61,7 @@ class SensorMetadata:
 @dataclass
 class ActuatorMetadata:
     """Metadata for a registered actuator."""
+
     actuator_id: str
     name: str
     description: str
@@ -105,9 +109,9 @@ class SensorPlugin(ABC, Generic[T]):
         self.description = description
         self.rate_limit_hz = rate_limit_hz
         self.risk_class = risk_class
-        self._bus: Optional[EventBus] = None
+        self._bus: EventBus | None = None
         self._running = False
-        self._task: Optional[asyncio.Task[None]] = None
+        self._task: asyncio.Task[None] | None = None
         self._capabilities: list[PluginCapability] = []
 
     @abstractmethod
@@ -138,7 +142,7 @@ class SensorPlugin(ABC, Generic[T]):
             risk_class=self.risk_class,
         )
 
-    async def start(self, bus: Optional[EventBus] = None) -> None:
+    async def start(self, bus: EventBus | None = None) -> None:
         """
         Start the sensor.
 
@@ -171,7 +175,7 @@ class SensorPlugin(ABC, Generic[T]):
             self._task = None
         logger.info(f"Sensor {self.sensor_id} stopped")
 
-    async def emit(self, data: T, tags: Optional[list[str]] = None) -> None:
+    async def emit(self, data: T, tags: list[str] | None = None) -> None:
         """
         Emit an observation to the event bus.
 
@@ -233,7 +237,7 @@ class ActuatorPlugin(ABC, Generic[T]):
         actuator_id: str,
         name: str,
         description: str = "",
-        envelope: Optional[dict[str, tuple[float, float]]] = None,
+        envelope: dict[str, tuple[float, float]] | None = None,
         risk_class: RiskClass = RiskClass.MEDIUM,
     ):
         self.actuator_id = actuator_id
@@ -241,7 +245,7 @@ class ActuatorPlugin(ABC, Generic[T]):
         self.description = description
         self.envelope = envelope or {}
         self.risk_class = risk_class
-        self._bus: Optional[EventBus] = None
+        self._bus: EventBus | None = None
         self._capabilities: list[PluginCapability] = []
 
     @abstractmethod
@@ -273,7 +277,7 @@ class ActuatorPlugin(ABC, Generic[T]):
             risk_class=self.risk_class,
         )
 
-    def validate_envelope(self, action: dict[str, Any]) -> tuple[bool, Optional[str]]:
+    def validate_envelope(self, action: dict[str, Any]) -> tuple[bool, str | None]:
         """
         Validate action parameters against the envelope.
 
@@ -292,7 +296,7 @@ class ActuatorPlugin(ABC, Generic[T]):
                     return False, f"Parameter {param}={value} outside range [{min_val}, {max_val}]"
         return True, None
 
-    async def start(self, bus: Optional[EventBus] = None) -> None:
+    async def start(self, bus: EventBus | None = None) -> None:
         """
         Start the actuator and subscribe to decision events.
 
@@ -355,7 +359,7 @@ class ActuatorPlugin(ABC, Generic[T]):
         # Execute the action
         try:
             success = await self._do_execute(proposal.action)
-            decision = KernelDecision(
+            decision: KernelDecision[Any] = KernelDecision(
                 trace_id=proposal.trace_id,
                 type=KernelDecisionType.ALLOW,
             )
@@ -481,12 +485,12 @@ def register_actuator(actuator: ActuatorPlugin[Any]) -> ActuatorPlugin[Any]:
     return actuator
 
 
-def get_sensor(sensor_id: str) -> Optional[SensorPlugin[Any]]:
+def get_sensor(sensor_id: str) -> SensorPlugin[Any] | None:
     """Get a registered sensor by ID."""
     return _sensor_registry.get(sensor_id)
 
 
-def get_actuator(actuator_id: str) -> Optional[ActuatorPlugin[Any]]:
+def get_actuator(actuator_id: str) -> ActuatorPlugin[Any] | None:
     """Get a registered actuator by ID."""
     return _actuator_registry.get(actuator_id)
 

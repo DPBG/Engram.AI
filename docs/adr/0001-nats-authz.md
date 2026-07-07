@@ -200,6 +200,8 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `code.decision.>` | **kernel only** | meta, waiters | Per-trace code decisions. JetStream. |
 | `kernel.status` | dashboard (request) | kernel | Request/reply status. |
 | `kernel.status.response` | kernel | dashboard | Reply payload. |
+| `kernel.heartbeat` | kernel | kernel-watchdog, dashboard | Liveness pulse published by the Kernel on a fixed interval (E1.9.3). Absence triggers SAFE_HALT via the kernel-loss watchdog. |
+| `kernel.decision_rates` | kernel | dashboard | Periodic decision-rate metrics (ALLOW/DENY/TRANSFORM/DEFER counts) for the dashboard's safety panel. |
 
 ### Policy (Kernel-owned; see §3)
 

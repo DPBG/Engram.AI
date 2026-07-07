@@ -29,7 +29,10 @@ class TestSubjectHelpers:
         assert schema_for_subject(Subjects.PROPOSAL_NEW) is ActionProposalMessage
         assert schema_for_subject(Subjects.COGNITIVE_EXECUTE) is CognitiveQueryMessage
         assert schema_for_subject(Subjects.COGNITIVE_QUERY) is CognitiveQueryMessage
-        assert schema_for_subject(Subjects.COGNITIVE_RESPONSE_VALIDATE) is CognitiveResponseValidateMessage
+        assert (
+            schema_for_subject(Subjects.COGNITIVE_RESPONSE_VALIDATE)
+            is CognitiveResponseValidateMessage
+        )
         assert schema_for_subject("unknown.subject") is None
 
 

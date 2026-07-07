@@ -11,23 +11,21 @@ Tests cover:
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from neuromorphic.config import (
+    DendriticCompartmentConfig,
+    MotorFeedbackConfig,
     NeuromorphicConfig,
     PopulationConfig,
-    DecodingConfig,
-    MotorFeedbackConfig,
-    DendriticCompartmentConfig,
 )
 from neuromorphic.encoding import _resolve_modality
 from neuromorphic.network import NeuromorphicNetwork
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _small_config(
     motor_feedback: bool = False,
@@ -57,6 +55,7 @@ def _small_config(
 # ---------------------------------------------------------------------------
 # Config tests
 # ---------------------------------------------------------------------------
+
 
 class TestMotorFeedbackConfig:
     def test_default_disabled(self):
@@ -90,6 +89,7 @@ class TestMotorFeedbackConfig:
 # Provenance routing tests
 # ---------------------------------------------------------------------------
 
+
 class TestMotorOutcomeProvenance:
     def test_motor_outcome_routes_to_proprioceptive(self):
         assert _resolve_modality("motor.outcome") == "proprioceptive"
@@ -106,6 +106,7 @@ class TestMotorOutcomeProvenance:
 # ---------------------------------------------------------------------------
 # R-STDP on motor synapse groups
 # ---------------------------------------------------------------------------
+
 
 class TestMotorRSTDP:
     def test_motor_rstdp_enabled(self):
@@ -151,9 +152,14 @@ class TestMotorRSTDP:
         R-STDP requires both enabled AND motor_rstdp_enabled."""
         cfg = NeuromorphicConfig(
             populations=PopulationConfig(
-                brainstem=100, reflex_arc=50, sensory_cortex=200,
-                motor_cortex=200, cerebellum=100, association_cortex=200,
-                predictive_layer=100, working_memory=50,
+                brainstem=100,
+                reflex_arc=50,
+                sensory_cortex=200,
+                motor_cortex=200,
+                cerebellum=100,
+                association_cortex=200,
+                predictive_layer=100,
+                working_memory=50,
             ),
             dendrites=DendriticCompartmentConfig(enabled=False),
         )
@@ -165,6 +171,7 @@ class TestMotorRSTDP:
 # ---------------------------------------------------------------------------
 # Motor echo DA boost
 # ---------------------------------------------------------------------------
+
 
 class TestMotorEchoDaBurst:
     def test_apply_and_remove_da_boost(self):
@@ -209,6 +216,7 @@ class TestMotorEchoDaBurst:
 # Motor outcome injection
 # ---------------------------------------------------------------------------
 
+
 class TestMotorOutcomeInjection:
     def test_inject_outcome_returns_current(self):
         """Motor outcome can be injected as proprioceptive sensory current."""
@@ -216,9 +224,7 @@ class TestMotorOutcomeInjection:
         net = NeuromorphicNetwork(cfg)
 
         # Inject a success outcome
-        current = net.inject_observation(
-            [1.0], provenance="motor.outcome.locomotion"
-        )
+        current = net.inject_observation([1.0], provenance="motor.outcome.locomotion")
         assert current is not None
         assert current.shape == (cfg.populations.sensory_cortex,)
         assert current.sum() > 0  # non-zero injection
@@ -231,14 +237,12 @@ class TestMotorOutcomeInjection:
         # First inject a visual observation to activate the allocator
         net.inject_observation([0.5] * 10, provenance="sensor.camera.0")
         # Then inject motor outcome
-        current = net.inject_observation(
-            [1.0, 0.5, 0.8], provenance="motor.outcome.manipulation"
-        )
+        current = net.inject_observation([1.0, 0.5, 0.8], provenance="motor.outcome.manipulation")
 
         # The proprioceptive range should have non-zero values
         proprio_range = net.allocator.get_range("proprioceptive")
         if proprio_range[1] > proprio_range[0]:
-            proprio_slice = current[proprio_range[0]:proprio_range[1]]
+            proprio_slice = current[proprio_range[0] : proprio_range[1]]
             assert proprio_slice.sum() > 0
 
     def test_network_step_after_outcome_injection(self):
@@ -246,9 +250,7 @@ class TestMotorOutcomeInjection:
         cfg = _small_config(motor_feedback=True)
         net = NeuromorphicNetwork(cfg)
 
-        current = net.inject_observation(
-            [1.0], provenance="motor.outcome.locomotion"
-        )
+        current = net.inject_observation([1.0], provenance="motor.outcome.locomotion")
         current *= 2.0  # apply gain
         result = net.step(current)
 
@@ -261,6 +263,7 @@ class TestMotorOutcomeInjection:
 # Full loop integration
 # ---------------------------------------------------------------------------
 
+
 class TestMotorFeedbackIntegration:
     def test_motor_fire_then_feedback_changes_weights(self):
         """Complete feedback loop: fire motor → inject outcome → verify STDP ran."""
@@ -272,18 +275,14 @@ class TestMotorFeedbackIntegration:
 
         # Run several steps with sensory input to get activity going
         for _ in range(20):
-            current = net.inject_observation(
-                [0.5] * 50, provenance="sensor.camera.0"
-            )
+            current = net.inject_observation([0.5] * 50, provenance="sensor.camera.0")
             net.step(current)
 
         # Apply echo DA boost (simulates motor fire)
         net.apply_motor_echo_da(1.5)
 
         # Inject motor outcome (proprioceptive feedback)
-        outcome_current = net.inject_observation(
-            [1.0], provenance="motor.outcome.locomotion"
-        )
+        outcome_current = net.inject_observation([1.0], provenance="motor.outcome.locomotion")
         outcome_current *= 2.0
         net.step(outcome_current)
 
