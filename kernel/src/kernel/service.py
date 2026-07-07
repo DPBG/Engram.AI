@@ -663,7 +663,12 @@ class KernelService(BaseService):
                 )
                 self._deny_count += 1
             except Exception:
-                pass  # best-effort — caller will timeout
+                # Fail-closed (M1.15 / #208): if even this fail-safe DENY
+                # publish fails, the caller receives no decision, times out,
+                # and treats the proposal as closed — the error path can never
+                # emit an ALLOW. Verified by test_service.py fail-closed
+                # deny-publish-failure tests.
+                pass
 
     def _signed_code_decision(self, decision: KernelDecision) -> dict:
         """Build the signed wire payload for a code decision."""
@@ -742,7 +747,12 @@ class KernelService(BaseService):
                 )
                 self._deny_count += 1
             except Exception:
-                pass  # best-effort — caller will timeout
+                # Fail-closed (M1.15 / #208): if even this fail-safe DENY
+                # publish fails, the caller receives no decision, times out,
+                # and treats the proposal as closed — the error path can never
+                # emit an ALLOW. Verified by test_service.py fail-closed
+                # deny-publish-failure tests.
+                pass
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""

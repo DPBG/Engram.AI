@@ -27,6 +27,9 @@ class _RaisingEvaluator:
     def evaluate_code_proposal(self, *args, **kwargs):
         raise RuntimeError("boom — simulated internal kernel error")
 
+    def evaluate_action_proposal(self, *args, **kwargs):
+        raise RuntimeError("boom — simulated internal kernel error")
+
 
 def _make_service():
     """A KernelService with __init__ bypassed and only the bits the code-proposal
@@ -113,3 +116,71 @@ def test_valid_risk_analysis_parsed():
     result = _run_risk_analysis({"type": "analysis", "risk_score": 0.2, "flags": ["OK"]})
     assert result.risk_score == 0.2
     assert result.flags == ["OK"]
+
+
+# --- M1.15 (#208): fail-closed even when the fail-safe DENY *publish* itself fails ---
+
+
+class _FailingBus:
+    """Event bus whose publish always raises — simulates the DENY publish failing."""
+
+    def __init__(self):
+        self.attempts = []
+
+    async def publish(self, subject, payload):
+        self.attempts.append((subject, payload))
+        raise RuntimeError("boom — simulated NATS publish failure")
+
+
+def test_code_proposal_deny_publish_failure_fails_closed():
+    # When evaluating a code proposal raises AND publishing the fail-safe DENY
+    # also raises, the handler must swallow the publish failure (the caller times
+    # out and treats a missing decision as closed) and must only ever attempt a
+    # DENY on the code-decision subject — never an ALLOW.
+    svc = _make_service()
+    svc.event_bus = _FailingBus()
+
+    # Must not raise, even though both evaluate and the deny-publish fail.
+    asyncio.run(svc._handle_code_proposal({"trace_id": "t1", "source": "meta-programmer"}))
+
+    # The fail-safe DENY publish was attempted (we exercised the swallowed path)...
+    assert len(svc.event_bus.attempts) == 1
+    subject, payload = svc.event_bus.attempts[0]
+    assert subject == code_decision_subject("t1")
+    # ...and it was a DENY, so no ALLOW ever left the kernel on the error path.
+    assert payload["type"] == DecisionType.DENY.value
+    assert payload["trace_id"] == "t1"
+    assert payload["risk_score"] == 1.0
+
+
+def test_action_proposal_deny_publish_failure_fails_closed():
+    # Same guarantee for the action-proposal path, whose fail-safe DENY goes
+    # through _publish_and_log_decision. A publish failure there must be swallowed
+    # and must never downgrade the error path to an ALLOW.
+    svc = _make_service()
+    svc._allow_count = 0
+
+    async def _no_norms(*args, **kwargs):
+        return []
+
+    svc._check_belief_norms = _no_norms
+
+    attempted = []
+
+    async def _failing_publish(trace_id, proposal_type, source, decision, **kwargs):
+        attempted.append(decision)
+        raise RuntimeError("boom — simulated publish failure")
+
+    svc._publish_and_log_decision = _failing_publish
+
+    # Must not raise, even though both evaluate and the deny-publish fail.
+    asyncio.run(
+        svc._handle_action_proposal(
+            {"trace_id": "t1", "source": "planner", "action": {"type": "cognitive_query"}}
+        )
+    )
+
+    # Exactly one publish was attempted, and it was the fail-safe DENY.
+    assert len(attempted) == 1
+    assert attempted[0].type == DecisionType.DENY
+    assert attempted[0].risk_score == 1.0
