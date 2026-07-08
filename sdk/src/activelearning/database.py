@@ -118,6 +118,11 @@ class Database:
         """
         assert self._connection is not None
         cursor = await self._connection.execute("PRAGMA user_version")
+        if not self._connection:
+            raise RuntimeError("Database not initialized")
+        conn = self._connection
+
+        cursor = await conn.execute("PRAGMA user_version")
         row = await cursor.fetchone()
         version = row[0] if row else 0
 
@@ -129,7 +134,7 @@ class Database:
 
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
-                await self._connection.execute(statement)
+                await conn.execute(statement)
 
     async def close(self) -> None:
         """Close the database connection."""
