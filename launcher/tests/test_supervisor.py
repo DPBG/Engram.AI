@@ -17,7 +17,6 @@ from unittest.mock import patch
 import pytest
 
 from launcher.registry import Service
-from launcher.supervisor_alerts import SERVICE_FLAP_EVENT
 from launcher.supervisor import (
     _BACKOFF_FACTOR,
     _BACKOFF_INITIAL,
@@ -27,6 +26,7 @@ from launcher.supervisor import (
     ManagedProcess,
     Supervisor,
 )
+from launcher.supervisor_alerts import SERVICE_FLAP_EVENT
 
 # ---------------------------------------------------------------------------
 # Helpers
