@@ -40,9 +40,14 @@ from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuat
 from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
 from activelearning.signing import (
     DECISION_KEY_ENV,
+    OPERATOR_KEY_ENV,
+    OPERATOR_TIMESTAMP_TOLERANCE_MS,
+    operator_signing_enabled,
     sign_decision,
+    sign_operator_action,
     signing_enabled,
     verify_decision,
+    verify_operator_action,
 )
 from activelearning.subjects import (
     Subjects,
@@ -98,9 +103,14 @@ __all__ = [
     "register_actuator",
     # Decision signing (safety gate authentication)
     "sign_decision",
+    "sign_operator_action",
     "verify_decision",
+    "verify_operator_action",
     "signing_enabled",
+    "operator_signing_enabled",
     "DECISION_KEY_ENV",
+    "OPERATOR_KEY_ENV",
+    "OPERATOR_TIMESTAMP_TOLERANCE_MS",
     # NATS subject registry
     "Subjects",
     "decision_subject",

@@ -32,6 +32,9 @@ PLANNER_PASS = "planner-test-pass"
 META_USER = "meta_programmer"
 META_PASS = "meta-test-pass"
 
+DASHBOARD_USER = "dashboard"
+DASHBOARD_PASS = "dashboard-test-pass"
+
 # ── NATS config template ───────────────────────────────────────────────────
 # Implements the ADR 0001 §3 "privileged Kernel publisher set":
 #   decision.>  code.decision.>  policy.*  cognitive.response.validated
@@ -45,6 +48,7 @@ _NATS_AUTHZ_CONF = textwrap.dedent("""\
     # kernel      -> full publish rights (Kernel is the sole decision authority, CLAUDE.md s3)
     # planner     -> non-privileged publish only
     # meta_programmer -> non-privileged publish only
+    # dashboard   -> operator-level publish only (safety.halt/resume, observations, motor)
     authorization {{
       users = [
         {{
@@ -83,6 +87,27 @@ _NATS_AUTHZ_CONF = textwrap.dedent("""\
                 "metaprogrammer.>",
                 "system.health",
                 "heartbeat.meta",
+                "_INBOX.>"
+              ]
+            }}
+            subscribe {{ allow: [">"] }}
+          }}
+        }}
+        {{
+          user: "{dashboard_user}"
+          password: "{dashboard_pass}"
+          permissions {{
+            publish {{
+              allow: [
+                "safety.halt",
+                "safety.resume",
+                "observation.>",
+                "motor.guidance",
+                "neuromorphic.concept.probe",
+                "sensory.gateway.command",
+                "approval.response.>",
+                "system.health",
+                "heartbeat.dashboard",
                 "_INBOX.>"
               ]
             }}
@@ -131,6 +156,8 @@ def authz_nats_url() -> Generator[str, None, None]:
             planner_pass=PLANNER_PASS,
             meta_user=META_USER,
             meta_pass=META_PASS,
+            dashboard_user=DASHBOARD_USER,
+            dashboard_pass=DASHBOARD_PASS,
         )
     )
 

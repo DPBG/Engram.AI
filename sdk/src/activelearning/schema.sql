@@ -102,27 +102,28 @@ CREATE INDEX IF NOT EXISTS idx_kernel_decisions_timestamp
 -- LLM CACHE TABLES
 -- =============================================================================
 
+-- Response vectors live in Qdrant; this table is the index the invalidator uses
+-- to evict by age, by tag, or wholesale. `tags` is a JSON array matched with
+-- json_each(); prompt_hash is the SHA-256 of the prompt and the Qdrant point id.
 CREATE TABLE IF NOT EXISTS llm_cache (
-    id TEXT PRIMARY KEY,
-    prompt_hash TEXT NOT NULL UNIQUE,
+    prompt_hash TEXT PRIMARY KEY,
     prompt TEXT NOT NULL,
     response TEXT NOT NULL,
-    embedding_ref TEXT,  -- Reference to Qdrant vector ID
-    confidence REAL DEFAULT 1.0,
-    hit_count INTEGER DEFAULT 0,
-    last_hit_at INTEGER,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER
+    model TEXT NOT NULL,
+    tags TEXT,  -- JSON array of invalidation tags, or NULL when untagged
+    cached_at INTEGER NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    last_hit_at INTEGER
 );
-
-CREATE INDEX IF NOT EXISTS idx_llm_cache_prompt_hash
-    ON llm_cache(prompt_hash);
 
 CREATE INDEX IF NOT EXISTS idx_llm_cache_hit_count
     ON llm_cache(hit_count DESC);
 
 CREATE INDEX IF NOT EXISTS idx_llm_cache_last_hit
     ON llm_cache(last_hit_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_llm_cache_cached_at
+    ON llm_cache(cached_at);
 
 -- =============================================================================
 -- OVERRIDE TABLES

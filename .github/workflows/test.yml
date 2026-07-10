@@ -28,7 +28,7 @@ jobs:
       sandbox: ${{ steps.filter.outputs.sandbox }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Filter paths
         uses: dorny/paths-filter@v4
         id: filter
@@ -64,7 +64,7 @@ jobs:
         python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install uv and Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@v7
@@ -95,7 +95,7 @@ jobs:
     # Fast small-network profile (~1 min). Gated on neuromorphic changes.
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@v7
@@ -127,7 +127,7 @@ jobs:
         python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Engram CI env (uv + Python + nats-server)
         uses: ./.github/actions/setup-engram
@@ -165,7 +165,7 @@ jobs:
         python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Engram CI env (uv + Python + nats-server)
         uses: ./.github/actions/setup-engram
@@ -190,7 +190,12 @@ jobs:
         # Coordinator gate + dashboard auth tests load their module under test
         # directly (pure stdlib), so they need no extra service deps.
         # external-api tests inject fake clients; anthropic/openai are not imported.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests external-api/tests -o addopts="" -v
+        # --import-mode=importlib: these dirs have no tests/__init__.py, so
+        # pytest's default import mode collides when two services happen to
+        # share a test file basename (e.g. kernel/tests/test_service.py vs
+        # cache/tests/test_service.py) — importlib mode keys each module by
+        # its full file path instead, so same-named files never collide.
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests external-api/tests -o addopts="" --import-mode=importlib -v
       - name: Run Kernel + Meta-Programmer + Coordinator + Cache + Dashboard + Beliefs safety tests
         env:
           PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:cache/src:dashboard/src:beliefs/src
@@ -202,7 +207,12 @@ jobs:
         # backend). The dashboard router tests exercise the FastAPI app, so add
         # fastapi + httpx (its TestClient backend); they self-skip via importorskip
         # if those are ever absent.
-        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" -v
+        # --import-mode=importlib: kernel/tests/test_service.py and
+        # cache/tests/test_service.py collide under pytest's default import
+        # mode ("import file mismatch") since neither dir is a proper
+        # package (no __init__.py) — importlib mode keys each module by its
+        # full file path instead, so same-named files never collide.
+        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" --import-mode=importlib -v
 
   sandbox:
     name: Sandbox image build + smoke + containment
@@ -212,7 +222,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -247,7 +257,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -272,7 +282,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
