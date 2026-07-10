@@ -117,9 +117,12 @@ class Database:
         and the pending statements are no-ops on it.
         """
         assert self._connection is not None
+        cursor = await self._connection.execute("PRAGMA user_version")
         if not self._connection:
             raise RuntimeError("Database not initialized")
-        cursor = await self._connection.execute("PRAGMA user_version")
+        conn = self._connection
+
+        cursor = await conn.execute("PRAGMA user_version")
         row = await cursor.fetchone()
         version = row[0] if row else 0
 
@@ -131,7 +134,7 @@ class Database:
 
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
-                await self._connection.execute(statement)
+                await conn.execute(statement)
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -146,7 +149,7 @@ class Database:
         params: tuple[Any, ...] = (),
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement."""
-        if not self._connection:
+        if self._connection is None:
             raise RuntimeError("Database not initialized")
         return await self._connection.execute(sql, params)
 
@@ -156,7 +159,7 @@ class Database:
         params_list: list[tuple[Any, ...]],
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement with multiple parameter sets."""
-        if not self._connection:
+        if self._connection is None:
             raise RuntimeError("Database not initialized")
         return await self._connection.executemany(sql, params_list)
 
@@ -242,3 +245,20 @@ async def get_database() -> Database:
         _db = Database()
         await _db.initialize()
     return _db
+
+
+async def close_database() -> None:
+    """Close and reset the global database singleton, if open.
+
+    Production services never call this — BaseService.stop() deliberately
+    leaves the singleton open and relies on process exit to reap it. But
+    aiosqlite's connection worker runs on a non-daemon thread, so a test
+    process that opens the singleton via get_database() (e.g. by driving a
+    service through its real start()/stop() lifecycle) and never closes it
+    will hang at interpreter shutdown waiting for that thread to join. Tests
+    doing real end-to-end service lifecycles must call this in teardown.
+    """
+    global _db
+    if _db is not None:
+        await _db.close()
+        _db = None

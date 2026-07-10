@@ -11,6 +11,7 @@ from typing import Any
 
 from activelearning import BaseService, generate_trace_id
 from activelearning.nats_client import serialize_message
+from activelearning.signing import verify_decision
 from nats.aio.msg import Msg
 
 from planner.scheduler import PendingAction, Scheduler, SchedulerMode
@@ -171,8 +172,14 @@ class PlannerService(BaseService):
 
             self.logger.debug(f"Received decision for {trace_id}: {data.get('type')}")
 
-            # Resolve pending decision future
+            # Resolve pending decision future (fail-closed: reject forgeries).
             if trace_id in self._pending_decisions:
+                if not verify_decision(data):
+                    self.logger.error(
+                        "Rejected unverified decision for %s — ignoring (possible forgery)",
+                        trace_id,
+                    )
+                    return
                 future = self._pending_decisions.pop(trace_id)
                 if not future.done():
                     future.set_result(
