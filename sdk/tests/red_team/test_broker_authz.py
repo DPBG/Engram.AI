@@ -27,6 +27,8 @@ import nats.errors
 import pytest
 
 from .conftest import (
+    DASHBOARD_PASS,
+    DASHBOARD_USER,
     KERNEL_PASS,
     KERNEL_USER,
     META_PASS,
@@ -48,6 +50,10 @@ PRIVILEGED_SUBJECTS = [
 NON_KERNEL_IDENTITIES = [
     pytest.param(PLANNER_USER, PLANNER_PASS, id="planner"),
     pytest.param(META_USER, META_PASS, id="meta_programmer"),
+    # Dashboard has operator-level privileges (safety.halt/resume, motor guidance,
+    # observations) but must never publish to Kernel-only subjects — the
+    # "confused deputy" threat (issue #189).
+    pytest.param(DASHBOARD_USER, DASHBOARD_PASS, id="dashboard"),
 ]
 
 
@@ -69,7 +75,10 @@ async def _connect(
 
     async def _error_cb(e: Exception) -> None:
         msg = str(e)
-        if "Permissions Violation" in msg:
+        # nats-py lowercases the broker's "-ERR Permissions Violation ..." when
+        # surfacing it (e.g. 'nats: permissions violation for publish to ...'),
+        # so match case-insensitively or every violation is silently dropped.
+        if "permissions violation" in msg.lower():
             await violations.put(msg)
 
     nc = await nats.connect(
@@ -108,7 +117,7 @@ async def _assert_broker_rejects(
             f"but no error arrived within {timeout}s — "
             "broker accepted a publish it should have rejected"
         )
-    assert "Permissions Violation" in err, f"Unexpected error format: {err!r}"
+    assert "permissions violation" in err.lower(), f"Unexpected error format: {err!r}"
 
 
 # ── Rejection tests (parametrized: identity × subject) ────────────────────
@@ -124,8 +133,8 @@ async def test_non_kernel_publish_privileged_is_broker_rejected(
 ) -> None:
     """Broker must refuse every non-Kernel identity publishing on privileged subjects.
 
-    Covers all combinations of (planner, meta_programmer) × (decision.>,
-    code.decision.>, policy.*, cognitive.response.validated) — 10 cases total.
+    Covers all combinations of (planner, meta_programmer, dashboard) × (decision.>,
+    code.decision.>, policy.*, cognitive.response.validated) — 15 cases total.
     A single failure means the broker's allowlist has a gap.
     """
     async with _connect(authz_nats_url, user, password) as (nc, violations):
@@ -160,12 +169,18 @@ async def test_unknown_identity_cannot_connect(authz_nats_url: str) -> None:
     This covers the "supply-chain" threat: a rogue process that was never
     granted a credential in the broker config must not reach the bus at all.
     """
-    with pytest.raises((nats.errors.AuthorizationError, nats.errors.NoServersError)):
+    # allow_reconnect=False makes the auth rejection raise immediately.  With
+    # reconnects enabled, nats-py treats max_reconnect_attempts=0 as "no cap"
+    # and retries the rejected server forever — this test then hangs until the
+    # CI job timeout (observed: every SDK/governance job riding to 15 min).
+    # The broker surfaces the rejection as the base nats.errors.Error
+    # ("Authorization Violation"), so expect the family base class.
+    with pytest.raises(nats.errors.Error):
         nc = await nats.connect(
             authz_nats_url,
             user="fabricated_plugin",
             password="any-password",
             connect_timeout=2.0,
-            max_reconnect_attempts=0,
+            allow_reconnect=False,
         )
         await nc.close()

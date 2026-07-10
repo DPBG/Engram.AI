@@ -21,14 +21,25 @@ can understand and verify your change. Keep PRs focused — one feature or fix.
 
 ## How was this tested?
 
-<!-- Commands you ran and their result. For neuromorphic changes, include:
-     cd neuromorphic && uv run python -m pytest tests/ -v -p no:anchorpy -->
+<!--
+Paste the commands you ran and their result. Full guide: docs/TESTING.md.
+The suites CI runs:
+
+  # Neuromorphic (primary)
+  cd neuromorphic && uv run --extra dev python -m pytest tests/ -v -p no:anchorpy
+  # SDK
+  cd sdk && uv run --extra dev python -m pytest tests/ -v
+
+Add or update tests that cover this change (required for neuromorphic code).
+-->
 
 ## Checklist
 
-- [ ] My code follows the project style (see `CONTRIBUTING.md`).
-- [ ] I ran the relevant tests locally and they pass.
+- [ ] I ran the relevant tests locally and they pass (see `docs/TESTING.md`).
 - [ ] I added or updated tests for my change (required for neuromorphic code).
+- [ ] Lint / format / type gates pass locally — `ruff check .`, `black --check --line-length 100 .`, `mypy` (or `pre-commit run --all-files`).
+- [ ] I addressed the automated **Ruff + Mypy** review comments left on the diff.
+- [ ] My change follows the project style (see `CONTRIBUTING.md`).
 - [ ] I updated documentation where needed.
 - [ ] I did **not** commit secrets, credentials, server IPs, or large binaries.
 
@@ -38,3 +49,9 @@ can understand and verify your change. Keep PRs focused — one feature or fix.
 
 - [ ] This change preserves the 6 architecture invariants (see `DESIGN-PRINCIPLES.md`). N/A if not touching `neuromorphic/`.
 - [ ] This change does **not** weaken the safety layer (`kernel/`, `safety-supervisor/`, `beliefs/`). N/A if not touching those.
+
+<!--
+Before merge: the `ci-success` check must be green — it aggregates the
+test / lint / type gates. CodeQL and the Ruff + Mypy review bot also post
+findings directly on the diff; please resolve them.
+-->

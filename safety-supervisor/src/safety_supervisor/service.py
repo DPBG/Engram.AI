@@ -9,7 +9,6 @@ analysis before making ALLOW/DENY/TRANSFORM/DEFER decisions.
 """
 
 import asyncio
-import json
 from dataclasses import asdict
 
 from activelearning import BaseService
@@ -52,7 +51,9 @@ class SafetySupervisorService(BaseService):
 
         # Subscribe to status requests (request-reply)
         await self.event_bus.subscribe(
-            Subjects.SAFETY_STATUS, self._handle_status, is_request_handler=True,
+            Subjects.SAFETY_STATUS,
+            self._handle_status,
+            is_request_handler=True,
         )
 
     async def _cleanup(self) -> None:
@@ -86,10 +87,22 @@ class SafetySupervisorService(BaseService):
                     response,
                 )
 
-            self.logger.debug(f"Action {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}")
+            self.logger.debug(
+                f"Action {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}"
+            )
 
         except Exception as e:
-            self.logger.error(f"Error analyzing action: {e}")
+            self.logger.error(f"Error analyzing action: {e}", exc_info=True)
+            if msg and msg.reply:
+                await msg.respond(
+                    serialize_message(
+                        {
+                            "type": "error",
+                            "error": str(e),
+                            "trace_id": data.get("trace_id", ""),
+                        }
+                    )
+                )
 
     async def _handle_code_analysis(self, data: dict, msg=None) -> None:
         """Handle code analysis requests from Kernel via request-reply."""
@@ -118,10 +131,22 @@ class SafetySupervisorService(BaseService):
                     response,
                 )
 
-            self.logger.debug(f"Code {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}")
+            self.logger.debug(
+                f"Code {trace_id}: risk={analysis.risk_score:.2f}, flags={analysis.flags}"
+            )
 
         except Exception as e:
-            self.logger.error(f"Error analyzing code: {e}")
+            self.logger.error(f"Error analyzing code: {e}", exc_info=True)
+            if msg and msg.reply:
+                await msg.respond(
+                    serialize_message(
+                        {
+                            "type": "error",
+                            "error": str(e),
+                            "trace_id": data.get("trace_id", ""),
+                        }
+                    )
+                )
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""

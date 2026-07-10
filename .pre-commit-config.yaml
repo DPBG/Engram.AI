@@ -1,0 +1,46 @@
+# Pre-commit hooks mirroring the blocking CI gates (see .github/workflows/test.yml).
+# Catch lint/format issues locally before they reach a PR.
+#
+#   pip install pre-commit && pre-commit install     # one-time, enables on `git commit`
+#   pre-commit run --all-files                        # check the whole tree
+#
+# This file is also consumed by pre-commit.ci (https://pre-commit.ci) — a free
+# app for public repos that runs these hooks on every PR and auto-commits fixes.
+# Enable it once at pre-commit.ci; the `ci:` block below configures its behavior.
+
+ci:
+  autofix_prs: true
+  autofix_commit_msg: "style: auto-fix from pre-commit hooks"
+  autoupdate_commit_msg: "chore: pre-commit autoupdate"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: detect-private-key
+
+  # Ruff — matches the [tool.ruff] config (select E,F,I,N,W,UP; ignore E501;
+  # line-length 100). --fix auto-corrects; the format hook mirrors line-length.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+
+  # Black — line-length 100, the project-wide formatting gate.
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        args: ["--line-length=100"]
+
+# Mypy is intentionally NOT a pre-commit hook: it needs each service's deps
+# installed to be meaningful, which is slow and noisy for a commit hook. Type
+# checking stays in CI (the `typecheck` job) and the PR review bot.

@@ -51,8 +51,12 @@ def detect_system_info() -> dict[str, Any]:
                 pass
         elif platform.system() == "Darwin":
             try:
-                r = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
-                                   capture_output=True, text=True, timeout=5)
+                r = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
                 if r.returncode == 0:
                     info["cpu"]["model"] = r.stdout.strip()
             except Exception:
@@ -97,21 +101,28 @@ def detect_system_info() -> dict[str, Any]:
     # ─── GPU ─────────────────────────────────────────────────────
     try:
         r = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if r.returncode == 0 and r.stdout.strip():
             gpus = []
             for line in r.stdout.strip().split("\n"):
                 parts = [p.strip() for p in line.split(",")]
                 if len(parts) >= 4:
-                    gpus.append({
-                        "name": parts[0],
-                        "memory_total_mb": int(parts[1]),
-                        "memory_used_mb": int(parts[2]),
-                        "utilization_percent": int(parts[3]),
-                    })
+                    gpus.append(
+                        {
+                            "name": parts[0],
+                            "memory_total_mb": int(parts[1]),
+                            "memory_used_mb": int(parts[2]),
+                            "utilization_percent": int(parts[3]),
+                        }
+                    )
             info["gpu"] = gpus
         else:
             info["gpu"] = None
@@ -165,7 +176,9 @@ def _detect_running_services() -> list[dict]:
         if platform.system() == "Linux":
             r = subprocess.run(
                 ["ss", "-tlnp"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if r.returncode == 0:
                 for line in r.stdout.strip().split("\n")[1:]:  # skip header
@@ -173,17 +186,19 @@ def _detect_running_services() -> list[dict]:
                     if len(parts) >= 4:
                         local = parts[3]
                         # Extract port
-                        port_match = re.search(r':(\d+)$', local)
+                        port_match = re.search(r":(\d+)$", local)
                         if port_match:
                             port = int(port_match.group(1))
                             proc = parts[-1] if len(parts) > 5 else ""
                             # Map well-known ports
                             name = _port_to_service_name(port, proc)
-                            services.append({
-                                "port": port,
-                                "name": name,
-                                "address": local,
-                            })
+                            services.append(
+                                {
+                                    "port": port,
+                                    "name": name,
+                                    "address": local,
+                                }
+                            )
     except Exception:
         pass
 
@@ -220,12 +235,14 @@ def _detect_available_apis() -> list[dict]:
         ("Qdrant", os.environ.get("QDRANT_URL", "http://qdrant:6333"), "vector_db"),
     ]
     for name, url, api_type in checks:
-        apis.append({
-            "name": name,
-            "url": url,
-            "type": api_type,
-            "configured": True,
-        })
+        apis.append(
+            {
+                "name": name,
+                "url": url,
+                "type": api_type,
+                "configured": True,
+            }
+        )
     return apis
 
 
@@ -271,7 +288,9 @@ def get_live_metrics() -> dict[str, Any]:
             metrics["memory"] = {
                 "total_gb": round(mem_total / (1024**3), 2),
                 "available_gb": round(mem_avail / (1024**3), 2),
-                "used_percent": round(((mem_total - mem_avail) / mem_total) * 100, 1) if mem_total > 0 else 0,
+                "used_percent": (
+                    round(((mem_total - mem_avail) / mem_total) * 100, 1) if mem_total > 0 else 0
+                ),
             }
         disk = shutil.disk_usage("/")
         metrics["disk"] = {

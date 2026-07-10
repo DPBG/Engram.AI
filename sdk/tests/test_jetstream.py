@@ -1,6 +1,6 @@
 """Unit tests for JetStream safety-critical routing logic (no live NATS required)."""
 
-from activelearning.nats_client import EventBus, SAFETY_STREAM_NAME, _SAFETY_STREAM_SUBJECTS
+from activelearning.nats_client import _SAFETY_STREAM_SUBJECTS, SAFETY_STREAM_NAME, EventBus
 
 
 class TestSafetyStreamConstants:

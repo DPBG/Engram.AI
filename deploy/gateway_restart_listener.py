@@ -90,7 +90,8 @@ class GatewayRestartListener:
         try:
             subprocess.run(
                 ["tmux", "kill-session", "-t", TMUX_SESSION],
-                capture_output=True, timeout=10,
+                capture_output=True,
+                timeout=10,
             )
             logger.info("Killed tmux session '%s'", TMUX_SESSION)
         except Exception as e:
@@ -102,7 +103,8 @@ class GatewayRestartListener:
         try:
             subprocess.run(
                 ["tmux", "new-session", "-d", "-s", TMUX_SESSION, f"bash {STARTUP_SCRIPT}"],
-                capture_output=True, timeout=10,
+                capture_output=True,
+                timeout=10,
             )
             logger.info("Started new tmux session '%s'", TMUX_SESSION)
         except Exception as e:

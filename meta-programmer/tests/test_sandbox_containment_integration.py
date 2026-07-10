@@ -66,15 +66,23 @@ def _run(flags: list[str], payload: str) -> subprocess.CompletedProcess[str]:
 # ── Production hardening (mirrors sandbox_manager.py + smoke/run_smoke.sh) ───
 
 _ALL = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--memory-swap", "512m",   # same as --memory → zero swap, hard 512 MB limit
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--memory-swap",
+    "512m",  # same as --memory → zero swap, hard 512 MB limit
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # ── Per-test baselines: one guard removed or relaxed, all others kept ─────────
@@ -82,58 +90,112 @@ _ALL = [
 # Network test baseline: --network none removed → default bridge, outbound allowed.
 _WITHOUT_NETWORK = [
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # Read-only test baseline: --read-only removed → writable root filesystem.
 _WITHOUT_READONLY = [
-    "--network", "none",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--network",
+    "none",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # PIDs test baseline: limit raised to 500 → 200-process payload spawns freely.
 _RELAXED_PIDS = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "500",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "500",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 # Memory test baseline: limit raised to 2g, swap unlimited → 600 MB allocation succeeds.
 _RELAXED_MEMORY = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--pids-limit", "100",
-    "--memory", "2g",
-    "--memory-swap", "-1",     # unlimited swap for baseline
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "2g",
+    "--memory-swap",
+    "-1",  # unlimited swap for baseline
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
+]
+
+# Disk-quota test baseline: tmpfs size raised to 200M → 100 MB write succeeds.
+_RELAXED_DISKQUOTA = [
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--memory-swap",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=200M",  # 200 M → 100 MB write succeeds
 ]
 
 # Privilege test baseline: cap_drop and no-new-privileges both absent.
 _WITHOUT_PRIVDROP = [
-    "--network", "none",
+    "--network",
+    "none",
     "--read-only",
-    "--pids-limit", "100",
-    "--memory", "512m",
-    "--cpus", "0.5",
-    "--tmpfs", "/tmp:size=50M",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=50M",
 ]
 
 
@@ -170,6 +232,28 @@ _PAYLOAD_MEMORY = """\
 b = bytearray(600 * 1024 * 1024)
 for i in range(0, len(b), 4096):
     b[i] = 1
+"""
+
+# Disk-quota: try to write 100 MB to /tmp (the only writable directory).
+# f.flush() after each 1 MB chunk forces the kernel to account the write
+# against the tmpfs quota immediately rather than buffering it.
+# Exits 0 if OSError (ENOSPC) fires before 100 MB (quota enforced),
+# exits 1 if the full 100 MB is written without error (quota absent/too large).
+_PAYLOAD_DISK = """\
+import sys
+chunk = b"A" * (1024 * 1024)
+written = 0
+try:
+    with open("/tmp/filltest", "wb") as f:
+        for _ in range(100):
+            f.write(chunk)
+            f.flush()
+            written += len(chunk)
+    print(f"wrote {written // (1024 * 1024)} MB without hitting quota", file=sys.stderr)
+    sys.exit(1)
+except OSError as e:
+    print(f"blocked after {written // (1024 * 1024)} MB: {e}", file=sys.stderr)
+    sys.exit(0)
 """
 
 # Privileges: read CapBnd and NoNewPrivs from /proc/self/status.
@@ -222,19 +306,40 @@ def _listener_on_bridge():
     )
     subprocess.run(
         ["docker", "network", "create", "--driver", "bridge", net],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     subprocess.run(
-        ["docker", "run", "-d", "--rm", "--network", net, "--name", cname,
-         IMAGE, "python", "-c", _srv],
-        check=True, capture_output=True,
+        [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--network",
+            net,
+            "--name",
+            cname,
+            IMAGE,
+            "python",
+            "-c",
+            _srv,
+        ],
+        check=True,
+        capture_output=True,
     )
     # Hyphens in the network name are invalid in Go template dot notation;
     # use the index function to look up the key by string.
     r = subprocess.run(
-        ["docker", "inspect", "-f",
-         '{{(index .NetworkSettings.Networks "' + net + '").IPAddress}}', cname],
-        check=True, capture_output=True, text=True,
+        [
+            "docker",
+            "inspect",
+            "-f",
+            '{{(index .NetworkSettings.Networks "' + net + '").IPAddress}}',
+            cname,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
     )
     ip = r.stdout.strip()
     time.sleep(1)  # let Python bind before the test container connects
@@ -256,21 +361,19 @@ def test_network_isolation_blocks_outbound():
     With guard (--network none):      no route to bridge IP (exit non-zero).
     """
     with _listener_on_bridge() as (net, ip, port):
-        payload = (
-            f"import socket; socket.create_connection(('{ip}', {port}), timeout=5)"
-        )
+        payload = f"import socket; socket.create_connection(('{ip}', {port}), timeout=5)"
 
         # Baseline: container joined to the same bridge → connection succeeds.
         baseline = _run(list(_WITHOUT_NETWORK) + ["--network", net], payload)
-        assert baseline.returncode == 0, (
-            "baseline: TCP must reach local listener when --network none is absent"
-        )
+        assert (
+            baseline.returncode == 0
+        ), "baseline: TCP must reach local listener when --network none is absent"
 
         # Guarded: --network none → no bridge interface → connection fails.
         guarded = _run(_ALL, payload)
-        assert guarded.returncode != 0, (
-            "guarded: --network none must block connection to local bridge listener"
-        )
+        assert (
+            guarded.returncode != 0
+        ), "guarded: --network none must block connection to local bridge listener"
 
 
 def test_readonly_filesystem_blocks_root_writes():
@@ -287,14 +390,12 @@ def test_readonly_filesystem_blocks_root_writes():
     payload = "open('/var/tmp/blocked.txt', 'w').write('x')"
 
     baseline = _run(_WITHOUT_READONLY, payload)
-    assert baseline.returncode == 0, (
-        "baseline: root-FS write must succeed when --read-only is absent"
-    )
+    assert (
+        baseline.returncode == 0
+    ), "baseline: root-FS write must succeed when --read-only is absent"
 
     guarded = _run(_ALL, payload)
-    assert guarded.returncode != 0, (
-        "guarded: --read-only must deny writes outside /tmp"
-    )
+    assert guarded.returncode != 0, "guarded: --read-only must deny writes outside /tmp"
 
 
 def test_pids_limit_caps_fork_bomb():
@@ -330,9 +431,7 @@ def test_memory_limit_oom_kills_over_budget():
     swap = 1024m total, enough to absorb the 600 MB allocation).
     """
     baseline = _run(_RELAXED_MEMORY, _PAYLOAD_MEMORY)
-    assert baseline.returncode == 0, (
-        "baseline: 600 MB allocation must succeed under --memory 2g"
-    )
+    assert baseline.returncode == 0, "baseline: 600 MB allocation must succeed under --memory 2g"
 
     guarded = _run(_ALL, _PAYLOAD_MEMORY)
     assert guarded.returncode != 0, (
@@ -350,12 +449,36 @@ def test_privilege_escalation_prevention():
     """
     baseline = _run(_WITHOUT_PRIVDROP, _PAYLOAD_PRIVILEGES)
     assert baseline.returncode != 0, (
-        "baseline: without cap_drop/no-new-privileges, "
-        "CapBnd must be non-zero or NoNewPrivs=0"
+        "baseline: without cap_drop/no-new-privileges, " "CapBnd must be non-zero or NoNewPrivs=0"
     )
 
     guarded = _run(_ALL, _PAYLOAD_PRIVILEGES)
     assert guarded.returncode == 0, (
         "guarded: --cap-drop ALL must zero CapBnd; "
         "--security-opt no-new-privileges must set NoNewPrivs=1"
+    )
+
+
+def test_disk_quota_caps_tmpfs_writes():
+    """
+    Guard: --tmpfs /tmp:size=50M.
+    Payload: write 100 MB to /tmp (the only writable path; root FS is read-only).
+    Without guard (tmpfs size=200M): 100 MB write succeeds → payload exits 1.
+    With guard   (tmpfs size=50M):   ENOSPC raised before 100 MB → payload exits 0.
+
+    /tmp is the sole writable location because --read-only makes the root
+    overlay read-only.  Without a tmpfs size cap, a sandboxed process can
+    exhaust the host's RAM-backed tmpfs (or disk) through unbounded logging or
+    temporary-file creation without triggering any of the other guards.
+    """
+    baseline = _run(_RELAXED_DISKQUOTA, _PAYLOAD_DISK)
+    assert baseline.returncode != 0, (
+        "baseline: 100 MB write to /tmp must succeed under --tmpfs /tmp:size=200M "
+        "(payload exits 1 when not blocked by the quota)"
+    )
+
+    guarded = _run(_ALL, _PAYLOAD_DISK)
+    assert guarded.returncode == 0, (
+        "guarded: --tmpfs /tmp:size=50M must raise ENOSPC before 100 MB is written "
+        "(payload exits 0 when the disk quota fires)"
     )

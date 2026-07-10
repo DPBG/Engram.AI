@@ -7,9 +7,7 @@ import importlib.util
 import os
 import sys
 
-_HALT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "dashboard", "safe_halt.py"
-)
+_HALT_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "dashboard", "safe_halt.py")
 _spec = importlib.util.spec_from_file_location("dash_safe_halt", _HALT_PATH)
 sh = importlib.util.module_from_spec(_spec)
 sys.modules["dash_safe_halt"] = sh
@@ -17,6 +15,7 @@ _spec.loader.exec_module(sh)
 
 
 # ── get_halt_state / update_halt_state ───────────────────────────────────────
+
 
 def test_initial_state_not_halted():
     sh._halt_state = {"halted": False}
@@ -45,6 +44,7 @@ def test_update_halt_state_overwrites():
 
 
 # ── sanitize_halt_payload ─────────────────────────────────────────────────────
+
 
 def test_halt_valid_payload():
     ok, reason, op = sh.sanitize_halt_payload({"reason": "test", "operator_id": "ops"})
@@ -106,6 +106,7 @@ def test_halt_non_string_fields_coerced():
 
 
 # ── sanitize_resume_payload ───────────────────────────────────────────────────
+
 
 def test_resume_valid_payload():
     ok, op = sh.sanitize_resume_payload({"operator_id": "admin"})

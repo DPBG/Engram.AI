@@ -24,13 +24,14 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from activelearning.base_service import BaseService
+from activelearning.messages import ObservationMessage
 from activelearning.nats_client import EventBus, serialize_message
 from activelearning.signing import sign_decision
-
 
 # ---------------------------------------------------------------------------
 # Minimal stub service used throughout these tests
 # ---------------------------------------------------------------------------
+
 
 class MinimalService(BaseService):
     """Minimal BaseService stub for migration regression tests.
@@ -48,12 +49,12 @@ class MinimalService(BaseService):
 
     async def _setup(self) -> None:
         self.setup_called = True
+        # 'test.topic' is not in SUBJECT_SCHEMAS, so pass the wire model
+        # explicitly — receive-side validation only runs with a model resolved.
         await self.event_bus.subscribe(
-            "test.topic", self._handle_topic
+            "test.topic", self._handle_topic, message_model=ObservationMessage
         )
-        await self.event_bus.subscribe(
-            "test.status", self._handle_status, is_request_handler=True
-        )
+        await self.event_bus.subscribe("test.status", self._handle_status, is_request_handler=True)
 
     async def _cleanup(self) -> None:
         self.cleanup_called = True
@@ -69,6 +70,7 @@ class MinimalService(BaseService):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 async def service(nats_url: str) -> AsyncGenerator[MinimalService, None]:
@@ -93,6 +95,7 @@ async def probe_bus(nats_url: str) -> AsyncGenerator[EventBus, None]:
 # ---------------------------------------------------------------------------
 # §2 BaseService lifecycle
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_lifecycle_order(nats_url: str) -> None:
@@ -156,13 +159,16 @@ async def test_stop_always_calls_cleanup_on_setup_error(nats_url: str) -> None:
 @pytest.mark.asyncio
 async def test_event_bus_none_before_start() -> None:
     """event_bus is None until start() is awaited — no broker needed."""
-    svc = MinimalService(nats_url="nats://127.0.0.1:9999")  # broker unreachable; start() never called
+    svc = MinimalService(
+        nats_url="nats://127.0.0.1:9999"
+    )  # broker unreachable; start() never called
     assert svc.event_bus is None
 
 
 # ---------------------------------------------------------------------------
 # §3.5 Publish — fire-and-forget
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_subscribe_fire_and_forget(
@@ -181,6 +187,7 @@ async def test_subscribe_fire_and_forget(
 # ---------------------------------------------------------------------------
 # §3.8 Request-reply
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_request_reply(
@@ -202,9 +209,7 @@ async def test_request_reply_error_reply_on_handler_exception(
 
     class ExplodingService(MinimalService):
         async def _setup(self) -> None:
-            await self.event_bus.subscribe(
-                "test.boom", self._explode, is_request_handler=True
-            )
+            await self.event_bus.subscribe("test.boom", self._explode, is_request_handler=True)
 
         async def _explode(self, data: dict, msg) -> None:
             raise ValueError("handler exploded")
@@ -242,6 +247,7 @@ async def test_request_reply_responds_only_when_reply_set(
 # §3.2 Reconnection
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_reconnect_restores_subscriptions(
     service: MinimalService,
@@ -260,6 +266,7 @@ async def test_reconnect_restores_subscriptions(
 # ---------------------------------------------------------------------------
 # §3.7 Message validation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_validation_drops_bad_messages(
@@ -280,9 +287,9 @@ async def test_validation_drops_bad_messages(
         await raw_nc.close()
 
     # Handler should NOT have been called with the invalid message.
-    assert not any("bad_field" in m for m in service.received), (
-        "Validation did not drop the malformed message"
-    )
+    assert not any(
+        "bad_field" in m for m in service.received
+    ), "Validation did not drop the malformed message"
 
 
 @pytest.mark.asyncio
@@ -291,14 +298,17 @@ async def test_request_reply_validation_error_returns_error_dict(
     probe_bus: EventBus,
 ) -> None:
     """A request with invalid payload causes an error reply, not a timeout."""
-    import nats
     from activelearning.messages import ActionProposalMessage
 
-    # Register a handler for a modelled subject so validation kicks in.
+    # Register a handler with an explicit wire model so validation kicks in.
+    # Deliberately NOT 'proposal.new': that subject is captured by the
+    # SAFETY_CRITICAL JetStream stream, and a core-NATS request on a
+    # stream-captured subject gets answered by the server's pub-ack
+    # ({'stream': ..., 'seq': ...}) before the service can reply.
     class ProposalService(MinimalService):
         async def _setup(self) -> None:
             await self.event_bus.subscribe(
-                "proposal.new",
+                "test.rpc.proposal",
                 self._handle_proposal,
                 is_request_handler=True,
                 message_model=ActionProposalMessage,
@@ -313,7 +323,7 @@ async def test_request_reply_validation_error_returns_error_dict(
     try:
         # Missing required 'trace_id' — validation fails.
         response = await probe_bus.request(
-            "proposal.new", {"action": {}, "provenance": "test"}, timeout=5.0
+            "test.rpc.proposal", {"action": {}, "provenance": "test"}, timeout=5.0
         )
         assert response.get("type") == "error"
         assert response.get("error") == "validation_failed"
@@ -324,6 +334,7 @@ async def test_request_reply_validation_error_returns_error_dict(
 # ---------------------------------------------------------------------------
 # §3.10 Decision waiting — fail closed on timeout
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_decision_wait_timeout_raises(nats_url: str) -> None:
@@ -347,6 +358,7 @@ async def test_decision_wait_rejects_unsigned_when_signing_enabled(
     monkeypatch.setenv("ENGRAM_DECISION_KEY", "test-key-abc123")
 
     import activelearning.signing as signing_mod
+
     monkeypatch.setattr(signing_mod, "_warned_unsigned", False)
 
     bus = EventBus(nats_url=nats_url, name="decision-probe-signing")
@@ -356,6 +368,7 @@ async def test_decision_wait_rejects_unsigned_when_signing_enabled(
     async def _publish_unsigned():
         await asyncio.sleep(0.05)
         from activelearning.subjects import decision_subject
+
         unsigned = {
             "trace_id": trace_id,
             "type": "ALLOW",
@@ -387,6 +400,7 @@ async def test_decision_wait_accepts_signed_decision(
     monkeypatch.setenv("ENGRAM_DECISION_KEY", key)
 
     import activelearning.signing as signing_mod
+
     monkeypatch.setattr(signing_mod, "_warned_unsigned", False)
 
     bus = EventBus(nats_url=nats_url, name="decision-probe-signed")
@@ -396,6 +410,7 @@ async def test_decision_wait_accepts_signed_decision(
     async def _publish_signed():
         await asyncio.sleep(0.05)
         from activelearning.subjects import decision_subject
+
         payload = {
             "trace_id": trace_id,
             "type": "ALLOW",
@@ -425,6 +440,7 @@ async def test_decision_wait_accepts_signed_decision(
 # §3.3 _ensure_connected resilience
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_publish_raises_when_not_connected() -> None:
     """publish() raises RuntimeError if the bus was never connected — no broker needed."""
@@ -437,6 +453,7 @@ async def test_publish_raises_when_not_connected() -> None:
 # ---------------------------------------------------------------------------
 # §6 Adoption checklist — entry-point
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_entry_point_via_run(nats_url: str) -> None:

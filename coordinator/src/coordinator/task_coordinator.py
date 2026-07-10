@@ -10,12 +10,13 @@ Provides:
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from activelearning import (
     EmbeddingService,
     QdrantPoint,
     QdrantStore,
+    generate_trace_id,
     get_embedding_service,
 )
 
@@ -43,8 +44,8 @@ class TaskCoordinator:
         qdrant_url: str,
         tasks_root: str = "/data/tasks",
         *,
-        store: Optional[QdrantStore] = None,
-        embedding_service: Optional[EmbeddingService] = None,
+        store: QdrantStore | None = None,
+        embedding_service: EmbeddingService | None = None,
     ):
         self.nats_client = nats_client
         self.tasks_root = tasks_root
@@ -70,7 +71,7 @@ class TaskCoordinator:
         """Release the Qdrant connection."""
         await self._qdrant.close()
 
-    async def find_task(self, query: str) -> Dict:
+    async def find_task(self, query: str) -> dict:
         """
         Find a learned task matching the query.
 
@@ -137,7 +138,7 @@ class TaskCoordinator:
                 "action": "learn",
             }
 
-    async def execute_task(self, task_id: str, parameters: Optional[Dict] = None) -> Dict:
+    async def execute_task(self, task_id: str, parameters: dict | None = None) -> dict:
         """
         Execute a learned task.
 
@@ -159,12 +160,12 @@ class TaskCoordinator:
 
             # Load metadata
             metadata_path = os.path.join(task_dir, "metadata.json")
-            with open(metadata_path, "r") as f:
+            with open(metadata_path) as f:
                 metadata = json.load(f)
 
             # Load parameters
             params_path = os.path.join(task_dir, "parameters.json")
-            with open(params_path, "r") as f:
+            with open(params_path) as f:
                 task_params = json.load(f)
 
             # Override with provided parameters
@@ -202,7 +203,7 @@ class TaskCoordinator:
                 "error": str(e),
             }
 
-    async def trigger_knowledge_gap(self, query: str, context: Optional[Dict] = None) -> str:
+    async def trigger_knowledge_gap(self, query: str, context: dict | None = None) -> str:
         """
         Trigger knowledge gap detection.
 
@@ -212,7 +213,9 @@ class TaskCoordinator:
             trace_id
         """
         import uuid
+
         trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
 
         gap = {
             "trace_id": trace_id,
@@ -231,7 +234,7 @@ class TaskCoordinator:
         logger.info(f"Knowledge gap triggered: {trace_id}")
         return trace_id
 
-    async def _get_available_sensors(self) -> List[str]:
+    async def _get_available_sensors(self) -> list[str]:
         """Get list of available sensor IDs."""
         # TODO: Query SensorManager
         return ["camera_0", "microphone_0"]
@@ -253,7 +256,7 @@ class TaskCoordinator:
                 logger.error(f"Task metadata not found: {metadata_path}")
                 return False
 
-            with open(metadata_path, "r") as f:
+            with open(metadata_path) as f:
                 metadata = json.load(f)
 
             # Get embedding for description

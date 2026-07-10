@@ -10,9 +10,9 @@ import pytest
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.persistence import (
-    NeuromorphicPersistence,
     _FORK_BGSAVE,
     _SYNAPSE_FIELDS,
+    NeuromorphicPersistence,
 )
 
 
@@ -60,9 +60,9 @@ def _assert_persistence_bit_identical(original: dict, loaded: dict) -> None:
             loaded_arr = loaded_syn.get(state_key)
             if orig_arr is None and loaded_arr is None:
                 continue
-            assert orig_arr is not None and loaded_arr is not None, (
-                f"{syn_name}.{state_key}: missing on one side"
-            )
+            assert (
+                orig_arr is not None and loaded_arr is not None
+            ), f"{syn_name}.{state_key}: missing on one side"
             assert np.array_equal(orig_arr, loaded_arr), f"{syn_name}.{state_key}"
 
 
@@ -140,7 +140,10 @@ class TestCrossPlatformBackgroundSave:
 
     @pytest.mark.asyncio
     async def test_background_save_uses_thread_when_fork_unavailable(
-        self, trained_network, tmp_path, monkeypatch,
+        self,
+        trained_network,
+        tmp_path,
+        monkeypatch,
     ):
         """Thread fallback must run when fork is unavailable (e.g. Windows)."""
         monkeypatch.setattr(
@@ -175,9 +178,9 @@ class TestCrossPlatformBackgroundSave:
         assert loaded is not None
         for name, orig_w in orig_weights.items():
             loaded_w = loaded["synapses"][name]["weights_data"]
-            assert np.array_equal(loaded_w, orig_w), (
-                f"{name} checkpoint must match pre-mutation snapshot"
-            )
+            assert np.array_equal(
+                loaded_w, orig_w
+            ), f"{name} checkpoint must match pre-mutation snapshot"
         assert loaded["neuromodulation"]["phase"] == state["neuromodulation"]["phase"]
 
     @pytest.mark.skipif(not _FORK_BGSAVE, reason="fork-based bgsave is POSIX-only")

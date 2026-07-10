@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import signal
 import subprocess
@@ -17,14 +18,15 @@ import pytest
 
 from launcher.registry import Service
 from launcher.supervisor import (
-    ManagedProcess,
-    Supervisor,
     _BACKOFF_FACTOR,
     _BACKOFF_INITIAL,
     _BACKOFF_MAX,
     _BACKOFF_RESET,
     _SIGKILL,
+    ManagedProcess,
+    Supervisor,
 )
+from launcher.supervisor_alerts import SERVICE_FLAP_EVENT
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -159,7 +161,7 @@ class TestReadinessGating:
 
         # Schedule against fp_old, then replace mp.proc before the timer fires.
         sup._schedule_ready(mp)
-        fp_old.exit(1)          # old proc is dead
+        fp_old.exit(1)  # old proc is dead
         fp_new = FakePopen([])  # new proc is alive, but wasn't the captured one
         mp.proc = fp_new
 
@@ -263,6 +265,7 @@ class TestReadinessGating:
         svc = _svc(name="orphan", deps=("missing-dep",))
 
         import logging
+
         with caplog.at_level(logging.WARNING, logger="launcher.supervisor"):
             sup.start(svc, stagger=0.0)
 
@@ -358,7 +361,9 @@ class TestRestartWithBackoff:
             deadline = time.time() + 1.0
             while time.time() < deadline and mp.proc is second:
                 time.sleep(0.01)
-            assert mp.proc is not second, "second restart should complete within 1 s (reset delay = 0.05 s)"
+            assert (
+                mp.proc is not second
+            ), "second restart should complete within 1 s (reset delay = 0.05 s)"
             assert mp.restart_count >= 2, "restart_count should reflect both restarts"
 
             sup._stopping = True
@@ -395,6 +400,67 @@ class TestRestartWithBackoff:
         t.join(timeout=1.0)
 
         assert mp.restart_count == 0
+
+    def test_flap_alert_emitted_after_threshold_restarts(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Crossing the flap threshold emits structured JSON + console alert."""
+        monkeypatch.setenv("SUPERVISOR_FLAP_THRESHOLD", "2")
+        monkeypatch.setenv("SUPERVISOR_FLAP_WINDOW_S", "120")
+
+        import logging
+
+        with (
+            patch("launcher.supervisor._BACKOFF_INITIAL", 0.05),
+            patch("launcher.supervisor._BACKOFF_MAX", 0.05),
+            caplog.at_level(logging.WARNING, logger="launcher.supervisor"),
+        ):
+            sup = _make_supervisor()
+            svc = _svc(readiness_timeout=100.0)
+            spawns: list[FakePopen] = []
+
+            def _fake_spawn(s: Service) -> FakePopen:
+                fp = FakePopen([])
+                spawns.append(fp)
+                return fp
+
+            sup._spawn = _fake_spawn  # type: ignore[method-assign]
+
+            first = _fake_spawn(svc)
+            mp = ManagedProcess(svc.name, first, "", svc)
+            sup.procs.append(mp)
+
+            t = threading.Thread(target=sup._manage, args=(mp,), daemon=True)
+            t.start()
+
+            first.exit(1)
+            deadline = time.time() + 2.0
+            while time.time() < deadline and mp.proc is first:
+                time.sleep(0.02)
+            assert mp.proc is not first
+
+            mp.proc.exit(1)
+            deadline = time.time() + 2.0
+            while time.time() < deadline and mp.flap_alerts_emitted < 1:
+                time.sleep(0.02)
+
+            flap_logs = [
+                json.loads(r.message)
+                for r in caplog.records
+                if r.levelno >= logging.WARNING and SERVICE_FLAP_EVENT in r.message
+            ]
+            assert mp.flap_alerts_emitted == 1
+            assert len(flap_logs) == 1
+            assert flap_logs[0]["event"] == SERVICE_FLAP_EVENT
+            assert flap_logs[0]["service"] == svc.name
+            assert flap_logs[0]["restarts_in_window"] == 2
+            assert flap_logs[0]["threshold"] == 2
+
+            sup._stopping = True
+            mp.proc.exit(0)
+            t.join(timeout=2.0)
 
 
 # ---------------------------------------------------------------------------

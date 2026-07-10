@@ -67,13 +67,17 @@ or the boundary is weaker than documented. The flags below are applied in
 - **Supply chain of the base image and `pip` deps.** `python:3.12-slim` + a
   pinned `pytest`/`numpy` set; bumps go through `constraints.txt`.
 - **Fail-closed deploy** (refuse to run if the image is missing or the runtime
-  cannot apply a control) is tracked separately as **E1.3.2** and is *not* part
-  of this issue. Today `SandboxManager` errors out if the image is absent, but
-  the broader fail-closed guarantees land in E1.3.2.
+  cannot apply a control) is covered by **E1.3.2** ✅ (issue #142).
+  `SandboxManager.run_tests()` returns `sandbox_unavailable=True` and blocks
+  deploy for all failure modes: daemon unreachable, missing image, spawn
+  rejection, and unexpected exceptions. Container timeout and OOM-killed exits
+  (e.g. exit 137) are correctly classified as test failures
+  (`sandbox_unavailable=False`), not containment unavailability.
+  See `meta-programmer/tests/test_sandbox_failclosed.py`.
 
 ## 4. Verification
 
-`sandbox/smoke/run_smoke.sh` (run in CI, see `.github/workflows/test.yml`):
+**E1.3.1 — Containment enforcement** (`sandbox/smoke/run_smoke.sh`, CI sandbox job):
 
 1. Builds the image via `docker compose --profile build-only build sandbox-base`.
 2. Runs a **passing** generated test set inside the hardened container → expects
@@ -81,3 +85,26 @@ or the boundary is weaker than documented. The flags below are applied in
 3. Runs a **failing** generated test set → expects non-zero exit.
 4. Asserts the network is unreachable (T1) and the root FS is read-only (T2)
    from inside the sandbox.
+
+**E1.3.2 — Fail-closed deploy** (`meta-programmer/tests/test_sandbox_failclosed.py`, CI governance job):
+
+| Test | Failure mode | Expected result |
+|---|---|---|
+| `test_no_docker_client_is_unavailable` | Docker init failed at construction | `sandbox_unavailable=True` |
+| `test_daemon_unreachable_is_unavailable` | `ping()` raises `DockerException` | `sandbox_unavailable=True` |
+| `test_missing_image_is_unavailable` | `images.get()` raises `ImageNotFound` | `sandbox_unavailable=True` |
+| `test_spawn_failure_is_unavailable` | `containers.run()` raises `DockerException` | `sandbox_unavailable=True` |
+| `test_unexpected_exception_fails_closed` | Non-Docker exception during run | `sandbox_unavailable=True` |
+| `test_all_unavailable_paths_carry_remediation` | All four unavailable paths | `SANDBOX_REMEDIATION` in error |
+| `test_failing_tests_are_not_unavailable` | Containment ran; pytest exit 1 | `sandbox_unavailable=False` |
+| `test_oom_killed_exit_137_is_test_failure` | Container OOM-killed (exit 137) | `sandbox_unavailable=False` |
+| `test_container_timeout_is_test_failure` | Container hangs past wall-clock limit | `sandbox_unavailable=False` |
+| `test_cleanup_tolerates_none_client` | `cleanup_old_containers` when no client | no crash |
+| `test_unavailable_sandbox_blocks_deploy` | End-to-end: unavailable sandbox | deploy blocked, `fail_closed=True` published |
+
+**E1.3.3 — Containment integration** (`meta-programmer/tests/test_sandbox_containment_integration.py`, CI sandbox job):
+
+Adversarial two-step tests for each of the 5 Docker hardening properties (network
+isolation, read-only FS, pids limit, memory OOM, privilege drop). Requires the
+`activelearning-sandbox:latest` image; skipped automatically in environments where
+Docker or the image is unavailable.

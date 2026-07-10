@@ -150,7 +150,9 @@ class MetaProgrammerTeam:
             return f"/data/plugins/{name}.py"
 
         # Task patterns
-        if "task" in desc_lower or any(verb in desc_lower for verb in ["pick", "place", "move", "grab", "push", "pull"]):
+        if "task" in desc_lower or any(
+            verb in desc_lower for verb in ["pick", "place", "move", "grab", "push", "pull"]
+        ):
             name = description.lower().replace(" ", "_")
             for word in ["task", "need", "learn", "how", "to"]:
                 name = name.replace(word, "")
@@ -255,7 +257,9 @@ Generate the tests:"""
 
         formatted = []
         for i, result in enumerate(results[:3], 1):  # Top 3 results
-            formatted.append(f"{i}. {result.get('description', 'N/A')} (confidence: {result.get('confidence', 0):.2f})")
+            formatted.append(
+                f"{i}. {result.get('description', 'N/A')} (confidence: {result.get('confidence', 0):.2f})"
+            )
 
         return "\n".join(formatted)
 

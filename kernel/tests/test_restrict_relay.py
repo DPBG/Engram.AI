@@ -12,9 +12,7 @@ import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from activelearning.subjects import Subjects
-
 
 # ---------------------------------------------------------------------------
 # Fixture: stub beliefs.profiles per-test so sys.modules is clean after each run.
@@ -109,8 +107,7 @@ def test_apply_restriction_publishes_status_applied(beliefs_stub):
     _run(svc._apply_restriction(_restrict_payload()))
 
     status_publishes = [
-        (subj, data) for subj, data in svc._published
-        if subj == "policy.restrict.status"
+        (subj, data) for subj, data in svc._published if subj == "policy.restrict.status"
     ]
     assert len(status_publishes) == 1
     assert status_publishes[0][1]["status"] == "applied"
@@ -124,8 +121,7 @@ def test_apply_restriction_returns_false_when_no_profile():
 
     assert result is False
     error_publishes = [
-        d for s, d in svc._published
-        if s == "policy.restrict.status" and d.get("status") == "error"
+        d for s, d in svc._published if s == "policy.restrict.status" and d.get("status") == "error"
     ]
     assert len(error_publishes) == 1
 
@@ -144,12 +140,11 @@ def test_restrict_request_broadcasts_policy_restrict(beliefs_stub):
     _run(svc._handle_restrict_request(payload))
 
     policy_restrict_publishes = [
-        (subj, data) for subj, data in svc._published
-        if subj == Subjects.POLICY_RESTRICT
+        (subj, data) for subj, data in svc._published if subj == Subjects.POLICY_RESTRICT
     ]
-    assert len(policy_restrict_publishes) == 1, (
-        "Kernel must broadcast policy.restrict after approving a restrict request"
-    )
+    assert (
+        len(policy_restrict_publishes) == 1
+    ), "Kernel must broadcast policy.restrict after approving a restrict request"
     assert policy_restrict_publishes[0][1] is payload
 
 
@@ -163,9 +158,9 @@ def test_restrict_request_does_not_broadcast_when_rejected(beliefs_stub):
     policy_restrict_publishes = [
         subj for subj, _ in svc._published if subj == Subjects.POLICY_RESTRICT
     ]
-    assert len(policy_restrict_publishes) == 0, (
-        "Kernel must NOT broadcast policy.restrict when the restriction is rejected"
-    )
+    assert (
+        len(policy_restrict_publishes) == 0
+    ), "Kernel must NOT broadcast policy.restrict when the restriction is rejected"
 
 
 def test_restrict_request_does_not_broadcast_when_no_profile():
@@ -182,6 +177,47 @@ def test_restrict_request_does_not_broadcast_when_no_profile():
 
 
 # ---------------------------------------------------------------------------
+# Tests: _setup subscription wiring (ADR 0001 §3)
+# ---------------------------------------------------------------------------
+
+
+def test_setup_subscribes_policy_restrict_request_handler():
+    """Kernel must register _handle_restrict_request on policy.restrict.request."""
+    from unittest.mock import patch
+
+    from kernel.service import KernelService
+
+    svc = KernelService.__new__(KernelService)
+    svc.logger = MagicMock()
+    svc.event_bus = AsyncMock()
+
+    async def _run_setup() -> None:
+        def _fake_create_task(coro):
+            coro.close()
+            mock_task = MagicMock()
+            mock_task.done.return_value = True
+            return mock_task
+
+        with patch("asyncio.create_task", side_effect=_fake_create_task):
+            await svc._setup()
+
+        subscribe_calls = svc.event_bus.subscribe.call_args_list
+        wired = [(call.args[0], call.args[1]) for call in subscribe_calls if call.args]
+
+        assert (Subjects.POLICY_RESTRICT, svc._handle_restrict) in wired
+        assert (Subjects.POLICY_RESTRICT_REQUEST, svc._handle_restrict_request) in wired
+
+        restrict_call = next(
+            call for call in subscribe_calls if call.args[0] == Subjects.POLICY_RESTRICT
+        )
+        assert (
+            len(restrict_call.args) == 2
+        ), "policy.restrict must not pass restrict.request as a queue group name"
+
+    asyncio.run(_run_setup())
+
+
+# ---------------------------------------------------------------------------
 # Tests: SAFE_HALT broadcasts policy.restrict directly (no subscription round-trip)
 # ---------------------------------------------------------------------------
 
@@ -195,8 +231,7 @@ def test_safe_halt_broadcasts_policy_restrict(beliefs_stub):
     _run(svc._handle_safety_halt({"reason": "operator halt", "operator_id": "op1"}))
 
     policy_restrict_publishes = [
-        (subj, data) for subj, data in svc._published
-        if subj == Subjects.POLICY_RESTRICT
+        (subj, data) for subj, data in svc._published if subj == Subjects.POLICY_RESTRICT
     ]
     assert len(policy_restrict_publishes) == 1
     motor_limits = policy_restrict_publishes[0][1]["motor_limits"]
@@ -222,6 +257,7 @@ def test_safe_halt_calls_evaluator_halt(beliefs_stub):
 
 def _read_nats_conf() -> str:
     from pathlib import Path
+
     conf = Path(__file__).resolve().parents[2] / "deploy" / "nats-1m.conf"
     return conf.read_text(encoding="utf-8")
 
@@ -249,9 +285,9 @@ def test_nats_conf_non_kernel_services_deny_privileged_subjects():
 def test_nats_conf_decision_subject_denied_for_non_kernel_services():
     conf = _read_nats_conf()
     deny_count = conf.count('"decision.>"')
-    assert deny_count >= 4, (
-        f"Expected decision.> in kernel allow + 3 service deny lists (got {deny_count})"
-    )
+    assert (
+        deny_count >= 4
+    ), f"Expected decision.> in kernel allow + 3 service deny lists (got {deny_count})"
 
 
 def test_nats_conf_has_dev_default_fallback():

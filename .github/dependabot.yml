@@ -1,0 +1,44 @@
+# Dependabot — free automated dependency + Actions update PRs.
+# Grouped and scheduled weekly to keep PR volume low. Updates target `dev`, the
+# integration branch (per CONTRIBUTING.md), so they follow the normal CI + review
+# flow before reaching `main`.
+
+version: 2
+updates:
+  # GitHub Actions used across all workflows.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    target-branch: dev
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  # Python — the two primary packages. Add more service directories here as
+  # needed (each entry points at a directory containing a pyproject.toml).
+  - package-ecosystem: pip
+    directory: "/sdk"
+    schedule:
+      interval: weekly
+    target-branch: dev
+    open-pull-requests-limit: 5
+    groups:
+      sdk-deps:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: pip
+    directory: "/neuromorphic"
+    schedule:
+      interval: weekly
+    target-branch: dev
+    open-pull-requests-limit: 5
+    groups:
+      neuromorphic-deps:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore

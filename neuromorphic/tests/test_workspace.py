@@ -1,9 +1,8 @@
 """Tests for Global Neuronal Workspace competition and broadcast (CIP-23)."""
 
 import numpy as np
-import pytest
 
-from neuromorphic.config import NeuromorphicConfig, GlobalWorkspaceConfig, NMDAConfig
+from neuromorphic.config import GlobalWorkspaceConfig, NeuromorphicConfig
 from neuromorphic.regions import GlobalWorkspace
 
 
@@ -96,9 +95,7 @@ class TestGlobalWorkspaceRegion:
 
     def test_broadcast_gain_during_ignition(self):
         """broadcast_gain should be > 1 during ignition, 1.0 otherwise."""
-        ws = self._make_workspace(
-            ignition_threshold=0.1, broadcast_gain=5.0, refractory_steps=3
-        )
+        ws = self._make_workspace(ignition_threshold=0.1, broadcast_gain=5.0, refractory_steps=3)
         assert ws.get_broadcast_gain() == 1.0
 
         # Drive ignition
@@ -147,6 +144,7 @@ class TestWorkspaceNetwork:
     def test_workspace_synapse_groups_exist(self):
         """Network should have workspace synapse groups when enabled."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         net = NeuromorphicNetwork(cfg, seed=42)
 
@@ -168,6 +166,7 @@ class TestWorkspaceNetwork:
     def test_workspace_region_exists(self):
         """Network should have global_workspace region."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         assert "global_workspace" in net.regions
@@ -177,6 +176,7 @@ class TestWorkspaceNetwork:
     def test_step_with_workspace(self):
         """Network step should work with workspace enabled."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         result = net.step()
@@ -185,6 +185,7 @@ class TestWorkspaceNetwork:
     def test_multiple_steps_with_workspace(self):
         """Multiple steps should work without error."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         for _ in range(20):
@@ -194,6 +195,7 @@ class TestWorkspaceNetwork:
     def test_no_workspace_without_population(self):
         """When global_workspace=0, no workspace region or synapses should exist."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = NeuromorphicConfig()
         cfg.populations.brainstem = 100
         cfg.populations.reflex_arc = 80
@@ -211,6 +213,7 @@ class TestWorkspaceNetwork:
     def test_workspace_with_concept_layer(self):
         """Workspace should have concept synapse groups when concept layer exists."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         cfg.populations.concept_layer = 50
         net = NeuromorphicNetwork(cfg, seed=42)
@@ -220,6 +223,7 @@ class TestWorkspaceNetwork:
     def test_workspace_with_feature_layer(self):
         """Workspace should have feature synapse groups when feature layer exists."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         cfg.populations.feature_layer = 100
         net = NeuromorphicNetwork(cfg, seed=42)
@@ -229,6 +233,7 @@ class TestWorkspaceNetwork:
     def test_workspace_with_meta(self):
         """Workspace should have meta afferent when meta-controller exists."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         cfg.populations.meta_controller = 50
         net = NeuromorphicNetwork(cfg, seed=42)
@@ -237,6 +242,7 @@ class TestWorkspaceNetwork:
     def test_workspace_lateral_not_plastic(self):
         """Lateral inhibition in workspace should be non-plastic."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         assert not net.synapses["workspace_lateral"].plastic
@@ -244,6 +250,7 @@ class TestWorkspaceNetwork:
     def test_workspace_state_in_network(self):
         """Network state should include workspace state."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_ws_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         for _ in range(5):

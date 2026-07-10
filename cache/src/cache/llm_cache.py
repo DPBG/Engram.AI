@@ -5,18 +5,45 @@ Uses vector similarity to find cached responses for similar prompts.
 """
 
 import hashlib
+import json
 import logging
-import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from activelearning import (
     EmbeddingService,
     QdrantPoint,
     QdrantStore,
+    current_timestamp,
     get_embedding_service,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class CacheTag:
+    """Invalidation categories a producer attaches to a cached response, so the
+    invalidator can drop a whole category when its triggering event fires.
+
+    Shared here so producers and the invalidator never drift on the strings.
+    """
+
+    CODE_GENERATION = "code_generation"  # dropped on `code.deployed`
+    CONFIGURATION = "configuration"  # dropped on `override.applied.*`
+    TASK_QUERY = "task_query"  # dropped on `task.saved`
+
+
+def _normalize_tags(tags: Any) -> list[str] | None:
+    """Coerce a list or bare string into a clean list of non-empty tags, or None.
+
+    Tags arrive over the untyped JSON boundary, so a bare string is wrapped
+    rather than split into characters by ``list()``.
+    """
+    if not tags:
+        return None
+    if isinstance(tags, str):
+        tags = [tags]
+    cleaned = [str(tag) for tag in tags if tag]
+    return cleaned or None
 
 
 class LLMCache:
@@ -33,8 +60,8 @@ class LLMCache:
         db: Any,
         hit_threshold: float = 0.95,
         *,
-        store: Optional[QdrantStore] = None,
-        embedding_service: Optional[EmbeddingService] = None,
+        store: QdrantStore | None = None,
+        embedding_service: EmbeddingService | None = None,
     ):
         self.db = db
         self.hit_threshold = hit_threshold
@@ -57,12 +84,27 @@ class LLMCache:
     async def setup(self) -> None:
         """Ensure the cache collection exists before serving requests."""
         await self._qdrant.ensure_collection(self.collection_name)
+        await self._verify_json_support()
+
+    async def _verify_json_support(self) -> None:
+        """Fail fast if SQLite lacks json_each (JSON1, SQLite 3.38+).
+
+        Tag invalidation matches entries with json_each; without it that query
+        would error and be swallowed, evicting nothing. Surface it at startup.
+        """
+        try:
+            await self.db.execute("SELECT 1 FROM json_each('[]')")
+        except Exception as e:
+            raise RuntimeError(
+                "SQLite build lacks JSON support (json_each); cache tag "
+                "invalidation requires SQLite 3.38+ with JSON1 enabled"
+            ) from e
 
     async def close(self) -> None:
         """Release the Qdrant connection."""
         await self._qdrant.close()
 
-    async def get(self, prompt: str, model: str = "deepseek-coder:6.7b") -> Optional[Dict]:
+    async def get(self, prompt: str, model: str = "deepseek-coder:6.7b") -> dict | None:
         """
         Get cached response for a prompt.
 
@@ -124,6 +166,7 @@ class LLMCache:
         prompt: str,
         response: str,
         model: str = "deepseek-coder:6.7b",
+        tags: list[str] | None = None,
     ) -> bool:
         """
         Cache an LLM response.
@@ -132,6 +175,7 @@ class LLMCache:
             prompt: The LLM prompt
             response: The LLM response
             model: Model name
+            tags: Invalidation categories for this response (see :class:`CacheTag`).
 
         Returns:
             bool indicating success
@@ -143,57 +187,73 @@ class LLMCache:
             # Get prompt embedding
             embedding = await self._embeddings.embed_text(prompt)
 
-            # Create cache entry
+            # Untagged entries store None so they never match a tag query.
             cache_entry = {
                 "id": prompt_hash,
                 "prompt": prompt,
                 "response": response,
                 "model": model,
-                "cached_at": int(time.time() * 1000),
+                "tags": _normalize_tags(tags),
+                "cached_at": current_timestamp(),
                 "hit_count": 0,
                 "last_hit_at": None,
             }
 
-            # Store in Qdrant, then mirror into SQLite
+            # Store in Qdrant, then mirror into SQLite. If the mirror fails, roll
+            # the vector back so the two stores cannot diverge (a Qdrant-only
+            # entry would be served but never found by invalidation).
             await self._qdrant.upsert(
                 self.collection_name,
                 [QdrantPoint(id=prompt_hash, vector=embedding, payload=cache_entry)],
             )
             logger.debug(f"Cached response: {prompt[:50]}...")
-            await self._store_in_db(cache_entry)
+            try:
+                await self._store_in_db(cache_entry)
+            except Exception:
+                await self._rollback_qdrant(prompt_hash)
+                raise
             return True
 
         except Exception as e:
             logger.error(f"Cache store error: {e}", exc_info=True)
             return False
 
-    async def _store_in_db(self, cache_entry: Dict) -> None:
-        """Store cache entry in SQLite."""
+    async def _rollback_qdrant(self, prompt_hash: str) -> None:
+        """Best-effort removal of a vector whose SQLite mirror write failed."""
         try:
-            await self.db.execute(
-                """
-                INSERT OR REPLACE INTO llm_cache
-                (prompt_hash, prompt, response, model, cached_at, hit_count, last_hit_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    cache_entry["id"],
-                    cache_entry["prompt"],
-                    cache_entry["response"],
-                    cache_entry["model"],
-                    cache_entry["cached_at"],
-                    cache_entry["hit_count"],
-                    cache_entry["last_hit_at"],
-                ),
-            )
-            await self.db.commit()
+            await self._qdrant.delete(self.collection_name, [prompt_hash])
         except Exception as e:
-            logger.error(f"Error storing in DB: {e}")
+            logger.error(f"Error rolling back cache entry {prompt_hash}: {e}")
+
+    async def _store_in_db(self, cache_entry: dict) -> None:
+        """Mirror a cache entry into SQLite, the index used for invalidation.
+
+        Raises on failure so the caller can keep the stores consistent.
+        """
+        tags = cache_entry["tags"]
+        await self.db.execute(
+            """
+            INSERT OR REPLACE INTO llm_cache
+            (prompt_hash, prompt, response, model, tags, cached_at, hit_count, last_hit_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cache_entry["id"],
+                cache_entry["prompt"],
+                cache_entry["response"],
+                cache_entry["model"],
+                json.dumps(tags) if tags else None,
+                cache_entry["cached_at"],
+                cache_entry["hit_count"],
+                cache_entry["last_hit_at"],
+            ),
+        )
+        await self.db.commit()
 
     async def _update_hit_stats(self, cache_id: str) -> None:
         """Update cache hit statistics."""
         try:
-            now = int(time.time() * 1000)
+            now = current_timestamp()
 
             await self.db.execute(
                 """
@@ -208,7 +268,7 @@ class LLMCache:
         except Exception as e:
             logger.error(f"Error updating hit stats: {e}")
 
-    def get_metrics(self) -> Dict:
+    def get_metrics(self) -> dict:
         """Get cache metrics."""
         total = self._cache_hits + self._cache_misses
         hit_rate = self._cache_hits / total if total > 0 else 0.0

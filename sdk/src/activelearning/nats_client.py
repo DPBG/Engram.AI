@@ -12,18 +12,33 @@ import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import nats
 from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
+from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
-from pydantic import BaseModel
 
+from activelearning.connection_logging import (
+    TRANSITION_ALREADY_CONNECTED,
+    TRANSITION_CLOSED,
+    TRANSITION_CLOSING,
+    TRANSITION_CONNECTED,
+    TRANSITION_CONNECTING,
+    TRANSITION_DISCONNECTED,
+    TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
+    TRANSITION_FORCE_RECONNECT_COMPLETE,
+    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+    TRANSITION_FORCE_RECONNECT_START,
+    TRANSITION_RECONNECTED,
+    log_connection_event,
+)
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
+    WireModel,
     schema_for_subject,
     validate_payload,
 )
@@ -80,7 +95,7 @@ def serialize_message(data: Any) -> bytes:
 
 def deserialize_message(data: bytes) -> dict[str, Any]:
     """Deserialize bytes to a message payload."""
-    return json.loads(data.decode("utf-8"))
+    return cast(dict[str, Any], json.loads(data.decode("utf-8")))
 
 
 class EventBus:
@@ -129,7 +144,7 @@ class EventBus:
         self.nats_creds: str | None = nats_creds or os.environ.get("NATS_CREDS") or None
         self._nc: NATSClient | None = None
         self._js: JetStreamContext | None = None
-        self._subscriptions: dict[str, nats.aio.subscription.Subscription] = {}
+        self._subscriptions: dict[str, NATSSubscription] = {}
         self._handlers: dict[str, MessageHandler] = {}
         self._request_handlers: set[str] = set()
         self._js_durables: dict[str, str] = {}  # subject -> durable consumer name
@@ -141,7 +156,12 @@ class EventBus:
     async def connect(self) -> None:
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
-            logger.debug("Already connected to NATS")
+            log_connection_event(
+                TRANSITION_ALREADY_CONNECTED,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                level=logging.DEBUG,
+            )
             return
 
         connect_kwargs: dict[str, Any] = {
@@ -152,22 +172,38 @@ class EventBus:
             "max_reconnect_attempts": -1,
         }
 
+        creds_mode = "none"
         if self.nats_creds:
             if os.path.isfile(self.nats_creds):
                 connect_kwargs["user_credentials"] = self.nats_creds
-                logger.info("Connecting to NATS at %s with credentials %s", self.nats_url, self.nats_creds)
+                creds_mode = "file"
             else:
                 # Credentials configured but file absent — dev fallback, never
                 # crash so local runs work before gen-creds.sh has been run.
-                logger.warning(
-                    "NATS_CREDS=%s not found — connecting without per-service "
-                    "credentials (dev fallback). Run deploy/scripts/gen-creds.sh "
-                    "to enable per-service identities.",
-                    self.nats_creds,
+                creds_mode = "missing_file"
+                log_connection_event(
+                    TRANSITION_CONNECTING,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    creds_mode=creds_mode,
+                    creds_path=self.nats_creds,
+                    level=logging.WARNING,
+                    message=(
+                        "NATS_CREDS file not found; connecting without per-service "
+                        "credentials (dev fallback)"
+                    ),
                 )
-                logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
         else:
-            logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
+            creds_mode = "none"
+
+        if creds_mode != "missing_file":
+            log_connection_event(
+                TRANSITION_CONNECTING,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                creds_mode=creds_mode,
+                creds_path=self.nats_creds if creds_mode == "file" else None,
+            )
 
         self._nc = await nats.connect(self.nats_url, **connect_kwargs)
 
@@ -176,12 +212,22 @@ class EventBus:
         await self._ensure_safety_stream()
 
         self._connected.set()
-        logger.info("Connected to NATS successfully (name=%s)", self.name)
+        log_connection_event(
+            TRANSITION_CONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            creds_mode=creds_mode,
+        )
 
     async def close(self) -> None:
         """Close the NATS connection."""
         if self._nc is not None:
-            logger.info("Closing NATS connection")
+            log_connection_event(
+                TRANSITION_CLOSING,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                subscription_count=len(self._subscriptions),
+            )
             await self._nc.drain()
             await self._nc.close()
             self._nc = None
@@ -192,6 +238,11 @@ class EventBus:
             self._request_handlers.clear()
             self._js_durables.clear()
             self._poison_handlers.clear()
+            log_connection_event(
+                TRANSITION_CLOSED,
+                client_name=self.name,
+                nats_url=self.nats_url,
+            )
 
     async def _ensure_safety_stream(self) -> None:
         """Create or update the durable JetStream stream for safety-critical subjects.
@@ -223,7 +274,7 @@ class EventBus:
         subject: str,
         data: Any,
         *,
-        message_model: type[BaseModel] | None = None,
+        message_model: type[WireModel] | None = None,
     ) -> None:
         """
         Publish a message to a subject.
@@ -239,13 +290,14 @@ class EventBus:
         """
         await self._ensure_connected()
         if isinstance(data, dict):
-            data = validate_payload(subject, data, message_model)  # type: ignore[arg-type]
+            data = validate_payload(subject, data, message_model)
         payload = serialize_message(data)
         if self._is_safety_critical(subject):
             assert self._js is not None
             ack = await self._js.publish(subject, payload)
             logger.debug("JS-published to %s (seq=%d): %d bytes", subject, ack.seq, len(payload))
         else:
+            assert self._nc is not None
             await self._nc.publish(subject, payload)
             logger.debug("Published to %s: %d bytes", subject, len(payload))
 
@@ -257,7 +309,7 @@ class EventBus:
         pending_msgs_limit: int = 65536,
         pending_bytes_limit: int = 128 * 1024 * 1024,
         is_request_handler: bool = False,
-        message_model: type[BaseModel] | None = None,
+        message_model: type[WireModel] | None = None,
     ) -> None:
         """
         Subscribe to a subject with a message handler.
@@ -288,20 +340,24 @@ class EventBus:
                         subject,
                         f"expected JSON object, got {type(data).__name__}",
                     )
-                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
+                data = validate_payload(subject, data, wire_model)
                 if is_request_handler:
-                    await handler(data, msg)
+                    await handler(data, msg)  # type: ignore[call-arg]
                 else:
                     await handler(data)
             except MessageValidationError as e:
                 logger.error(str(e))
                 if is_request_handler and msg.reply:
                     try:
-                        await msg.respond(serialize_message({
-                            "error": "validation_failed",
-                            "detail": e.detail,
-                            "type": "error",
-                        }))
+                        await msg.respond(
+                            serialize_message(
+                                {
+                                    "error": "validation_failed",
+                                    "detail": e.detail,
+                                    "type": "error",
+                                }
+                            )
+                        )
                     except Exception:
                         pass
             except Exception as e:
@@ -310,13 +366,18 @@ class EventBus:
                 # caller doesn't hang until timeout.
                 if is_request_handler and msg.reply:
                     try:
-                        await msg.respond(serialize_message({
-                            "error": str(e),
-                            "type": "error",
-                        }))
+                        await msg.respond(
+                            serialize_message(
+                                {
+                                    "error": str(e),
+                                    "type": "error",
+                                }
+                            )
+                        )
                     except Exception:
                         pass  # best-effort error reply
 
+        assert self._nc is not None
         sub = await self._nc.subscribe(
             subject,
             cb=message_callback,
@@ -337,7 +398,7 @@ class EventBus:
         subject: str,
         handler: MessageHandler,
         durable: str,
-        message_model: type[BaseModel] | None = None,
+        message_model: type[WireModel] | None = None,
         *,
         ack_wait: float = DEFAULT_ACK_WAIT_SECONDS,
         max_deliver: int = DEFAULT_MAX_DELIVER,
@@ -386,6 +447,10 @@ class EventBus:
 
         async def _js_message_callback(msg: Msg) -> None:
             # Structurally bad messages can never succeed on retry → poison now.
+            # This block only parses and validates — the handler runs exactly
+            # once, in the delivery block below. (A duplicated handler+ack here
+            # used to double-invoke every JS handler and double-ack the message,
+            # surfacing as MsgAlreadyAckdError and spurious redeliveries.)
             try:
                 data = deserialize_message(msg.data)
                 if not isinstance(data, dict):
@@ -393,7 +458,7 @@ class EventBus:
                         subject,
                         f"expected JSON object, got {type(data).__name__}",
                     )
-                data = validate_payload(subject, data, wire_model)  # type: ignore[arg-type]
+                data = validate_payload(subject, data, wire_model)
             except MessageValidationError as e:
                 logger.error("Poisoning unprocessable message on %s: %s", subject, e)
                 await self._route_to_poison(subject, msg, f"validation_error: {e}")
@@ -410,7 +475,10 @@ class EventBus:
                     # stops redelivering (never an infinite loop, never dropped).
                     logger.error(
                         "Poisoning %s after %d/%d deliveries: %s",
-                        subject, delivered, max_deliver, e,
+                        subject,
+                        delivered,
+                        max_deliver,
+                        e,
                     )
                     await self._route_to_poison(
                         subject, msg, f"max_deliver_exhausted({delivered}): {e}"
@@ -419,7 +487,10 @@ class EventBus:
                 else:
                     logger.warning(
                         "Handler failed on %s (delivery %d/%d), will redeliver: %s",
-                        subject, delivered, max_deliver, e,
+                        subject,
+                        delivered,
+                        max_deliver,
+                        e,
                     )
                     await msg.nak()
 
@@ -429,7 +500,11 @@ class EventBus:
             max_deliver=max_deliver,
             # When backoff is set the server derives ack-wait from backoff[0];
             # passing both can be rejected, so set only one.
-            **({"backoff": [float(b) for b in backoff]} if backoff else {"ack_wait": float(ack_wait)}),
+            **(
+                {"backoff": [float(b) for b in backoff]}
+                if backoff
+                else {"ack_wait": float(ack_wait)}
+            ),
         )
         sub = await self._js.subscribe(
             subject,
@@ -512,6 +587,7 @@ class EventBus:
             asyncio.TimeoutError: If no response within timeout
         """
         await self._ensure_connected()
+        assert self._nc is not None
         payload = serialize_message(data)
         response = await self._nc.request(subject, payload, timeout=timeout)
         return deserialize_message(response.data)
@@ -607,9 +683,12 @@ class EventBus:
         for subject, handler in self._handlers.items():
             saved_handlers[subject] = (handler, subject in self._request_handlers)
 
-        logger.warning(
-            "force_reconnect: tearing down NATS connection (%d subs to restore)",
-            len(saved_handlers),
+        log_connection_event(
+            TRANSITION_FORCE_RECONNECT_START,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            subscription_count=len(saved_handlers),
+            level=logging.WARNING,
         )
 
         # Best-effort close of old connection
@@ -617,7 +696,13 @@ class EventBus:
             try:
                 await asyncio.wait_for(self._nc.close(), timeout=5.0)
             except Exception as e:
-                logger.warning("force_reconnect: close failed (expected): %s", e)
+                log_connection_event(
+                    TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    error=str(e),
+                    level=logging.WARNING,
+                )
             self._nc = None
             self._js = None
             self._connected.clear()
@@ -635,15 +720,29 @@ class EventBus:
             try:
                 if subject in saved_js:
                     await self.js_subscribe(
-                        subject, handler, durable=saved_js[subject],
+                        subject,
+                        handler,
+                        durable=saved_js[subject],
                         poison_handler=saved_poison.get(subject),
                     )
                 else:
                     await self.subscribe(subject, handler, is_request_handler=is_req)
             except Exception as e:
-                logger.error("force_reconnect: failed to re-subscribe %s: %s", subject, e)
+                log_connection_event(
+                    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    subject=subject,
+                    error=str(e),
+                    level=logging.ERROR,
+                )
 
-        logger.info("force_reconnect: complete, %d subs restored", len(self._subscriptions))
+        log_connection_event(
+            TRANSITION_FORCE_RECONNECT_COMPLETE,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            subscription_count=len(self._subscriptions),
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -686,12 +785,21 @@ class EventBus:
     async def _disconnected_callback(self) -> None:
         """Handle NATS disconnection."""
         self._connected.clear()
-        logger.warning("Disconnected from NATS")
+        log_connection_event(
+            TRANSITION_DISCONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            level=logging.WARNING,
+        )
 
     async def _reconnected_callback(self) -> None:
         """Handle NATS reconnection."""
         self._connected.set()
-        logger.info("Reconnected to NATS")
+        log_connection_event(
+            TRANSITION_RECONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+        )
 
 
 # Global event bus instance for convenience
