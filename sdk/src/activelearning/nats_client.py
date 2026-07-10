@@ -21,6 +21,20 @@ from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
 
+from activelearning.connection_logging import (
+    TRANSITION_ALREADY_CONNECTED,
+    TRANSITION_CLOSED,
+    TRANSITION_CLOSING,
+    TRANSITION_CONNECTED,
+    TRANSITION_CONNECTING,
+    TRANSITION_DISCONNECTED,
+    TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
+    TRANSITION_FORCE_RECONNECT_COMPLETE,
+    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+    TRANSITION_FORCE_RECONNECT_START,
+    TRANSITION_RECONNECTED,
+    log_connection_event,
+)
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -142,7 +156,12 @@ class EventBus:
     async def connect(self) -> None:
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
-            logger.debug("Already connected to NATS")
+            log_connection_event(
+                TRANSITION_ALREADY_CONNECTED,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                level=logging.DEBUG,
+            )
             return
 
         connect_kwargs: dict[str, Any] = {
@@ -153,24 +172,38 @@ class EventBus:
             "max_reconnect_attempts": -1,
         }
 
+        creds_mode = "none"
         if self.nats_creds:
             if os.path.isfile(self.nats_creds):
                 connect_kwargs["user_credentials"] = self.nats_creds
-                logger.info(
-                    "Connecting to NATS at %s with credentials %s", self.nats_url, self.nats_creds
-                )
+                creds_mode = "file"
             else:
                 # Credentials configured but file absent — dev fallback, never
                 # crash so local runs work before gen-creds.sh has been run.
-                logger.warning(
-                    "NATS_CREDS=%s not found — connecting without per-service "
-                    "credentials (dev fallback). Run deploy/scripts/gen-creds.sh "
-                    "to enable per-service identities.",
-                    self.nats_creds,
+                creds_mode = "missing_file"
+                log_connection_event(
+                    TRANSITION_CONNECTING,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    creds_mode=creds_mode,
+                    creds_path=self.nats_creds,
+                    level=logging.WARNING,
+                    message=(
+                        "NATS_CREDS file not found; connecting without per-service "
+                        "credentials (dev fallback)"
+                    ),
                 )
-                logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
         else:
-            logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
+            creds_mode = "none"
+
+        if creds_mode != "missing_file":
+            log_connection_event(
+                TRANSITION_CONNECTING,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                creds_mode=creds_mode,
+                creds_path=self.nats_creds if creds_mode == "file" else None,
+            )
 
         self._nc = await nats.connect(self.nats_url, **connect_kwargs)
 
@@ -179,12 +212,22 @@ class EventBus:
         await self._ensure_safety_stream()
 
         self._connected.set()
-        logger.info("Connected to NATS successfully (name=%s)", self.name)
+        log_connection_event(
+            TRANSITION_CONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            creds_mode=creds_mode,
+        )
 
     async def close(self) -> None:
         """Close the NATS connection."""
         if self._nc is not None:
-            logger.info("Closing NATS connection")
+            log_connection_event(
+                TRANSITION_CLOSING,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                subscription_count=len(self._subscriptions),
+            )
             await self._nc.drain()
             await self._nc.close()
             self._nc = None
@@ -195,6 +238,11 @@ class EventBus:
             self._request_handlers.clear()
             self._js_durables.clear()
             self._poison_handlers.clear()
+            log_connection_event(
+                TRANSITION_CLOSED,
+                client_name=self.name,
+                nats_url=self.nats_url,
+            )
 
     async def _ensure_safety_stream(self) -> None:
         """Create or update the durable JetStream stream for safety-critical subjects.
@@ -635,9 +683,12 @@ class EventBus:
         for subject, handler in self._handlers.items():
             saved_handlers[subject] = (handler, subject in self._request_handlers)
 
-        logger.warning(
-            "force_reconnect: tearing down NATS connection (%d subs to restore)",
-            len(saved_handlers),
+        log_connection_event(
+            TRANSITION_FORCE_RECONNECT_START,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            subscription_count=len(saved_handlers),
+            level=logging.WARNING,
         )
 
         # Best-effort close of old connection
@@ -645,7 +696,13 @@ class EventBus:
             try:
                 await asyncio.wait_for(self._nc.close(), timeout=5.0)
             except Exception as e:
-                logger.warning("force_reconnect: close failed (expected): %s", e)
+                log_connection_event(
+                    TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    error=str(e),
+                    level=logging.WARNING,
+                )
             self._nc = None
             self._js = None
             self._connected.clear()
@@ -671,9 +728,21 @@ class EventBus:
                 else:
                     await self.subscribe(subject, handler, is_request_handler=is_req)
             except Exception as e:
-                logger.error("force_reconnect: failed to re-subscribe %s: %s", subject, e)
+                log_connection_event(
+                    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    subject=subject,
+                    error=str(e),
+                    level=logging.ERROR,
+                )
 
-        logger.info("force_reconnect: complete, %d subs restored", len(self._subscriptions))
+        log_connection_event(
+            TRANSITION_FORCE_RECONNECT_COMPLETE,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            subscription_count=len(self._subscriptions),
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -716,12 +785,21 @@ class EventBus:
     async def _disconnected_callback(self) -> None:
         """Handle NATS disconnection."""
         self._connected.clear()
-        logger.warning("Disconnected from NATS")
+        log_connection_event(
+            TRANSITION_DISCONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            level=logging.WARNING,
+        )
 
     async def _reconnected_callback(self) -> None:
         """Handle NATS reconnection."""
         self._connected.set()
-        logger.info("Reconnected to NATS")
+        log_connection_event(
+            TRANSITION_RECONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+        )
 
 
 # Global event bus instance for convenience
