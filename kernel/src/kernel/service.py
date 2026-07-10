@@ -13,7 +13,13 @@ import time
 from collections import defaultdict, deque
 from typing import Any
 
-from activelearning import BaseService, current_timestamp, generate_trace_id, sign_decision
+from activelearning import (
+    BaseService,
+    current_timestamp,
+    generate_trace_id,
+    sign_decision,
+    verify_operator_action,
+)
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import (
     Subjects,
@@ -184,9 +190,14 @@ class KernelService(BaseService):
         # Brain/dashboard may not publish policy.restrict directly (ADR 0001 §3).
         # They publish policy.restrict.request; the Kernel validates and re-publishes
         # as authoritative policy.restrict that consumers (planner, brain) act on.
+        # Two separate calls: a single call with 4 positional args would silently
+        # pass the second subject as the queue-group parameter and the second
+        # handler as pending_msgs_limit, dropping the subscription entirely.
         await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT,
             self._handle_restrict,
+        )
+        await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT_REQUEST,
             self._handle_restrict_request,
         )
@@ -291,16 +302,36 @@ class KernelService(BaseService):
         Resume is deliberately narrow: it re-enables the Kernel but does NOT
         auto-restore motor limits or planner mode — an operator must restore
         those explicitly, so the system never silently un-halts itself.
+
+        The payload must carry a valid HMAC signature (``_op_sig``) and a
+        fresh ``timestamp`` (epoch ms) when ``ENGRAM_OPERATOR_KEY`` is set.
+        Fail-closed: an unauthenticated, tampered, or replayed resume is
+        REJECTED and the system remains halted.
         """
         operator = data.get("operator_id", "unknown")
+
+        if not verify_operator_action(data, "resume"):
+            self.logger.critical(
+                "SAFE_HALT resume REJECTED — unauthenticated, tampered, or "
+                "replayed request (operator_id=%r). System remains halted.",
+                operator,
+            )
+            # Confirm still-halted so consumers don't assume resumption occurred.
+            await self.event_bus.publish(
+                Subjects.SAFETY_HALT_STATUS,
+                {
+                    "halted": True,
+                    "operator_id": operator,
+                    "rejection_reason": "unauthenticated_resume",
+                },
+            )
+            return
+
         self._evaluator.resume()
         self.logger.warning(f"SAFE_HALT released by {operator}")
         await self.event_bus.publish(
             Subjects.SAFETY_HALT_STATUS,
-            {
-                "halted": False,
-                "operator_id": operator,
-            },
+            {"halted": False, "operator_id": operator},
         )
 
     async def _handle_load_profile(self, data: dict) -> None:
@@ -649,7 +680,12 @@ class KernelService(BaseService):
                 )
                 self._deny_count += 1
             except Exception:
-                pass  # best-effort — caller will timeout
+                # Best-effort DENY publish. If this also fails, no decision reaches
+                # the stream; callers time out and fail closed — verified by
+                # kernel/tests/test_service.py::
+                #   test_action_proposal_recovery_publish_failure_caller_fails_closed
+                #   test_code_proposal_recovery_publish_failure_caller_fails_closed
+                pass  # caller will timeout
 
     def _signed_code_decision(self, decision: KernelDecision) -> dict:
         """Build the signed wire payload for a code decision."""
@@ -736,6 +772,16 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
+                sign_decision(
+                    {
+                        "trace_id": decision.trace_id,
+                        "type": decision.type.value,
+                        "reason": decision.reason,
+                        "risk_score": decision.risk_score,
+                        "issued_at": decision.issued_at,
+                        "expires_at": decision.expires_at,
+                    }
+                ),
                 self._signed_code_decision(decision),
             )
 
@@ -761,7 +807,12 @@ class KernelService(BaseService):
                 )
                 self._deny_count += 1
             except Exception:
-                pass  # best-effort — caller will timeout
+                # Best-effort DENY publish. If this also fails, no decision reaches
+                # the stream; callers time out and fail closed — verified by
+                # kernel/tests/test_service.py::
+                #   test_action_proposal_recovery_publish_failure_caller_fails_closed
+                #   test_code_proposal_recovery_publish_failure_caller_fails_closed
+                pass  # caller will timeout
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""

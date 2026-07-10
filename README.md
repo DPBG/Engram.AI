@@ -10,6 +10,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Developed by Gittensor · Bittensor SN74](https://img.shields.io/badge/Developed%20by-Gittensor%20·%20Bittensor%20SN74-6e40c9.svg)](https://gittensor.io)
+[![Gittensor impact](https://api.gittensor.io/repos/DPBG%2FEngram.AI/badge.svg)](https://gittensor.io/miners/repository?name=DPBG/Engram.AI)
 
 <sub>Contributed & developed by <strong>Gittensor</strong> — <strong>Bittensor Subnet 74</strong>.</sub>
 
@@ -539,6 +540,7 @@ python run.py --only dashboard
 | [`docs/SENSORY-GATEWAY.md`](docs/SENSORY-GATEWAY.md) | Gateway architecture, sensor types, discovery |
 | [`docs/META-PROGRAMMER.md`](docs/META-PROGRAMMER.md) | Self-evolution agent system |
 | [`docs/KERNEL-CRASH-RECOVERY.md`](docs/KERNEL-CRASH-RECOVERY.md) | Threat model for the Kernel process dying mid-decision, and how callers still fail closed |
+| [`docs/DECISION-KEY-ROTATION.md`](docs/DECISION-KEY-ROTATION.md) | Zero-downtime rotation procedure for the decision-bus signing key |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, PR process, code standards |
 
 > **Naming:** Engram is the product/brand name and the domain is `engram.ai`. "Engram" was a former brand name and "ActiveLearningAI" is the original project directory name — both are still retained in a few places (the GitHub org/repos, the `activelearning` Python packages, and the legal entity Engram Incorporated). Public-facing materials use Engram.
