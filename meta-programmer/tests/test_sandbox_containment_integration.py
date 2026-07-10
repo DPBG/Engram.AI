@@ -162,6 +162,27 @@ _RELAXED_MEMORY = [
     "/tmp:size=50M",
 ]
 
+# Disk-quota test baseline: tmpfs size raised to 200M → 100 MB write succeeds.
+_RELAXED_DISKQUOTA = [
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--pids-limit",
+    "100",
+    "--memory",
+    "512m",
+    "--memory-swap",
+    "512m",
+    "--cpus",
+    "0.5",
+    "--tmpfs",
+    "/tmp:size=200M",  # 200 M → 100 MB write succeeds
+]
+
 # Privilege test baseline: cap_drop and no-new-privileges both absent.
 _WITHOUT_PRIVDROP = [
     "--network",
@@ -211,6 +232,28 @@ _PAYLOAD_MEMORY = """\
 b = bytearray(600 * 1024 * 1024)
 for i in range(0, len(b), 4096):
     b[i] = 1
+"""
+
+# Disk-quota: try to write 100 MB to /tmp (the only writable directory).
+# f.flush() after each 1 MB chunk forces the kernel to account the write
+# against the tmpfs quota immediately rather than buffering it.
+# Exits 0 if OSError (ENOSPC) fires before 100 MB (quota enforced),
+# exits 1 if the full 100 MB is written without error (quota absent/too large).
+_PAYLOAD_DISK = """\
+import sys
+chunk = b"A" * (1024 * 1024)
+written = 0
+try:
+    with open("/tmp/filltest", "wb") as f:
+        for _ in range(100):
+            f.write(chunk)
+            f.flush()
+            written += len(chunk)
+    print(f"wrote {written // (1024 * 1024)} MB without hitting quota", file=sys.stderr)
+    sys.exit(1)
+except OSError as e:
+    print(f"blocked after {written // (1024 * 1024)} MB: {e}", file=sys.stderr)
+    sys.exit(0)
 """
 
 # Privileges: read CapBnd and NoNewPrivs from /proc/self/status.
@@ -413,4 +456,29 @@ def test_privilege_escalation_prevention():
     assert guarded.returncode == 0, (
         "guarded: --cap-drop ALL must zero CapBnd; "
         "--security-opt no-new-privileges must set NoNewPrivs=1"
+    )
+
+
+def test_disk_quota_caps_tmpfs_writes():
+    """
+    Guard: --tmpfs /tmp:size=50M.
+    Payload: write 100 MB to /tmp (the only writable path; root FS is read-only).
+    Without guard (tmpfs size=200M): 100 MB write succeeds → payload exits 1.
+    With guard   (tmpfs size=50M):   ENOSPC raised before 100 MB → payload exits 0.
+
+    /tmp is the sole writable location because --read-only makes the root
+    overlay read-only.  Without a tmpfs size cap, a sandboxed process can
+    exhaust the host's RAM-backed tmpfs (or disk) through unbounded logging or
+    temporary-file creation without triggering any of the other guards.
+    """
+    baseline = _run(_RELAXED_DISKQUOTA, _PAYLOAD_DISK)
+    assert baseline.returncode != 0, (
+        "baseline: 100 MB write to /tmp must succeed under --tmpfs /tmp:size=200M "
+        "(payload exits 1 when not blocked by the quota)"
+    )
+
+    guarded = _run(_ALL, _PAYLOAD_DISK)
+    assert guarded.returncode == 0, (
+        "guarded: --tmpfs /tmp:size=50M must raise ENOSPC before 100 MB is written "
+        "(payload exits 0 when the disk quota fires)"
     )
