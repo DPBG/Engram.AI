@@ -19,6 +19,13 @@ import time
 from pathlib import Path
 
 from .registry import ROOT, Service
+from .supervisor_alerts import (
+    emit_service_flap_alert,
+    flap_threshold,
+    flap_window_seconds,
+    record_restart,
+    should_emit_flap_alert,
+)
 
 logger = logging.getLogger("launcher.supervisor")
 
@@ -56,6 +63,9 @@ class ManagedProcess:
         # Set once the process has been alive for svc.readiness_timeout seconds.
         self.ready = threading.Event()
         self.restart_count = 0
+        # Rolling restart timestamps (monotonic) for flap detection (issue #261).
+        self.restart_times: list[float] = []
+        self.flap_alerts_emitted = 0
 
 
 class Supervisor:
@@ -187,12 +197,38 @@ class Supervisor:
             with self._print_lock:
                 print(f"{prefix}*** exited (code {code}) ***", flush=True)
 
-            # Long-lived processes get a fresh backoff budget.
+            # Long-lived processes get a fresh backoff budget and flap history.
             if uptime >= _BACKOFF_RESET:
                 delay = _BACKOFF_INITIAL
+                mp.restart_times.clear()
+                mp.flap_alerts_emitted = 0
 
             actual_delay = min(delay, _BACKOFF_MAX)
             mp.restart_count += 1
+            now = time.monotonic()
+            window_restarts = record_restart(
+                mp.restart_times,
+                now=now,
+                window_seconds=flap_window_seconds(),
+            )
+            threshold = flap_threshold()
+            if should_emit_flap_alert(len(window_restarts), threshold, mp.flap_alerts_emitted):
+                alert = emit_service_flap_alert(
+                    service_name=mp.name,
+                    restart_count=mp.restart_count,
+                    restarts_in_window=len(window_restarts),
+                    window_seconds=flap_window_seconds(),
+                    threshold=threshold,
+                    exit_code=code,
+                    uptime_seconds=uptime,
+                )
+                mp.flap_alerts_emitted = len(window_restarts) // threshold
+                with self._print_lock:
+                    print(
+                        f"{prefix}*** ALERT: {alert['message']} ***",
+                        flush=True,
+                    )
+
             logger.info(
                 "restarting %s in %.1fs (attempt %d)",
                 mp.name,
