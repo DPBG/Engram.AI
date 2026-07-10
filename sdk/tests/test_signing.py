@@ -4,6 +4,7 @@ import time
 
 from activelearning.signing import (
     DECISION_KEY_ENV,
+    DECISION_KEY_SECONDARY_ENV,
     SIGNATURE_FIELD,
     sign_decision,
     signing_enabled,
@@ -11,6 +12,7 @@ from activelearning.signing import (
 )
 
 KEY = "unit-test-decision-secret"
+OTHER_KEY = "unit-test-decision-secret-rotated"
 
 
 def _decision(decision_type="ALLOW", trace="trace-1"):
@@ -76,6 +78,57 @@ def test_env_key_enforced(monkeypatch):
     signed = sign_decision(_decision())  # uses env key
     assert verify_decision(signed) is True  # uses env key
     assert verify_decision(_decision()) is False  # forged/unsigned rejected
+
+
+# ── key rotation (issue #206) ─────────────────────────────────────────────
+#
+# ENGRAM_DECISION_KEY_SECONDARY is a verify-only key: sign_decision never
+# uses it, but verify_decision accepts a signature made with either the
+# primary or the secondary key. This is what makes the dual-key overlap
+# window in docs/DECISION-KEY-ROTATION.md safe — see that doc for the full
+# operational procedure this unit-level behavior enables.
+
+
+def test_secondary_key_not_used_for_signing():
+    # Even with a secondary key configured, sign_decision only ever signs
+    # with the primary key.
+    signed = sign_decision(_decision(), KEY)
+    assert verify_decision(signed, KEY) is True
+    assert verify_decision(signed, OTHER_KEY) is False
+
+
+def test_verify_accepts_secondary_key_signature(monkeypatch):
+    # Mid-rotation: primary key is the new key, secondary is the old one —
+    # a decision signed with the *old* key (still in flight from before the
+    # Kernel flipped) must still be accepted, not dropped.
+    monkeypatch.setenv(DECISION_KEY_ENV, KEY)
+    monkeypatch.setenv(DECISION_KEY_SECONDARY_ENV, OTHER_KEY)
+
+    old_signed = sign_decision(_decision(trace="in-flight"), OTHER_KEY)
+    assert verify_decision(old_signed) is True  # accepted via secondary
+
+    new_signed = sign_decision(_decision(trace="fresh"))  # signs with KEY
+    assert verify_decision(new_signed) is True  # accepted via primary
+
+
+def test_verify_rejects_key_that_is_neither_primary_nor_secondary(monkeypatch):
+    monkeypatch.setenv(DECISION_KEY_ENV, KEY)
+    monkeypatch.setenv(DECISION_KEY_SECONDARY_ENV, OTHER_KEY)
+
+    forged = sign_decision(_decision(), "a-completely-different-key")
+    assert verify_decision(forged) is False
+
+
+def test_rotation_complete_retires_old_key(monkeypatch):
+    # After the overlap window, the secondary key is removed — a decision
+    # signed with the now-fully-retired old key must be rejected, proving
+    # rotation actually completes rather than accumulating trusted keys
+    # forever.
+    monkeypatch.setenv(DECISION_KEY_ENV, KEY)
+    monkeypatch.delenv(DECISION_KEY_SECONDARY_ENV, raising=False)
+
+    old_signed = sign_decision(_decision(), OTHER_KEY)
+    assert verify_decision(old_signed) is False
 
 
 # ── signing latency budget (Issue #185 / M1.2 regression gate) ───────────────
