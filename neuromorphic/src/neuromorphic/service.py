@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from activelearning import BaseService
 from activelearning.core import generate_trace_id
+from activelearning.signing import verify_decision
 from activelearning.subjects import Subjects
 
 from neuromorphic.auditory_stm import AuditorySTM, AuditorySTMConfig
@@ -1408,6 +1409,12 @@ class NeuromorphicService(BaseService):
             return
         if fut.done():
             self.logger.debug(f"Decision for already-completed trace {trace_id} — ignoring")
+            return
+        if not verify_decision(data):
+            self.logger.error(
+                "Rejected unverified decision for %s — ignoring (possible forgery)",
+                trace_id,
+            )
             return
         fut.set_result(data)
 
