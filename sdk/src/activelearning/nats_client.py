@@ -21,7 +21,6 @@ from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
 
-from activelearning.core import current_timestamp
 from activelearning.connection_logging import (
     TRANSITION_ALREADY_CONNECTED,
     TRANSITION_CLOSED,
@@ -36,6 +35,7 @@ from activelearning.connection_logging import (
     TRANSITION_RECONNECTED,
     log_connection_event,
 )
+from activelearning.core import current_timestamp
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
