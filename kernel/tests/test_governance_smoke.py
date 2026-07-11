@@ -28,10 +28,7 @@ import asyncio
 import logging
 import os
 import shutil
-import socket
-import subprocess
 import tempfile
-import time
 import uuid
 from pathlib import Path
 
@@ -39,6 +36,7 @@ import pytest
 from activelearning.database import close_database
 from activelearning.nats_client import EventBus
 from activelearning.subjects import Subjects
+from activelearning.testing.nats_server import nats_server_available, run_nats_server
 
 logger = logging.getLogger(__name__)
 
@@ -46,24 +44,8 @@ logger = logging.getLogger(__name__)
 # ── Infrastructure helpers ────────────────────────────────────────────────────
 
 
-def _nats_available() -> bool:
-    return shutil.which("nats-server") is not None
-
-
-def _free_port(host: str = "127.0.0.1") -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
-
-
-def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(timeout)
-        return s.connect_ex((host, port)) == 0
-
-
 pytestmark = pytest.mark.skipif(
-    not _nats_available(),
+    not nats_server_available(),
     reason=(
         "nats-server not on PATH — skipping governance smoke tests. "
         "CI installs it via setup-engram (nats: true)."
