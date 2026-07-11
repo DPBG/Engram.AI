@@ -27,6 +27,21 @@ coordinator/, memory/, cache/, external-api/, planner/, dashboard/, launcher/
 - Put shared fixtures in a `conftest.py` at the appropriate scope (e.g.
   `sdk/tests/conftest.py`, `sdk/tests/red_team/conftest.py`).
 
+### Shared real-broker harness
+
+M1's real-broker governance smoke tests and M2's NATS-reliability/reconnect
+tests intentionally share the same embedded broker harness:
+`activelearning.testing.nats_server`.
+
+Use it whenever a test needs an isolated, JetStream-enabled `nats-server` on an
+ephemeral port. It centralizes the common process lifecycle concerns: finding
+`nats-server` on `PATH`, choosing a free port, waiting for readiness, enabling
+JetStream, and terminating the broker. Service-specific `conftest.py` files may
+wrap it in fixtures, but should not duplicate the startup loop.
+
+This keeps the M1 Phase 2 governance coverage and M2 Phase 2 reliability
+coverage aligned as the NATS test infrastructure evolves. See issue #264.
+
 ## Running tests locally
 
 Match what CI runs so a green local run means a green PR:
