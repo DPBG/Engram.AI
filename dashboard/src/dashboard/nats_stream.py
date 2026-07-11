@@ -34,6 +34,7 @@ DEDICATED_SUBJECTS = frozenset(
         "safety.halt.status",
     }
 )
+EVENTBUS_METRICS_PREFIX = "eventbus.metrics."
 
 
 class NatsStreamManager:
@@ -52,8 +53,48 @@ class NatsStreamManager:
         self._obs_max_tracked = 50  # cap tracked subjects to bound growth
         self._last_proposal_broadcast = 0.0
         self._last_body_frame_ts = 0.0
+        self._local_publish = {"count": 0, "total_ms": 0.0, "max_ms": 0.0}
+        self._local_subscribe = {"count": 0, "total_ms": 0.0, "max_ms": 0.0}
 
-    # ── status ────────────────────────────────────────────────────────────
+    def _record_latency(self, bucket: dict, latency_ms: float) -> None:
+        bucket["count"] += 1
+        bucket["total_ms"] += latency_ms
+        if latency_ms > bucket["max_ms"]:
+            bucket["max_ms"] = latency_ms
+
+    def local_bus_metrics_snapshot(self) -> dict:
+        """Dashboard NATS client stats (raw nats-py, not SDK EventBus)."""
+        publish = self._local_publish
+        subscribe = self._local_subscribe
+        return {
+            "service": "dashboard",
+            "timestamp_ms": int(time.time() * 1000),
+            "publish": {
+                "count": publish["count"],
+                "avg_ms": round(publish["total_ms"] / publish["count"], 3) if publish["count"] else 0,
+                "max_ms": round(publish["max_ms"], 3),
+                "jetstream_count": 0,
+            },
+            "subscribe": {
+                "count": subscribe["count"],
+                "avg_ms": round(subscribe["total_ms"] / subscribe["count"], 3) if subscribe["count"] else 0,
+                "max_ms": round(subscribe["max_ms"], 3),
+            },
+            "request": {"count": 0, "avg_ms": 0, "max_ms": 0},
+        }
+
+    async def publish_dashboard_metrics(self) -> None:
+        """Heartbeat dashboard NATS stats on eventbus.metrics.dashboard."""
+        if self.nc is None:
+            return
+        try:
+            payload = self.local_bus_metrics_snapshot()
+            await self.nc.publish(
+                f"{EVENTBUS_METRICS_PREFIX}dashboard",
+                json.dumps(payload).encode(),
+            )
+        except Exception as e:
+            self.logger.debug("Failed to publish dashboard bus metrics: %s", e)
     @property
     def connected(self) -> bool:
         """Health flag — true once the connection succeeded (mirrors ``/api/health``)."""
@@ -67,7 +108,11 @@ class NatsStreamManager:
     # ── publishing ────────────────────────────────────────────────────────
     async def publish(self, subject: str, payload: dict) -> None:
         """Publish a JSON payload to ``subject`` (raises if not connected)."""
+        track = not subject.startswith(EVENTBUS_METRICS_PREFIX)
+        t0 = time.perf_counter()
         await self.nc.publish(subject, json.dumps(payload).encode())
+        if track:
+            self._record_latency(self._local_publish, (time.perf_counter() - t0) * 1000)
 
     async def try_publish(self, subject: str, payload: dict) -> dict | None:
         """Publish JSON, returning ``None`` on success or an error dict on failure.
@@ -89,14 +134,12 @@ class NatsStreamManager:
             self.logger.debug(f"Skip publish: nc={self.nc is not None}, text={bool(text)}")
             return
         try:
-            await self.nc.publish(
+            await self.publish(
                 "observation.text",
-                json.dumps(
-                    {
-                        "provenance": "observation.text",
-                        "data": text,
-                    }
-                ).encode(),
+                {
+                    "provenance": "observation.text",
+                    "data": text,
+                },
             )
             self.logger.info(f"Published observation.text ({len(text)} chars)")
         except Exception as e:
@@ -131,6 +174,7 @@ class NatsStreamManager:
             await nc.subscribe("speech.execute", cb=self._handle_speech_execute)
             await nc.subscribe("observation.visual.body", cb=self._handle_visual_body)
             await nc.subscribe("safety.halt.status", cb=self._handle_safe_halt_status)
+            await nc.subscribe("eventbus.metrics.>", cb=self._handle_bus_metrics)
         except Exception as e:
             self.logger.warning(f"NATS failed (non-fatal): {e}")
             self._connected = False
@@ -140,59 +184,85 @@ class NatsStreamManager:
 
     # ── subscription callbacks ────────────────────────────────────────────
     async def _handle_msg(self, msg):
-        if msg.subject in DEDICATED_SUBJECTS or msg.subject.startswith("heartbeat."):
+        if (
+            msg.subject in DEDICATED_SUBJECTS
+            or msg.subject.startswith("heartbeat.")
+            or msg.subject.startswith(EVENTBUS_METRICS_PREFIX)
+        ):
             return
 
-        # Throttle observation.* subjects to avoid flooding the dashboard feed.
-        if msg.subject.startswith("observation."):
-            now = time.time()
-            # Evict stale entries if tracking too many subjects.
-            if len(self._obs_last_broadcast) > self._obs_max_tracked:
-                cutoff = now - 60.0
-                stale = [k for k, v in self._obs_last_broadcast.items() if v < cutoff]
-                for k in stale:
-                    self._obs_last_broadcast.pop(k, None)
-                    self._obs_dropped.pop(k, None)
-            last = self._obs_last_broadcast.get(msg.subject, 0.0)
-            if now - last < self._obs_throttle_interval:
-                self._obs_dropped[msg.subject] = self._obs_dropped.get(msg.subject, 0) + 1
+        t0 = time.perf_counter()
+        try:
+            # Throttle observation.* subjects to avoid flooding the dashboard feed.
+            if msg.subject.startswith("observation."):
+                now = time.time()
+                # Evict stale entries if tracking too many subjects.
+                if len(self._obs_last_broadcast) > self._obs_max_tracked:
+                    cutoff = now - 60.0
+                    stale = [k for k, v in self._obs_last_broadcast.items() if v < cutoff]
+                    for k in stale:
+                        self._obs_last_broadcast.pop(k, None)
+                        self._obs_dropped.pop(k, None)
+                last = self._obs_last_broadcast.get(msg.subject, 0.0)
+                if now - last < self._obs_throttle_interval:
+                    self._obs_dropped[msg.subject] = self._obs_dropped.get(msg.subject, 0) + 1
+                    self._state.knowledge.learn("observation", "nats_message", f"{msg.subject}")
+                    return
+                self._obs_last_broadcast[msg.subject] = now
+                dropped = self._obs_dropped.pop(msg.subject, 0)
+                try:
+                    data = json.loads(msg.data.decode())
+                except Exception:
+                    data = {"raw": msg.data.decode()[:200]}
+                # Summarize: truncate large payloads, add dropped count.
+                if isinstance(data, dict) and "data" in data:
+                    raw = data["data"]
+                    if isinstance(raw, list) and len(raw) > 8:
+                        data["data"] = raw[:4] + ["..."] + [f"({len(raw)} values)"]
+                msg_info = {
+                    "timestamp": now_iso(),
+                    "subject": msg.subject,
+                    "data": data,
+                }
+                if dropped > 0:
+                    msg_info["dropped"] = dropped
+                self._state.message_buffer.append(msg_info)
                 self._state.knowledge.learn("observation", "nats_message", f"{msg.subject}")
+                await self._broadcast({"type": "message", "data": msg_info})
                 return
-            self._obs_last_broadcast[msg.subject] = now
-            dropped = self._obs_dropped.pop(msg.subject, 0)
+
             try:
                 data = json.loads(msg.data.decode())
             except Exception:
-                data = {"raw": msg.data.decode()[:200]}
-            # Summarize: truncate large payloads, add dropped count.
-            if isinstance(data, dict) and "data" in data:
-                raw = data["data"]
-                if isinstance(raw, list) and len(raw) > 8:
-                    data["data"] = raw[:4] + ["..."] + [f"({len(raw)} values)"]
+                data = {"raw": msg.data.decode()[:500]}
             msg_info = {
                 "timestamp": now_iso(),
                 "subject": msg.subject,
                 "data": data,
             }
-            if dropped > 0:
-                msg_info["dropped"] = dropped
             self._state.message_buffer.append(msg_info)
             self._state.knowledge.learn("observation", "nats_message", f"{msg.subject}")
             await self._broadcast({"type": "message", "data": msg_info})
-            return
+        finally:
+            self._record_latency(self._local_subscribe, (time.perf_counter() - t0) * 1000)
 
+    async def _handle_bus_metrics(self, msg):
         try:
             data = json.loads(msg.data.decode())
-        except Exception:
-            data = {"raw": msg.data.decode()[:500]}
-        msg_info = {
-            "timestamp": now_iso(),
-            "subject": msg.subject,
-            "data": data,
-        }
-        self._state.message_buffer.append(msg_info)
-        self._state.knowledge.learn("observation", "nats_message", f"{msg.subject}")
-        await self._broadcast({"type": "message", "data": msg_info})
+            service = data.get("service") or msg.subject.removeprefix(EVENTBUS_METRICS_PREFIX)
+            if not service:
+                return
+            self._state.bus_metrics_by_service[service] = data
+            await self._broadcast(
+                {
+                    "type": "bus_metrics_update",
+                    "data": self._state.bus_metrics_list(
+                        include_dashboard=self.local_bus_metrics_snapshot(),
+                    ),
+                }
+            )
+        except Exception as e:
+            self.logger.debug("Failed to handle bus metrics: %s", e)
 
     async def _handle_heartbeat(self, msg):
         try:

@@ -200,3 +200,28 @@ def test_large_observation_payload_is_summarized():
     assert stored[:4] == [0, 1, 2, 3]
     assert "..." in stored
     assert any("20 values" in str(x) for x in stored)
+
+
+def test_handle_bus_metrics_stores_service_and_broadcasts():
+    mgr, state, ws = _manager()
+    payload = {
+        "service": "kernel",
+        "publish": {"count": 3, "avg_ms": 1.0, "max_ms": 2.0, "jetstream_count": 1},
+        "subscribe": {"count": 10, "avg_ms": 0.5, "max_ms": 1.0},
+        "request": {"count": 2, "avg_ms": 5.0, "max_ms": 8.0},
+    }
+    asyncio.run(
+        mgr._handle_bus_metrics(_FakeMsg("eventbus.metrics.kernel", payload))
+    )
+    assert state.bus_metrics_by_service["kernel"] == payload
+    assert ws.sent[-1]["type"] == "bus_metrics_update"
+    services = {row["service"] for row in ws.sent[-1]["data"]}
+    assert "kernel" in services
+    assert "dashboard" in services
+
+
+def test_eventbus_metrics_subject_skipped_by_wildcard_handler():
+    mgr, state, ws = _manager()
+    asyncio.run(mgr._handle_msg(_FakeMsg("eventbus.metrics.kernel", {"service": "kernel"})))
+    assert len(state.message_buffer) == 0
+    assert ws.sent == []
