@@ -210,9 +210,7 @@ def test_handle_bus_metrics_stores_service_and_broadcasts():
         "subscribe": {"count": 10, "avg_ms": 0.5, "max_ms": 1.0},
         "request": {"count": 2, "avg_ms": 5.0, "max_ms": 8.0},
     }
-    asyncio.run(
-        mgr._handle_bus_metrics(_FakeMsg("eventbus.metrics.kernel", payload))
-    )
+    asyncio.run(mgr._handle_bus_metrics(_FakeMsg("eventbus.metrics.kernel", payload)))
     assert state.bus_metrics_by_service["kernel"] == payload
     assert ws.sent[-1]["type"] == "bus_metrics_update"
     services = {row["service"] for row in ws.sent[-1]["data"]}

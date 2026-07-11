@@ -71,13 +71,19 @@ class NatsStreamManager:
             "timestamp_ms": int(time.time() * 1000),
             "publish": {
                 "count": publish["count"],
-                "avg_ms": round(publish["total_ms"] / publish["count"], 3) if publish["count"] else 0,
+                "avg_ms": (
+                    round(publish["total_ms"] / publish["count"], 3) if publish["count"] else 0
+                ),
                 "max_ms": round(publish["max_ms"], 3),
                 "jetstream_count": 0,
             },
             "subscribe": {
                 "count": subscribe["count"],
-                "avg_ms": round(subscribe["total_ms"] / subscribe["count"], 3) if subscribe["count"] else 0,
+                "avg_ms": (
+                    round(subscribe["total_ms"] / subscribe["count"], 3)
+                    if subscribe["count"]
+                    else 0
+                ),
                 "max_ms": round(subscribe["max_ms"], 3),
             },
             "request": {"count": 0, "avg_ms": 0, "max_ms": 0},
@@ -95,6 +101,7 @@ class NatsStreamManager:
             )
         except Exception as e:
             self.logger.debug("Failed to publish dashboard bus metrics: %s", e)
+
     @property
     def connected(self) -> bool:
         """Health flag — true once the connection succeeded (mirrors ``/api/health``)."""
