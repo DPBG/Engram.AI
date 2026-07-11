@@ -35,6 +35,14 @@ from activelearning.connection_logging import (
     TRANSITION_RECONNECTED,
     log_connection_event,
 )
+from activelearning.consumer_lag import (
+    ConsumerLagSnapshot,
+    emit_consumer_lag_alert,
+    lag_check_interval_seconds,
+    lag_threshold,
+    should_emit_lag_alert,
+    should_monitor_consumer,
+)
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -152,6 +160,8 @@ class EventBus:
         # redelivery or unprocessable). Optional; the DLQ subject is always used.
         self._poison_handlers: dict[str, MessageHandler] = {}
         self._connected = asyncio.Event()
+        # consumer_name -> alert tier emitted while lag remains above threshold
+        self._lag_alerts_emitted: dict[str, int] = {}
 
     async def connect(self) -> None:
         """Connect to the NATS server."""
@@ -238,6 +248,7 @@ class EventBus:
             self._request_handlers.clear()
             self._js_durables.clear()
             self._poison_handlers.clear()
+            self._lag_alerts_emitted.clear()
             log_connection_event(
                 TRANSITION_CLOSED,
                 client_name=self.name,
@@ -257,6 +268,69 @@ class EventBus:
         )
         await self._js.add_stream(config)
         logger.info("JetStream stream '%s' ready", SAFETY_STREAM_NAME)
+
+    async def fetch_consumer_lag_snapshots(
+        self,
+        stream: str = SAFETY_STREAM_NAME,
+    ) -> list[ConsumerLagSnapshot]:
+        """Return pending/ack lag for durable consumers on a JetStream stream."""
+        await self._ensure_connected()
+        assert self._js is not None
+        snapshots: list[ConsumerLagSnapshot] = []
+        consumers = await self._js.consumers_info(stream)
+        for info in consumers:
+            consumer_name = info.name
+            if not should_monitor_consumer(consumer_name):
+                continue
+            filter_subject = getattr(info.config, "filter_subject", None)
+            snapshots.append(
+                ConsumerLagSnapshot(
+                    stream=stream,
+                    consumer=consumer_name,
+                    num_pending=info.num_pending or 0,
+                    num_ack_pending=info.num_ack_pending or 0,
+                    filter_subject=filter_subject,
+                )
+            )
+        return snapshots
+
+    async def check_consumer_lags(
+        self,
+        stream: str = SAFETY_STREAM_NAME,
+    ) -> list[dict[str, Any]]:
+        """Poll consumer_info and emit structured alerts when lag exceeds threshold."""
+        threshold = lag_threshold()
+        alerts: list[dict[str, Any]] = []
+        for snapshot in await self.fetch_consumer_lag_snapshots(stream):
+            if snapshot.lag < threshold:
+                self._lag_alerts_emitted.pop(snapshot.consumer, None)
+                continue
+            emitted = self._lag_alerts_emitted.get(snapshot.consumer, 0)
+            if should_emit_lag_alert(snapshot.lag, threshold, emitted):
+                alert = emit_consumer_lag_alert(
+                    snapshot,
+                    threshold=threshold,
+                    monitor=self.name,
+                )
+                self._lag_alerts_emitted[snapshot.consumer] = snapshot.lag // threshold
+                alerts.append(alert)
+        return alerts
+
+    async def run_lag_monitor(
+        self,
+        interval_s: float | None = None,
+        stream: str = SAFETY_STREAM_NAME,
+    ) -> None:
+        """Background poll loop for JetStream consumer lag (issue #224)."""
+        interval = interval_s if interval_s is not None else lag_check_interval_seconds()
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self.check_consumer_lags(stream)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("JetStream lag monitor error: %s", e)
 
     @staticmethod
     def _is_safety_critical(subject: str) -> bool:
