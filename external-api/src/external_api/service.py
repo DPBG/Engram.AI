@@ -5,6 +5,7 @@ External API Service - Main service for external knowledge queries.
 import asyncio
 
 from activelearning import BaseService
+from activelearning.embeddings import get_embedding_service
 from activelearning.nats_client import serialize_message
 
 from external_api.manager import ExternalAPIManager
@@ -30,6 +31,7 @@ class ExternalAPIService(BaseService):
         self._manager = ExternalAPIManager(
             event_bus=self.event_bus,
             db=self.database,
+            embedding_service=get_embedding_service(),
         )
 
         await self.event_bus.subscribe(
