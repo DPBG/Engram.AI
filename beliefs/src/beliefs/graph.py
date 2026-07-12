@@ -7,6 +7,7 @@ confidence updates, contradiction detection, and belief propagation.
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
