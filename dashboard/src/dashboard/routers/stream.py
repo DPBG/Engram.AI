@@ -61,6 +61,9 @@ def build_stream_router(ctx: DashboardContext) -> APIRouter:
                         "gateway": state.gateway_status,
                         "video_sessions": list(state.video_sessions.values()),
                         "halt_state": get_halt_state(),
+                        "bus_metrics": state.bus_metrics_list(
+                            include_dashboard=nats.local_bus_metrics_snapshot(),
+                        ),
                     },
                 }
             )
