@@ -23,13 +23,34 @@ def test_extract_metrics_from_benchmark_suite_format():
     raw = {
         "timestamp": "2026-07-01T12:00:00",
         "association_strength": {"concept_count": 7},
+        "concept_separability": {"silhouette_score": 0.61, "linear_probe_accuracy": 0.75},
         "cross_modal_binding_accuracy": {"f1": 0.42, "precision": 0.5, "recall": 0.36},
         "step_count": 1200,
     }
     m = learning_evidence.extract_learning_metrics(raw)
-    assert m["concept_separability"] == 7.0
+    assert m["concept_separability"] == 0.61
     assert m["binding_accuracy"] == 0.42
     assert m["binding_precision"] == 0.5
+
+
+def test_extract_metrics_prefers_silhouette_over_concept_count():
+    raw = {
+        "association_strength": {"concept_count": 7},
+        "concept_separability": {"silhouette_score": 0.42},
+    }
+    m = learning_evidence.extract_learning_metrics(raw)
+    assert m["concept_separability"] == 0.42
+
+
+def test_extract_metrics_binding_matched_decoy_ratio():
+    raw = {
+        "cross_modal_binding_accuracy": {
+            "f1": 0.5,
+            "matched_to_decoy_ratio": 2.25,
+        },
+    }
+    m = learning_evidence.extract_learning_metrics(raw)
+    assert m["binding_matched_decoy_ratio"] == pytest.approx(2.25)
 
 
 def test_extract_metrics_fallback_to_script_benchmark_format():
@@ -63,6 +84,12 @@ def test_load_benchmark_files_builds_time_series(tmp_path):
             "cross_modal_binding_accuracy": {"f1": 0.25},
         },
     )
+    _write_benchmark(
+        tmp_path / "ci_performance_baseline.json",
+        {
+            "metrics": {"speed_steps_per_sec": 400.0},
+        },
+    )
 
     entries, err = learning_evidence.load_benchmark_files(
         benchmark_dirs=[tmp_path],
@@ -71,6 +98,13 @@ def test_load_benchmark_files_builds_time_series(tmp_path):
     assert len(entries) == 2
     assert entries[0]["metrics"]["concept_separability"] == 1.0
     assert entries[1]["metrics"]["binding_accuracy"] == 0.25
+
+
+def test_is_benchmark_result_file():
+    assert learning_evidence.is_benchmark_result_file("benchmark_20260304_041527.json")
+    assert learning_evidence.is_benchmark_result_file("benchmarks_20260102_100000.json")
+    assert not learning_evidence.is_benchmark_result_file("ci_performance_baseline.json")
+    assert not learning_evidence.is_benchmark_result_file("gpu_synapse_spike.json")
 
 
 def test_build_learning_evidence_series(tmp_path):

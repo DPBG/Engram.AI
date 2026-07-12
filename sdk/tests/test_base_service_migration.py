@@ -24,6 +24,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from activelearning.base_service import BaseService
+from activelearning.core import current_timestamp
 from activelearning.messages import ObservationMessage
 from activelearning.nats_client import EventBus, serialize_message
 from activelearning.signing import sign_decision
@@ -416,8 +417,11 @@ async def test_decision_wait_accepts_signed_decision(
             "type": "ALLOW",
             "reason": "approved",
             "risk_score": 0.1,
-            "issued_at": 1000000,
-            "expires_at": 9999999,
+            "issued_at": current_timestamp(),
+            # Must be a real future timestamp, not a small placeholder: issue
+            # #190 made wait_for_decision() reject expired decisions, and a
+            # fixed value like 9999999ms (1970-01-01) is long since past.
+            "expires_at": current_timestamp() + 60_000,
         }
         signed = sign_decision(payload, key=key)
         probe = EventBus(nats_url=nats_url, name="signed-probe")

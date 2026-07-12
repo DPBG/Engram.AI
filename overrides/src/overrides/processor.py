@@ -184,6 +184,9 @@ class OverrideProcessor:
         parameter: str,
         value: Any,
         verified_by: str,
+        *,
+        prompt: str,
+        verification_confidence: float | None = None,
     ) -> dict:
         """
         Apply an override to the system.
@@ -215,22 +218,26 @@ class OverrideProcessor:
                     "error": f"Unknown parameter: {parameter}",
                 }
 
-            # Store in database
-
+            # Store in database (schema: sdk/src/activelearning/schema.sql)
+            now = current_timestamp()
             await self.db.execute(
                 """
                 INSERT INTO human_overrides
-                (id, trace_id, parameter, value, verified_by, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (id, trace_id, override_type, prompt, parameter_path, value,
+                 verification_method, verification_confidence, applied_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     generate_trace_id(),
                     trace_id,
+                    "operational",
+                    prompt,
                     parameter,
                     json.dumps(value),
                     verified_by,
-                    int(__import__("time").time() * 1000),
-                    current_timestamp(),
+                    verification_confidence,
+                    now,
+                    now,
                 ),
             )
             await self.db.commit()
