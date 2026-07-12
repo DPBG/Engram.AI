@@ -337,7 +337,6 @@ class BeliefsService(BaseService):
             if msg and msg.reply:
                 await msg.respond(serialize_message({"result": None, "error": str(e)}))
 
-
     async def _persist_floor_rejections(self, events: list[FloorRejectionEvent]) -> None:
         """Persist floor-rejection events to the audit_entries table.
 
@@ -355,13 +354,15 @@ class BeliefsService(BaseService):
                         "timestamp": event.rejected_at,
                         "component": "beliefs",
                         "action": "floor_rejection",
-                        "details": json.dumps({
-                            "node_id": event.node_id,
-                            "attempted_confidence": event.attempted_confidence,
-                            "enforced_confidence": event.enforced_confidence,
-                            "path": event.path,
-                            "source": event.source,
-                        }),
+                        "details": json.dumps(
+                            {
+                                "node_id": event.node_id,
+                                "attempted_confidence": event.attempted_confidence,
+                                "enforced_confidence": event.enforced_confidence,
+                                "path": event.path,
+                                "source": event.source,
+                            }
+                        ),
                     },
                 )
                 self.logger.warning(

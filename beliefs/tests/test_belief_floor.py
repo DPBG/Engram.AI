@@ -209,8 +209,11 @@ def test_seeded_values_and_norms_present():
 
 def test_add_node_below_floor_records_rejection():
     g = BeliefGraph()
-    g.add_node(BeliefNode(id="value.x", type=NodeType.VALUE, content="x",
-                          confidence=0.1, source="attacker"))
+    g.add_node(
+        BeliefNode(
+            id="value.x", type=NodeType.VALUE, content="x", confidence=0.1, source="attacker"
+        )
+    )
     events = g.drain_floor_rejections()
     assert len(events) == 1
     ev = events[0]
@@ -229,8 +232,9 @@ def test_update_belief_contradiction_records_rejection():
     g.drain_floor_rejections()
     # Apply enough contradicting evidence to push below the floor.
     for _ in range(10):
-        g.update_belief("value.human_safety", evidence_strength=1.0, supports=False,
-                        source="bad_agent")
+        g.update_belief(
+            "value.human_safety", evidence_strength=1.0, supports=False, source="bad_agent"
+        )
     events = g.drain_floor_rejections()
     assert len(events) >= 1
     assert all(ev.path == "update_belief" for ev in events)

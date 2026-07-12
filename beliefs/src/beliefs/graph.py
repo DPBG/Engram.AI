@@ -155,15 +155,17 @@ class BeliefGraph:
                 confidence,
                 VALUE_CONFIDENCE_FLOOR,
             )
-            self._floor_rejections.append(FloorRejectionEvent(
-                id=str(uuid.uuid4()),
-                node_id=node.id,
-                attempted_confidence=confidence,
-                enforced_confidence=VALUE_CONFIDENCE_FLOOR,
-                path="add_node",
-                source=node.source,
-                rejected_at=int(time.time() * 1000),
-            ))
+            self._floor_rejections.append(
+                FloorRejectionEvent(
+                    id=str(uuid.uuid4()),
+                    node_id=node.id,
+                    attempted_confidence=confidence,
+                    enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                    path="add_node",
+                    source=node.source,
+                    rejected_at=int(time.time() * 1000),
+                )
+            )
             confidence = VALUE_CONFIDENCE_FLOOR
 
         self._graph.add_node(
@@ -271,15 +273,17 @@ class BeliefGraph:
         # and norms, but cannot learn to override core values.
         if node_data.get("type") == NodeType.VALUE.value:
             if new_confidence < VALUE_CONFIDENCE_FLOOR:
-                self._floor_rejections.append(FloorRejectionEvent(
-                    id=str(uuid.uuid4()),
-                    node_id=node_id,
-                    attempted_confidence=new_confidence,
-                    enforced_confidence=VALUE_CONFIDENCE_FLOOR,
-                    path="update_belief",
-                    source=source,
-                    rejected_at=int(time.time() * 1000),
-                ))
+                self._floor_rejections.append(
+                    FloorRejectionEvent(
+                        id=str(uuid.uuid4()),
+                        node_id=node_id,
+                        attempted_confidence=new_confidence,
+                        enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                        path="update_belief",
+                        source=source,
+                        rejected_at=int(time.time() * 1000),
+                    )
+                )
             new_confidence = max(new_confidence, VALUE_CONFIDENCE_FLOOR)
 
         # Update node
@@ -423,15 +427,17 @@ class BeliefGraph:
             if node.get("type") == NodeType.VALUE.value:
                 raw_conf = node.get("confidence", 1.0)
                 if raw_conf < VALUE_CONFIDENCE_FLOOR:
-                    self._floor_rejections.append(FloorRejectionEvent(
-                        id=str(uuid.uuid4()),
-                        node_id=node_id,
-                        attempted_confidence=raw_conf,
-                        enforced_confidence=VALUE_CONFIDENCE_FLOOR,
-                        path="import_from_dict",
-                        source="persistence_import",
-                        rejected_at=int(time.time() * 1000),
-                    ))
+                    self._floor_rejections.append(
+                        FloorRejectionEvent(
+                            id=str(uuid.uuid4()),
+                            node_id=node_id,
+                            attempted_confidence=raw_conf,
+                            enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                            path="import_from_dict",
+                            source="persistence_import",
+                            rejected_at=int(time.time() * 1000),
+                        )
+                    )
                 node["confidence"] = max(raw_conf, VALUE_CONFIDENCE_FLOOR)
             self._graph.add_node(node_id, **node)
 
