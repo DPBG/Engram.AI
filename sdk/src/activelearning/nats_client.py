@@ -392,6 +392,10 @@ class EventBus:
             self._request_handlers.add(subject)
         else:
             self._request_handlers.discard(subject)
+        # Flush so the server has processed the SUB before we return. Without
+        # this, a caller that immediately sends a request() after subscribe()
+        # can race the SUB through the write buffer and get NoRespondersError.
+        await self._nc.flush()
         logger.info(f"Subscribed to {subject}")
 
     async def js_subscribe(
