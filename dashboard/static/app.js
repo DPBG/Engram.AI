@@ -321,8 +321,8 @@ class ActiveLearningAI {
         summary.innerHTML = `
             <div class="le-stat-grid">
                 <div class="le-stat">
-                    <span class="le-stat-label">Concepts</span>
-                    <span class="le-stat-val">${conceptVal != null ? conceptVal : '—'}</span>
+                    <span class="le-stat-label">Separability</span>
+                    <span class="le-stat-val">${conceptVal != null ? Number(conceptVal).toFixed(3) : '—'}</span>
                 </div>
                 <div class="le-stat">
                     <span class="le-stat-label">Binding F1</span>

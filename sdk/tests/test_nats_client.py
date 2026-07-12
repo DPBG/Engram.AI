@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from activelearning.core import generate_trace_id
+from activelearning.core import current_timestamp, generate_trace_id
 from activelearning.nats_client import EventBus
 from activelearning.signing import DECISION_KEY_ENV, DECISION_KEY_SECONDARY_ENV, sign_decision
 from activelearning.subjects import Subjects, code_decision_subject, decision_subject
@@ -206,6 +206,68 @@ async def test_wait_for_decision_retires_old_key_after_rotation_completes(
 
     with pytest.raises(asyncio.TimeoutError):
         await event_bus.wait_for_decision(trace_id, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_rejects_expired_signed_decision(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    """Issue #190: a validly-signed but expired decision must not be
+    replayable. expires_at is itself a signed field (activelearning.
+    signing.SIGNED_FIELDS), so a captured old ALLOW can't be re-timestamped
+    without invalidating its signature — but nothing checked it at accept
+    time until now."""
+    key = "test-decision-secret-expired"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    expired_allow = sign_decision(
+        {
+            "trace_id": trace_id,
+            "type": "ALLOW",
+            "reason": "stale — captured and replayed",
+            "risk_score": 0.0,
+            "expires_at": current_timestamp() - 1000,
+        },
+        key,
+    )
+    await event_bus.publish(decision_subject(trace_id), expired_allow)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await event_bus.wait_for_decision(trace_id, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_accepts_signed_decision_before_expiry(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    """Companion to the expired-decision test: a signed decision with a
+    future expires_at must still be accepted normally."""
+    key = "test-decision-secret-not-expired"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    async def publish_signed():
+        await asyncio.sleep(0.1)
+        decision = sign_decision(
+            {
+                "trace_id": trace_id,
+                "type": "ALLOW",
+                "reason": "fresh",
+                "risk_score": 0.0,
+                "expires_at": current_timestamp() + 60_000,
+            },
+            key,
+        )
+        await event_bus.publish(decision_subject(trace_id), decision)
+
+    publish_task = asyncio.create_task(publish_signed())
+    result = await event_bus.wait_for_decision(trace_id, timeout=2.0)
+    await publish_task
+    assert result["trace_id"] == trace_id
+    assert result["type"] == "ALLOW"
 
 
 @pytest.mark.asyncio
