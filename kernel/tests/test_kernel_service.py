@@ -5,21 +5,13 @@ the async handlers through ``asyncio.run``, and bypass ``KernelService.__init__`
 (which would open NATS/SQLite) via ``__new__`` + stubbed dependencies.
 """
 
-import asyncio
-import logging
-from collections import deque
-
-from activelearning import KernelDecisionType as DecisionType
-from activelearning.subjects import code_decision_subject
-
-from kernel.evaluator import unavailable_risk_analysis
-from kernel.service import _LATENCY_WINDOW, KernelService
 from __future__ import annotations
 
 import asyncio
 import importlib.util
 import logging
 import sys
+from collections import deque
 from pathlib import Path
 
 from activelearning import KernelDecisionType as DecisionType
@@ -27,7 +19,7 @@ from activelearning.nats_client import EventBus
 from activelearning.subjects import code_decision_subject
 
 from kernel.evaluator import unavailable_risk_analysis
-from kernel.service import KernelService
+from kernel.service import _LATENCY_WINDOW, KernelService
 
 _KERNEL_SRC = Path(__file__).resolve().parents[1] / "src" / "kernel"
 _GATE_PATH = Path(__file__).resolve().parents[2] / "coordinator" / "src" / "coordinator" / "gate.py"
@@ -45,8 +37,6 @@ class _RaisingEvaluator:
     def evaluate_code_proposal(self, *args, **kwargs):
         raise RuntimeError("boom — simulated internal kernel error")
 
-
-def _make_service():
     def evaluate_action_proposal(self, *args, **kwargs):
         raise RuntimeError("boom — simulated internal kernel error")
 
@@ -95,7 +85,6 @@ def _make_service(*, publish_raises: bool = False):
     svc.logger = logging.getLogger("test-kernel")
     svc._deny_count = 0
     svc._evaluator = _RaisingEvaluator()
-    svc.event_bus = _FakeBus()
     svc._latency_samples = deque(maxlen=_LATENCY_WINDOW)
     svc._SLO_P99_MS = 50.0
     svc._slo_breach_count = 0
@@ -107,11 +96,6 @@ def _make_service(*, publish_raises: bool = False):
 
     async def _no_log(*args, **kwargs):
         return None
-
-    svc._get_risk_analysis = _no_risk
-    svc._log_decision = _no_log
-    return svc
-
 
     async def _no_norms(*args, **kwargs):
         return []

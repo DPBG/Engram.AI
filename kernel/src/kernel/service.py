@@ -10,7 +10,6 @@ import json
 import math
 import os
 import time
-from collections import deque
 from collections import defaultdict, deque
 from typing import Any
 
@@ -730,12 +729,6 @@ class KernelService(BaseService):
                 pass  # best-effort — caller will timeout
         finally:
             self._record_latency(time.perf_counter() - _t0)
-                # Best-effort DENY publish. If this also fails, no decision reaches
-                # the stream; callers time out and fail closed — verified by
-                # kernel/tests/test_service.py::
-                #   test_action_proposal_recovery_publish_failure_caller_fails_closed
-                #   test_code_proposal_recovery_publish_failure_caller_fails_closed
-                pass  # caller will timeout
 
     def _signed_code_decision(self, decision: KernelDecision) -> dict:
         """Build the signed wire payload for a code decision."""
@@ -861,12 +854,6 @@ class KernelService(BaseService):
                 pass  # best-effort — caller will timeout
         finally:
             self._record_latency(time.perf_counter() - _t0)
-                # Best-effort DENY publish. If this also fails, no decision reaches
-                # the stream; callers time out and fail closed — verified by
-                # kernel/tests/test_service.py::
-                #   test_action_proposal_recovery_publish_failure_caller_fails_closed
-                #   test_code_proposal_recovery_publish_failure_caller_fails_closed
-                pass  # caller will timeout
 
     async def _handle_status(self, _data: dict, msg: Msg) -> None:
         """Reply to status requests via request-reply."""
