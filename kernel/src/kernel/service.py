@@ -44,10 +44,9 @@ from kernel.policy import (
 
 _DECISION_TYPES = ("ALLOW", "TRANSFORM", "DENY", "DEFER")
 
-# Per-source code-proposal rate limiting (M1.14).
-# Exceeding the limit is fail-closed: a DENY decision is published so the
-# meta-programmer's Future resolves rather than hanging, and the over-rate
-# source is logged.  Both values are overridable via environment variables.
+# Per-source proposal rate limiting (M1.14) — applies to both proposal.new
+# and code.proposal. Exceeding the limit is fail-closed: a DENY decision is
+# published so the caller's Future resolves rather than hanging.
 _PROPOSAL_RATE_LIMIT = int(os.environ.get("KERNEL_PROPOSAL_RATE_LIMIT", "10"))
 _PROPOSAL_RATE_WINDOW_S = float(os.environ.get("KERNEL_PROPOSAL_RATE_WINDOW_S", "60"))
 
@@ -609,6 +608,32 @@ class KernelService(BaseService):
 
         try:
             self.logger.debug(f"Evaluating {proposal_type} proposal: {trace_id}")
+
+            # Rate-limit check (M1.14): fail-closed DENY — never silently drop.
+            if not self._check_proposal_rate_limit(source):
+                self.logger.warning(
+                    f"Rate limit exceeded for source '{source}' "
+                    f"(>{self._proposal_rate_limit} proposals/"
+                    f"{self._proposal_rate_window_s:.0f}s) — denying {trace_id}"
+                )
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=(
+                        f"Rate limit exceeded: source '{source}' sent more than "
+                        f"{self._proposal_rate_limit} proposals in "
+                        f"{self._proposal_rate_window_s:.0f}s"
+                    ),
+                    risk_score=1.0,
+                )
+                await self._publish_and_log_decision(
+                    trace_id,
+                    proposal_type,
+                    source,
+                    deny,
+                )
+                self._deny_count += 1
+                return
 
             # Validate proposal has required fields
             if "action" not in proposal:
