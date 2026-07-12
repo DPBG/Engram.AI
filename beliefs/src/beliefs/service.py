@@ -14,10 +14,9 @@ from activelearning import BaseService
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import Subjects
 
-from beliefs.graph import BeliefEdge, BeliefGraph, BeliefNode, EdgeType, NodeType
+from beliefs.graph import BeliefEdge, BeliefGraph, BeliefNode, EdgeType, FloorRejectionEvent, NodeType
 
 
-from beliefs.graph import BeliefGraph, BeliefNode, BeliefEdge, NodeType, EdgeType, FloorRejectionEvent
 class BeliefStoreCorruptedError(RuntimeError):
     """Raised when the belief store exists but cannot be read back correctly.
 
