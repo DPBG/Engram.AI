@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from dataclasses import dataclass, field
-
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # Dendritic compartment indices — named constants for readability
-COMP_APICAL_DISTAL = 0    # feedforward input (sensory/feature projections)
-COMP_BASAL = 1            # recurrent/lateral connections
+COMP_APICAL_DISTAL = 0  # feedforward input (sensory/feature projections)
+COMP_BASAL = 1  # recurrent/lateral connections
 COMP_APICAL_PROXIMAL = 2  # top-down feedback (predictive/concept)
-COMP_PERISOMATIC = 3      # modulatory (meta-controller, brainstem)
+COMP_PERISOMATIC = 3  # modulatory (meta-controller, brainstem)
 
 
 def _env_int(key: str, default: int) -> int:
@@ -41,7 +39,7 @@ class LIFParams:
     # At 5% firing: ~0.5mV adaptation (negligible).
     # At 50% firing: ~5mV adaptation (halves effective drive).
     sfa_increment: float = 0.3  # mV threshold increase per spike
-    sfa_decay: float = 0.99     # per-step decay (tau ~100 steps = 100ms)
+    sfa_decay: float = 0.99  # per-step decay (tau ~100 steps = 100ms)
 
 
 @dataclass
@@ -85,6 +83,31 @@ class RSTDPParams:
     modulation_match: float = 0.5  # prediction match → small reinforcement
     modulation_mismatch: float = 3.0  # surprise → strong learning
     surprise_bonus: float = 0.002  # small positive dw bias when modulation > mismatch threshold
+
+
+@dataclass
+class SleepPhaseConfig:
+    """Periodic offline sleep consolidation (ported for OSCEN core-function parity).
+
+    OFF by default. When enabled, every ``interval_s`` seconds of wall-clock the
+    brain enters a ``duration_s``-second consolidation window. During the window:
+    sensory observation gain is dropped (less noise), the 5HT baseline is raised
+    (replay-friendly neuromod profile), and eligibility traces are replayed with a
+    HARD-CAPPED weight boost.
+
+    The cap is critical: unbounded replay can multiply weights past ``w_max`` and
+    overflow. The boost is capped at ``boost_factor`` AND the result is clipped to
+    the synapse group's ``w_max`` — do not relax either gate.
+
+    Consumed by ``neuromorphic.sleep_phase``.
+    """
+
+    enabled: bool = False  # NEURO_SLEEP_PHASE
+    interval_s: float = 14400.0  # 4 hours between sleep windows
+    duration_s: float = 600.0  # 10 min consolidation window
+    boost_factor: float = 1.2  # max trace -> weight multiplier (HARD CAP)
+    sensory_gain_during_sleep: float = 0.1  # drop external input to 10%
+    serotonin_boost: float = 1.5  # multiplier on 5HT baseline during sleep
 
 
 @dataclass
@@ -134,8 +157,8 @@ class ConnectionConfig:
     sensory_reflex_weight: float = 0.8
     reflex_motor_sparsity: float = 0.001
     reflex_motor_weight: float = 0.9
-    brainstem_sensory_sparsity: float = 0.003   # was 0.0005 (6x more connections)
-    brainstem_sensory_weight: float = 0.5       # was 0.2 (2.5x stronger)
+    brainstem_sensory_sparsity: float = 0.003  # was 0.0005 (6x more connections)
+    brainstem_sensory_weight: float = 0.5  # was 0.2 (2.5x stronger)
     # Brainstem arousal to cortical regions (reticular activating system).
     # Non-plastic tonic excitation — brings cortex within firing range so
     # feedforward STDP pathways can learn.
@@ -143,7 +166,9 @@ class ConnectionConfig:
     brainstem_association_weight: float = 1.5  # match other brainstem arousal groups
     brainstem_cerebellum_sparsity: float = 0.003
     brainstem_cerebellum_weight: float = 1.5  # non-plastic, bypasses w_max clipping
-    brainstem_feature_sparsity: float = 0.005  # higher sparsity — feature needs more arousal (weak sensory input)
+    brainstem_feature_sparsity: float = (
+        0.005  # higher sparsity — feature needs more arousal (weak sensory input)
+    )
     brainstem_feature_weight: float = 1.5  # non-plastic, bypasses w_max clipping
     brainstem_working_sparsity: float = 0.003
     brainstem_working_weight: float = 1.5  # non-plastic, bypasses w_max clipping
@@ -193,8 +218,12 @@ class ConnectionConfig:
     concept_working_weight: float = 0.4
     predictive_concept_sparsity: float = 0.002
     predictive_concept_weight: float = 0.3
-    brainstem_concept_sparsity: float = 0.005  # non-plastic tonic arousal (matches brainstem_feature)
-    brainstem_concept_weight: float = 1.5  # non-plastic, bypasses w_max (matches downstream arousal groups)
+    brainstem_concept_sparsity: float = (
+        0.005  # non-plastic tonic arousal (matches brainstem_feature)
+    )
+    brainstem_concept_weight: float = (
+        1.5  # non-plastic, bypasses w_max (matches downstream arousal groups)
+    )
     # Pattern separator (dentate gyrus) connections
     association_dg_sparsity: float = 0.005
     association_dg_weight: float = 0.5
@@ -246,13 +275,15 @@ class EncodingConfig:
     auditory_end: float = 0.65  # 40–65%
     tactile_end: float = 0.85  # 65–85%
     # remaining 85–100% = proprioceptive
-    modality_weights: dict = field(default_factory=lambda: {
-        "visual": 3.0,         # highest weight (like human ~60% visual)
-        "auditory": 2.0,       # text/voice — high weight
-        "tactile": 1.0,
-        "proprioceptive": 1.0,
-        "body_visual": 1.5,    # self-view (MuJoCo body camera)
-    })
+    modality_weights: dict = field(
+        default_factory=lambda: {
+            "visual": 3.0,  # highest weight (like human ~60% visual)
+            "auditory": 2.0,  # text/voice — high weight
+            "tactile": 1.0,
+            "proprioceptive": 1.0,
+            "body_visual": 1.5,  # self-view (MuJoCo body camera)
+        }
+    )
     inactivity_timeout: int = 200  # steps before a modality is considered inactive
 
 
@@ -270,7 +301,9 @@ class DecodingConfig:
     speech_end: float = 0.8  # default = head_end → no speech sub-range (backward compat)
     # When speech_end > head_end, the range [head_end, speech_end] becomes the
     # "speech" sub-range — brain-native language/phoneme output learned via STDP.
-    expression_end: float = 1.0  # speech_end–100% = expression (default); <1.0 enables cognitive sub-range
+    expression_end: float = (
+        1.0  # speech_end–100% = expression (default); <1.0 enables cognitive sub-range
+    )
     # When expression_end < 1.0, the range [expression_end, 1.0] becomes the
     # "cognitive" sub-range — non-physical actions (LLM queries, memory ops).
 
@@ -367,7 +400,9 @@ class MotorFeedbackConfig:
     # Internal DA burst after motor fire — keeps eligibility traces alive
     echo_da_boost: float = 1.5  # DA multiplier during echo window
     echo_window_steps: int = 300  # steps to sustain DA boost after motor fire
-    echo_window_ms: int = 0  # wall-clock ms for echo window (0=use step-based). For real hardware set ~2000-5000ms.
+    echo_window_ms: int = (
+        0  # wall-clock ms for echo window (0=use step-based). For real hardware set ~2000-5000ms.
+    )
     # Outcome-contingent DA — success/failure modulates DA so three-factor
     # learning can distinguish good from bad motor commands.
     outcome_da_success: float = 2.0  # DA multiplier on success outcome
@@ -381,7 +416,9 @@ class MotorFeedbackConfig:
     # during early developmental phases. Like infant kicking, this creates
     # action-outcome pairs for self-supervised learning via three-factor STDP.
     babbling_enabled: bool = False  # opt-in via NEURO_MOTOR_BABBLING=1
-    babbling_amplitude: float = 2.0  # amplitude of random motor current (low to not drown learned patterns)
+    babbling_amplitude: float = (
+        2.0  # amplitude of random motor current (low to not drown learned patterns)
+    )
     babbling_rate: float = 0.1  # fraction of steps with babbling (0.1 = 10%)
     # Virtual body (MuJoCo) settings
     virtual_delay_ms: int = 75  # simulated feedback latency
@@ -418,22 +455,42 @@ class MotorFeedbackConfig:
     # Default is 29-DOF humanoid. Override for quadruped, arm, drone, etc.
     # The decoder and body read this at runtime, so changing it adapts the
     # entire motor pipeline without touching brain code.
-    channel_actuators: dict[str, list[str]] = field(default_factory=lambda: {
-        "locomotion": [
-            "waist_yaw_m", "waist_roll_m", "waist_pitch_m",
-            "r_hip_yaw_m", "r_hip_roll_m", "r_hip_pitch_m",
-            "r_knee_m", "r_ankle_pitch_m", "r_ankle_roll_m",
-            "l_hip_yaw_m", "l_hip_roll_m", "l_hip_pitch_m",
-            "l_knee_m", "l_ankle_pitch_m", "l_ankle_roll_m",
-        ],
-        "manipulation": [
-            "r_shoulder_pitch_m", "r_shoulder_roll_m", "r_shoulder_yaw_m",
-            "r_elbow_m", "r_wrist_pitch_m", "r_wrist_yaw_m",
-            "l_shoulder_pitch_m", "l_shoulder_roll_m", "l_shoulder_yaw_m",
-            "l_elbow_m", "l_wrist_pitch_m", "l_wrist_yaw_m",
-        ],
-        "head": ["neck_pitch_m", "neck_yaw_m"],
-    })
+    channel_actuators: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "locomotion": [
+                "waist_yaw_m",
+                "waist_roll_m",
+                "waist_pitch_m",
+                "r_hip_yaw_m",
+                "r_hip_roll_m",
+                "r_hip_pitch_m",
+                "r_knee_m",
+                "r_ankle_pitch_m",
+                "r_ankle_roll_m",
+                "l_hip_yaw_m",
+                "l_hip_roll_m",
+                "l_hip_pitch_m",
+                "l_knee_m",
+                "l_ankle_pitch_m",
+                "l_ankle_roll_m",
+            ],
+            "manipulation": [
+                "r_shoulder_pitch_m",
+                "r_shoulder_roll_m",
+                "r_shoulder_yaw_m",
+                "r_elbow_m",
+                "r_wrist_pitch_m",
+                "r_wrist_yaw_m",
+                "l_shoulder_pitch_m",
+                "l_shoulder_roll_m",
+                "l_shoulder_yaw_m",
+                "l_elbow_m",
+                "l_wrist_pitch_m",
+                "l_wrist_yaw_m",
+            ],
+            "head": ["neck_pitch_m", "neck_yaw_m"],
+        }
+    )
 
 
 @dataclass
@@ -590,7 +647,9 @@ class GlobalWorkspaceConfig:
     afferent_weight: float = 0.4  # input->workspace initial weight
     efferent_sparsity: float = 0.003  # workspace->target broadcast sparsity
     efferent_weight: float = 0.5  # workspace->target initial weight
-    adolescent_plasticity_boost: float = 1.0  # multiplier on workspace eligibility during adolescent
+    adolescent_plasticity_boost: float = (
+        1.0  # multiplier on workspace eligibility during adolescent
+    )
 
 
 @dataclass
@@ -627,7 +686,9 @@ class DendriticCompartmentConfig:
     dend_spike_boost: float = 2.5
 
     # Dendritic spike refractory period (ms)
-    dend_spike_refractory_ms: float = 3.0  # reduced from 5ms — shorter refractory increases avg soma current
+    dend_spike_refractory_ms: float = (
+        3.0  # reduced from 5ms — shorter refractory increases avg soma current
+    )
 
     # Dendritic voltage floor (mV) — prevents runaway hyperpolarization from
     # inhibitory-dominated input. Biological K+ reversal potential ≈ -90mV.
@@ -648,9 +709,7 @@ class DendriticCompartmentConfig:
         for name in ("tau", "resting", "soma_coupling", "dend_spike_threshold"):
             val = getattr(self, name)
             if len(val) != nc:
-                raise ValueError(
-                    f"{name} length {len(val)} != n_compartments {nc}"
-                )
+                raise ValueError(f"{name} length {len(val)} != n_compartments {nc}")
 
 
 @dataclass
@@ -664,63 +723,65 @@ class CompartmentAssignmentConfig:
       3 (perisomatic):     modulatory (brainstem, meta-controller)
     """
 
-    assignments: dict[str, int] = field(default_factory=lambda: {
-        # Feedforward (compartment 0 — apical distal)
-        "sensory_reflex": COMP_APICAL_DISTAL,
-        "sensory_association": COMP_APICAL_DISTAL,
-        "sensory_motor": COMP_APICAL_DISTAL,
-        "sensory_cerebellum": COMP_APICAL_DISTAL,
-        "sensory_feature": COMP_APICAL_DISTAL,
-        "feature_association": COMP_APICAL_DISTAL,
-        "association_concept": COMP_BASAL,
-        "association_predictive": COMP_APICAL_DISTAL,
-        "association_working": COMP_APICAL_DISTAL,
-        "association_meta": COMP_APICAL_DISTAL,
-        "reflex_motor": COMP_APICAL_DISTAL,
-        # Recurrent/lateral (compartment 1 — basal)
-        "association_lateral": COMP_BASAL,
-        "concept_lateral": COMP_BASAL,
-        "predictive_recurrent": COMP_BASAL,
-        "motor_cerebellum": COMP_BASAL,
-        # Top-down feedback (compartment 2 — apical proximal)
-        "predictive_association": COMP_APICAL_PROXIMAL,
-        "predictive_concept": COMP_APICAL_PROXIMAL,
-        "concept_predictive": COMP_APICAL_PROXIMAL,
-        "concept_working": COMP_APICAL_PROXIMAL,
-        "cerebellum_motor": COMP_APICAL_PROXIMAL,
-        "working_motor": COMP_APICAL_PROXIMAL,
-        # Modulatory (compartment 3 — perisomatic)
-        "brainstem_sensory": COMP_PERISOMATIC,
-        "brainstem_motor": COMP_PERISOMATIC,
-        "brainstem_association": COMP_PERISOMATIC,
-        "brainstem_cerebellum": COMP_PERISOMATIC,
-        "brainstem_feature": COMP_PERISOMATIC,
-        "brainstem_working": COMP_PERISOMATIC,
-        "brainstem_predictive": COMP_PERISOMATIC,
-        "brainstem_concept": COMP_PERISOMATIC,
-        "meta_association": COMP_PERISOMATIC,
-        # Working memory recurrent (CIP-24)
-        "working_recurrent": COMP_BASAL,
-        # Pattern separator (dentate gyrus)
-        "association_dg": COMP_APICAL_DISTAL,
-        "dg_concept": COMP_BASAL,
-        "brainstem_dg": COMP_PERISOMATIC,
-        # Global Workspace (CIP-23)
-        "association_workspace": COMP_APICAL_DISTAL,
-        "predictive_workspace": COMP_APICAL_DISTAL,
-        "working_workspace": COMP_APICAL_DISTAL,
-        "concept_workspace": COMP_APICAL_DISTAL,
-        "feature_workspace": COMP_APICAL_DISTAL,
-        "meta_workspace": COMP_APICAL_DISTAL,
-        "workspace_lateral": COMP_BASAL,
-        "brainstem_workspace": COMP_PERISOMATIC,
-        "workspace_association": COMP_APICAL_PROXIMAL,
-        "workspace_predictive": COMP_APICAL_PROXIMAL,
-        "workspace_working": COMP_APICAL_PROXIMAL,
-        "workspace_motor": COMP_APICAL_PROXIMAL,
-        "workspace_concept": COMP_APICAL_PROXIMAL,
-        "workspace_feature": COMP_APICAL_PROXIMAL,
-    })
+    assignments: dict[str, int] = field(
+        default_factory=lambda: {
+            # Feedforward (compartment 0 — apical distal)
+            "sensory_reflex": COMP_APICAL_DISTAL,
+            "sensory_association": COMP_APICAL_DISTAL,
+            "sensory_motor": COMP_APICAL_DISTAL,
+            "sensory_cerebellum": COMP_APICAL_DISTAL,
+            "sensory_feature": COMP_APICAL_DISTAL,
+            "feature_association": COMP_APICAL_DISTAL,
+            "association_concept": COMP_BASAL,
+            "association_predictive": COMP_APICAL_DISTAL,
+            "association_working": COMP_APICAL_DISTAL,
+            "association_meta": COMP_APICAL_DISTAL,
+            "reflex_motor": COMP_APICAL_DISTAL,
+            # Recurrent/lateral (compartment 1 — basal)
+            "association_lateral": COMP_BASAL,
+            "concept_lateral": COMP_BASAL,
+            "predictive_recurrent": COMP_BASAL,
+            "motor_cerebellum": COMP_BASAL,
+            # Top-down feedback (compartment 2 — apical proximal)
+            "predictive_association": COMP_APICAL_PROXIMAL,
+            "predictive_concept": COMP_APICAL_PROXIMAL,
+            "concept_predictive": COMP_APICAL_PROXIMAL,
+            "concept_working": COMP_APICAL_PROXIMAL,
+            "cerebellum_motor": COMP_APICAL_PROXIMAL,
+            "working_motor": COMP_APICAL_PROXIMAL,
+            # Modulatory (compartment 3 — perisomatic)
+            "brainstem_sensory": COMP_PERISOMATIC,
+            "brainstem_motor": COMP_PERISOMATIC,
+            "brainstem_association": COMP_PERISOMATIC,
+            "brainstem_cerebellum": COMP_PERISOMATIC,
+            "brainstem_feature": COMP_PERISOMATIC,
+            "brainstem_working": COMP_PERISOMATIC,
+            "brainstem_predictive": COMP_PERISOMATIC,
+            "brainstem_concept": COMP_PERISOMATIC,
+            "meta_association": COMP_PERISOMATIC,
+            # Working memory recurrent (CIP-24)
+            "working_recurrent": COMP_BASAL,
+            # Pattern separator (dentate gyrus)
+            "association_dg": COMP_APICAL_DISTAL,
+            "dg_concept": COMP_BASAL,
+            "brainstem_dg": COMP_PERISOMATIC,
+            # Global Workspace (CIP-23)
+            "association_workspace": COMP_APICAL_DISTAL,
+            "predictive_workspace": COMP_APICAL_DISTAL,
+            "working_workspace": COMP_APICAL_DISTAL,
+            "concept_workspace": COMP_APICAL_DISTAL,
+            "feature_workspace": COMP_APICAL_DISTAL,
+            "meta_workspace": COMP_APICAL_DISTAL,
+            "workspace_lateral": COMP_BASAL,
+            "brainstem_workspace": COMP_PERISOMATIC,
+            "workspace_association": COMP_APICAL_PROXIMAL,
+            "workspace_predictive": COMP_APICAL_PROXIMAL,
+            "workspace_working": COMP_APICAL_PROXIMAL,
+            "workspace_motor": COMP_APICAL_PROXIMAL,
+            "workspace_concept": COMP_APICAL_PROXIMAL,
+            "workspace_feature": COMP_APICAL_PROXIMAL,
+        }
+    )
 
 
 @dataclass
@@ -756,11 +817,15 @@ class OscillatoryConfig:
 
     def __post_init__(self):
         if self.gamma_amplitude >= 1.0:
-            raise ValueError(f"gamma_amplitude must be < 1.0 (got {self.gamma_amplitude}), "
-                             "otherwise gain can reach zero or go negative")
+            raise ValueError(
+                f"gamma_amplitude must be < 1.0 (got {self.gamma_amplitude}), "
+                "otherwise gain can reach zero or go negative"
+            )
         if self.theta_amplitude >= 1.0:
-            raise ValueError(f"theta_amplitude must be < 1.0 (got {self.theta_amplitude}), "
-                             "otherwise plasticity factor can reach zero or go negative")
+            raise ValueError(
+                f"theta_amplitude must be < 1.0 (got {self.theta_amplitude}), "
+                "otherwise plasticity factor can reach zero or go negative"
+            )
 
 
 @dataclass
@@ -1001,7 +1066,9 @@ class NeuromorphicConfig:
 
     # Dendritic compartments
     dendrites: DendriticCompartmentConfig = field(default_factory=DendriticCompartmentConfig)
-    compartment_assignments: CompartmentAssignmentConfig = field(default_factory=CompartmentAssignmentConfig)
+    compartment_assignments: CompartmentAssignmentConfig = field(
+        default_factory=CompartmentAssignmentConfig
+    )
 
     # Cognitive action channel
     cognitive_action: CognitiveActionConfig = field(default_factory=CognitiveActionConfig)
@@ -1019,9 +1086,14 @@ class NeuromorphicConfig:
     # Adolescent brain phase configs
     pruning: PruningConfig = field(default_factory=PruningConfig)
     myelination: MyelinationConfig = field(default_factory=MyelinationConfig)
-    neighborhood: NeighborhoodConsolidationConfig = field(default_factory=NeighborhoodConsolidationConfig)
+    neighborhood: NeighborhoodConsolidationConfig = field(
+        default_factory=NeighborhoodConsolidationConfig
+    )
     adolescent_stdp: AdolescentSTDPConfig = field(default_factory=AdolescentSTDPConfig)
     adolescent_entry: AdolescentEntryConfig = field(default_factory=AdolescentEntryConfig)
+
+    # Offline sleep consolidation (OFF by default; see neuromorphic.sleep_phase).
+    sleep_phase: SleepPhaseConfig = field(default_factory=SleepPhaseConfig)
 
     # Per-region LIF overrides
     brainstem_lif: LIFParams = field(
@@ -1087,13 +1159,9 @@ class NeuromorphicConfig:
 
     def __post_init__(self):
         if self.homeostasis_interval < 1:
-            raise ValueError(
-                f"homeostasis_interval must be >= 1, got {self.homeostasis_interval}"
-            )
+            raise ValueError(f"homeostasis_interval must be >= 1, got {self.homeostasis_interval}")
         if self.homeostasis_rate <= 0:
-            raise ValueError(
-                f"homeostasis_rate must be > 0, got {self.homeostasis_rate}"
-            )
+            raise ValueError(f"homeostasis_rate must be > 0, got {self.homeostasis_rate}")
         if not 0.0 <= self.homeostasis_target_frac <= 1.0:
             raise ValueError(
                 f"homeostasis_target_frac must be in [0, 1], got {self.homeostasis_target_frac}"
@@ -1136,7 +1204,8 @@ class NeuromorphicConfig:
         sparsity_scale = _env_float("NEURO_SPARSITY_SCALE", 1.0)
         conn = ConnectionConfig(
             brainstem_workspace_weight=_env_float(
-                "NEURO_BRAINSTEM_WORKSPACE_WEIGHT", 0.5,
+                "NEURO_BRAINSTEM_WORKSPACE_WEIGHT",
+                0.5,
             ),
         )
         if sparsity_scale != 1.0:
@@ -1327,58 +1396,132 @@ class NeuromorphicConfig:
 
         # Sparse matrices: per-nnz storage includes CSR arrays, COO cache,
         # eligibility traces (plastic groups), and BCM theta (n_post).
-        def sparse_bytes(n_pre: int, n_post: int, sparsity: float,
-                         plastic: bool = True) -> int:
+        def sparse_bytes(n_pre: int, n_post: int, sparsity: float, plastic: bool = True) -> int:
             nnz = int(n_pre * n_post * sparsity)
-            base = nnz * 12   # CSR: data(4) + indices(4) + indptr overhead(~4)
-            coo = nnz * 8     # cached COO: row(4) + col(4)
+            base = nnz * 12  # CSR: data(4) + indices(4) + indptr overhead(~4)
+            coo = nnz * 8  # cached COO: row(4) + col(4)
             elig = nnz * 4 if plastic else 0  # eligibility trace array
             bcm = n_post * 4 if plastic else 0  # BCM theta per post-neuron
             return base + coo + elig + bcm
 
-        matrix_bytes = sum([
-            sparse_bytes(pop.sensory_cortex, pop.reflex_arc, conn.sensory_reflex_sparsity),
-            sparse_bytes(pop.reflex_arc, pop.motor_cortex, conn.reflex_motor_sparsity),
-            sparse_bytes(pop.brainstem, pop.sensory_cortex, conn.brainstem_sensory_sparsity, plastic=False),
-            sparse_bytes(pop.brainstem, pop.association_cortex, conn.brainstem_association_sparsity, plastic=False),
-            sparse_bytes(pop.brainstem, pop.cerebellum, conn.brainstem_cerebellum_sparsity, plastic=False),
-            sparse_bytes(pop.sensory_cortex, pop.association_cortex, conn.sensory_association_sparsity),
-            sparse_bytes(pop.association_cortex, pop.association_cortex, conn.association_lateral_sparsity),
-            sparse_bytes(pop.sensory_cortex, pop.motor_cortex, conn.sensory_motor_sparsity),
-            sparse_bytes(pop.brainstem, pop.motor_cortex, conn.brainstem_motor_sparsity),
-            sparse_bytes(pop.sensory_cortex, pop.cerebellum, conn.sensory_cerebellum_sparsity),
-            sparse_bytes(pop.motor_cortex, pop.cerebellum, conn.motor_cerebellum_sparsity),
-            sparse_bytes(pop.cerebellum, pop.motor_cortex, conn.cerebellum_motor_sparsity),
-            sparse_bytes(pop.association_cortex, pop.predictive_layer, conn.association_predictive_sparsity),
-            sparse_bytes(pop.predictive_layer, pop.predictive_layer, conn.predictive_recurrent_sparsity),
-            sparse_bytes(pop.predictive_layer, pop.association_cortex, conn.predictive_association_sparsity),
-            sparse_bytes(pop.association_cortex, pop.working_memory, conn.association_working_sparsity),
-            sparse_bytes(pop.working_memory, pop.working_memory, conn.working_recurrent_sparsity),
-            sparse_bytes(pop.working_memory, pop.motor_cortex, conn.working_motor_sparsity),
-            sparse_bytes(pop.brainstem, pop.working_memory, conn.brainstem_working_sparsity, plastic=False),
-            sparse_bytes(pop.brainstem, pop.predictive_layer, conn.brainstem_predictive_sparsity, plastic=False),
-        ])
+        matrix_bytes = sum(
+            [
+                sparse_bytes(pop.sensory_cortex, pop.reflex_arc, conn.sensory_reflex_sparsity),
+                sparse_bytes(pop.reflex_arc, pop.motor_cortex, conn.reflex_motor_sparsity),
+                sparse_bytes(
+                    pop.brainstem,
+                    pop.sensory_cortex,
+                    conn.brainstem_sensory_sparsity,
+                    plastic=False,
+                ),
+                sparse_bytes(
+                    pop.brainstem,
+                    pop.association_cortex,
+                    conn.brainstem_association_sparsity,
+                    plastic=False,
+                ),
+                sparse_bytes(
+                    pop.brainstem, pop.cerebellum, conn.brainstem_cerebellum_sparsity, plastic=False
+                ),
+                sparse_bytes(
+                    pop.sensory_cortex, pop.association_cortex, conn.sensory_association_sparsity
+                ),
+                sparse_bytes(
+                    pop.association_cortex,
+                    pop.association_cortex,
+                    conn.association_lateral_sparsity,
+                ),
+                sparse_bytes(pop.sensory_cortex, pop.motor_cortex, conn.sensory_motor_sparsity),
+                sparse_bytes(pop.brainstem, pop.motor_cortex, conn.brainstem_motor_sparsity),
+                sparse_bytes(pop.sensory_cortex, pop.cerebellum, conn.sensory_cerebellum_sparsity),
+                sparse_bytes(pop.motor_cortex, pop.cerebellum, conn.motor_cerebellum_sparsity),
+                sparse_bytes(pop.cerebellum, pop.motor_cortex, conn.cerebellum_motor_sparsity),
+                sparse_bytes(
+                    pop.association_cortex,
+                    pop.predictive_layer,
+                    conn.association_predictive_sparsity,
+                ),
+                sparse_bytes(
+                    pop.predictive_layer, pop.predictive_layer, conn.predictive_recurrent_sparsity
+                ),
+                sparse_bytes(
+                    pop.predictive_layer,
+                    pop.association_cortex,
+                    conn.predictive_association_sparsity,
+                ),
+                sparse_bytes(
+                    pop.association_cortex, pop.working_memory, conn.association_working_sparsity
+                ),
+                sparse_bytes(
+                    pop.working_memory, pop.working_memory, conn.working_recurrent_sparsity
+                ),
+                sparse_bytes(pop.working_memory, pop.motor_cortex, conn.working_motor_sparsity),
+                sparse_bytes(
+                    pop.brainstem,
+                    pop.working_memory,
+                    conn.brainstem_working_sparsity,
+                    plastic=False,
+                ),
+                sparse_bytes(
+                    pop.brainstem,
+                    pop.predictive_layer,
+                    conn.brainstem_predictive_sparsity,
+                    plastic=False,
+                ),
+            ]
+        )
 
         # Hierarchical connections (when enabled)
         if pop.feature_layer > 0:
-            matrix_bytes += sparse_bytes(pop.sensory_cortex, pop.feature_layer, conn.sensory_feature_sparsity)
-            matrix_bytes += sparse_bytes(pop.feature_layer, pop.association_cortex, conn.feature_association_sparsity)
-            matrix_bytes += sparse_bytes(pop.brainstem, pop.feature_layer, conn.brainstem_feature_sparsity, plastic=False)
+            matrix_bytes += sparse_bytes(
+                pop.sensory_cortex, pop.feature_layer, conn.sensory_feature_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.feature_layer, pop.association_cortex, conn.feature_association_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.brainstem, pop.feature_layer, conn.brainstem_feature_sparsity, plastic=False
+            )
         if pop.concept_layer > 0:
-            matrix_bytes += sparse_bytes(pop.association_cortex, pop.concept_layer, conn.association_concept_sparsity)
-            matrix_bytes += sparse_bytes(pop.concept_layer, pop.concept_layer, conn.concept_lateral_sparsity)
-            matrix_bytes += sparse_bytes(pop.concept_layer, pop.predictive_layer, conn.concept_predictive_sparsity)
-            matrix_bytes += sparse_bytes(pop.concept_layer, pop.working_memory, conn.concept_working_sparsity)
-            matrix_bytes += sparse_bytes(pop.predictive_layer, pop.concept_layer, conn.predictive_concept_sparsity)
-            matrix_bytes += sparse_bytes(pop.brainstem, pop.concept_layer, conn.brainstem_concept_sparsity, plastic=False)
+            matrix_bytes += sparse_bytes(
+                pop.association_cortex, pop.concept_layer, conn.association_concept_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.concept_layer, pop.concept_layer, conn.concept_lateral_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.concept_layer, pop.predictive_layer, conn.concept_predictive_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.concept_layer, pop.working_memory, conn.concept_working_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.predictive_layer, pop.concept_layer, conn.predictive_concept_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.brainstem, pop.concept_layer, conn.brainstem_concept_sparsity, plastic=False
+            )
         if pop.pattern_separator > 0:
-            matrix_bytes += sparse_bytes(pop.association_cortex, pop.pattern_separator, conn.association_dg_sparsity)
+            matrix_bytes += sparse_bytes(
+                pop.association_cortex, pop.pattern_separator, conn.association_dg_sparsity
+            )
             if pop.concept_layer > 0:
-                matrix_bytes += sparse_bytes(pop.pattern_separator, pop.concept_layer, conn.dg_concept_sparsity)
-            matrix_bytes += sparse_bytes(pop.brainstem, pop.pattern_separator, conn.brainstem_dg_sparsity, plastic=False)
+                matrix_bytes += sparse_bytes(
+                    pop.pattern_separator, pop.concept_layer, conn.dg_concept_sparsity
+                )
+            matrix_bytes += sparse_bytes(
+                pop.brainstem, pop.pattern_separator, conn.brainstem_dg_sparsity, plastic=False
+            )
         if pop.meta_controller > 0:
-            matrix_bytes += sparse_bytes(pop.association_cortex, pop.meta_controller, conn.meta_input_sparsity)
-            matrix_bytes += sparse_bytes(pop.meta_controller, pop.association_cortex, conn.meta_output_sparsity, plastic=False)
+            matrix_bytes += sparse_bytes(
+                pop.association_cortex, pop.meta_controller, conn.meta_input_sparsity
+            )
+            matrix_bytes += sparse_bytes(
+                pop.meta_controller,
+                pop.association_cortex,
+                conn.meta_output_sparsity,
+                plastic=False,
+            )
         if pop.global_workspace > 0:
             gw = self.global_workspace
             ws = pop.global_workspace
@@ -1386,7 +1529,12 @@ class NeuromorphicConfig:
             for src in [pop.association_cortex, pop.predictive_layer, pop.working_memory]:
                 matrix_bytes += sparse_bytes(src, ws, gw.afferent_sparsity)
             # Efferent: workspace -> association, predictive, WM, motor (always)
-            for tgt in [pop.association_cortex, pop.predictive_layer, pop.working_memory, pop.motor_cortex]:
+            for tgt in [
+                pop.association_cortex,
+                pop.predictive_layer,
+                pop.working_memory,
+                pop.motor_cortex,
+            ]:
                 matrix_bytes += sparse_bytes(ws, tgt, gw.efferent_sparsity)
             # Conditional afferent/efferent
             if pop.concept_layer > 0:
@@ -1399,7 +1547,9 @@ class NeuromorphicConfig:
                 matrix_bytes += sparse_bytes(pop.meta_controller, ws, gw.afferent_sparsity)
             # Lateral + brainstem
             matrix_bytes += sparse_bytes(ws, ws, gw.lateral_sparsity, plastic=False)
-            matrix_bytes += sparse_bytes(pop.brainstem, ws, conn.brainstem_working_sparsity, plastic=False)
+            matrix_bytes += sparse_bytes(
+                pop.brainstem, ws, conn.brainstem_working_sparsity, plastic=False
+            )
 
         # Dendritic compartment state: ~52 bytes per cortical neuron with 4 compartments
         dend_bytes = 0
@@ -1407,9 +1557,15 @@ class NeuromorphicConfig:
             nc = self.dendrites.n_compartments
             # Cortical neurons get dendrites (not brainstem, reflex, meta)
             cortical_n = (
-                pop.sensory_cortex + pop.motor_cortex + pop.cerebellum
-                + pop.association_cortex + pop.predictive_layer + pop.working_memory
-                + pop.feature_layer + pop.concept_layer + pop.pattern_separator
+                pop.sensory_cortex
+                + pop.motor_cortex
+                + pop.cerebellum
+                + pop.association_cortex
+                + pop.predictive_layer
+                + pop.working_memory
+                + pop.feature_layer
+                + pop.concept_layer
+                + pop.pattern_separator
                 + pop.global_workspace
             )
             # v_dendrite + dend_refractory + compartment_input: nc * N * 4 bytes each
@@ -1423,10 +1579,9 @@ class NeuromorphicConfig:
     def log_memory_estimate(self) -> None:
         """Log memory estimate and warn if high."""
         est = self.estimate_memory_bytes()
-        gb = est / (1024 ** 3)
+        gb = est / (1024**3)
         logger.info(
-            f"Neuromorphic memory estimate: {gb:.2f} GB "
-            f"({self.populations.total:,} neurons)"
+            f"Neuromorphic memory estimate: {gb:.2f} GB " f"({self.populations.total:,} neurons)"
         )
         if gb > 6.0:
             logger.warning(

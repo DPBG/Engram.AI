@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from neuromorphic.config import NeuromorphicConfig, OscillatoryConfig
-from neuromorphic.oscillations import OscillatorBank
 from neuromorphic.network import NeuromorphicNetwork
+from neuromorphic.oscillations import OscillatorBank
 
 
 class TestOscillatorBank:
@@ -207,8 +207,14 @@ class TestOscillatoryNetworkIntegration:
         """inject_multimodal should update modality phases for allocated modalities."""
         osc_network.step(None)
         data = {
-            "observation.visual.camera": np.random.default_rng(0).random(10).astype(np.float32).tolist(),
-            "observation.auditory.mic": np.random.default_rng(1).random(10).astype(np.float32).tolist(),
+            "observation.visual.camera": np.random.default_rng(0)
+            .random(10)
+            .astype(np.float32)
+            .tolist(),
+            "observation.auditory.mic": np.random.default_rng(1)
+            .random(10)
+            .astype(np.float32)
+            .tolist(),
         }
         osc_network.inject_multimodal(data)
         phases = osc_network.oscillators._modality_phases

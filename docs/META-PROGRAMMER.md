@@ -390,6 +390,38 @@ These paths are **immutable**—Meta-Programmer cannot modify them even with Ker
 
 ---
 
+## Decision-Rate Governance Signal (M6)
+
+Every Kernel decision is already written to the `kernel_decisions` audit
+table (see [Audit Trail](#audit-trail) below). The Kernel aggregates that
+table into longitudinal ALLOW/TRANSFORM/DENY/DEFER **rates**, broken out
+per proposal source (`meta-programmer`, `neuromorphic`, `planner`, ...),
+and:
+
+- includes the aggregate in its `kernel.status` response, and
+- publishes it periodically (`KERNEL_DECISION_RATES_INTERVAL_SEC`,
+  default 300s) to the `kernel.decision_rates` NATS subject.
+
+The Dashboard subscribes to `kernel.decision_rates`, caches the latest
+snapshot, and exposes it both live (WebSocket) and on demand via
+`GET /api/kernel/decision-rates` — rendered as the "Kernel Governance"
+panel. See `kernel/src/kernel/service.py::_compute_decision_rates` and
+`dashboard/src/dashboard/api.py`.
+
+**What this is:** a trend to watch — a rising DENY rate (especially from
+`meta-programmer`) is an early-warning signal that generated-code quality
+is drifting, before that drift is visible anywhere else.
+
+**What this is not:** a decision input. The rates are computed *after*
+the Kernel has already decided, purely for observability, and are never
+read back into `evaluate_code_proposal` / `evaluate_action_proposal`.
+Per [CLAUDE.md](../CLAUDE.md) §3, nothing may weaken the Kernel's ability
+to gate, deny, or transform — this metric only makes it easier to notice
+*when* the gate should be tightened, or when it's safe to consider
+expanding autonomy. It does not, by itself, expand autonomy.
+
+---
+
 ## Audit Trail
 
 Every action logged to unified SQLite:

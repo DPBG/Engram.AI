@@ -11,10 +11,21 @@ import json
 from dataclasses import asdict
 
 from activelearning import BaseService
-from activelearning.subjects import Subjects
 from activelearning.nats_client import serialize_message
+from activelearning.subjects import Subjects
+
+from beliefs.graph import BeliefEdge, BeliefGraph, BeliefNode, EdgeType, NodeType
+
 
 from beliefs.graph import BeliefGraph, BeliefNode, BeliefEdge, NodeType, EdgeType, FloorRejectionEvent
+class BeliefStoreCorruptedError(RuntimeError):
+    """Raised when the belief store exists but cannot be read back correctly.
+
+    Distinct from "empty database, first boot" (a successful ``fetchall()``
+    that returns zero rows) — this means the read itself failed or produced
+    unreadable data, which must fail closed (CLAUDE.md §3) rather than be
+    treated as a fresh boot and silently reseeded from hardcoded defaults.
+    """
 
 
 class BeliefsService(BaseService):
@@ -28,6 +39,11 @@ class BeliefsService(BaseService):
     def __init__(self):
         super().__init__("beliefs", use_database=True, use_event_bus=True)
         self._graph = BeliefGraph()
+        # Set when _load_from_db detects the store is present but corrupted
+        # (as opposed to legitimately empty). Gates _cleanup() so a failed
+        # boot doesn't also wipe the corrupted store on the way down — see
+        # _cleanup()'s docstring.
+        self._store_corrupted = False
 
     async def _setup(self) -> None:
         """Service-specific setup."""
@@ -54,12 +70,41 @@ class BeliefsService(BaseService):
         )
 
     async def _cleanup(self) -> None:
-        """Service-specific cleanup."""
+        """Service-specific cleanup.
+
+        Skips the save when _load_from_db detected a corrupted store:
+        run() calls stop()/_cleanup() in a finally block even when _setup()
+        raised, and _save_to_db() unconditionally does DELETE FROM
+        belief_edges/belief_nodes before re-inserting — saving the
+        (empty or partially-loaded) in-memory graph at that point would
+        destroy whatever was still recoverable in the corrupted store on
+        the way down, on top of the boot failure itself.
+        """
+        if self._store_corrupted:
+            self.logger.error(
+                "Skipping save-to-db on shutdown: the belief store was "
+                "corrupted at boot — saving now would overwrite it with an "
+                "incomplete in-memory graph instead of leaving it for "
+                "manual recovery."
+            )
+            return
         # Save to database before shutdown
         await self._save_to_db()
 
     async def _load_from_db(self) -> None:
-        """Load beliefs from SQLite."""
+        """Load beliefs from SQLite.
+
+        A legitimately empty database (first boot) is a *successful*
+        fetchall() that returns zero rows — it never reaches the except
+        below. Anything that raises here means the store is present but
+        unreadable/corrupted (e.g. "database disk image is malformed", or a
+        row containing data that fails to parse), which is a fail-closed
+        case per CLAUDE.md §3 ("if a check cannot run, deny/halt — never
+        degrade open"): re-raised as BeliefStoreCorruptedError so the
+        caller (_setup) aborts before seed_constitutional_beliefs(), instead
+        of silently treating corruption as a fresh boot and reseeding
+        constitutional VALUEs from hardcoded defaults.
+        """
         try:
             # Load nodes
             rows = await self.database.fetchall(
@@ -103,7 +148,12 @@ class BeliefsService(BaseService):
                 f"Loaded {self._graph.node_count} nodes and {self._graph.edge_count} edges from database"
             )
         except Exception as e:
-            self.logger.warning(f"Could not load beliefs from database: {e}")
+            self._store_corrupted = True
+            self.logger.error(
+                f"Belief store present but unreadable/corrupted — failing "
+                f"closed rather than treating this as first boot: {e}"
+            )
+            raise BeliefStoreCorruptedError(f"Beliefs database unreadable/corrupted: {e}") from e
 
     async def _save_to_db(self) -> None:
         """Save beliefs to SQLite."""
@@ -146,7 +196,9 @@ class BeliefsService(BaseService):
                     },
                 )
 
-            self.logger.info(f"Saved {len(data['nodes'])} nodes and {len(data['edges'])} edges to database")
+            self.logger.info(
+                f"Saved {len(data['nodes'])} nodes and {len(data['edges'])} edges to database"
+            )
         except Exception as e:
             self.logger.error(f"Error saving beliefs to database: {e}")
 
@@ -177,7 +229,7 @@ class BeliefsService(BaseService):
                 strength=data.get("strength", 1.0),
                 evidence=data.get("evidence"),
             )
-            edge_id = self._graph.add_edge(edge)
+            self._graph.add_edge(edge)
         except Exception as e:
             self.logger.error(f"Error adding edge: {e}")
 
@@ -199,22 +251,22 @@ class BeliefsService(BaseService):
         try:
             query_type = data.get("type", "by_id")
 
-            result = None
+            _result = None
             if query_type == "by_id":
                 node = self._graph.get_node(data["node_id"])
-                result = asdict(node) if node else None
+                _result = asdict(node) if node else None
             elif query_type == "by_type":
                 nodes = self._graph.get_beliefs_by_type(NodeType(data["node_type"]))
-                result = [asdict(n) for n in nodes]
+                _result = [asdict(n) for n in nodes]
             elif query_type == "high_confidence":
                 nodes = self._graph.get_high_confidence_beliefs(data.get("threshold", 0.8))
-                result = [asdict(n) for n in nodes]
+                _result = [asdict(n) for n in nodes]
             elif query_type == "supporting":
-                result = self._graph.get_supporting_beliefs(data["node_id"])
+                _result = self._graph.get_supporting_beliefs(data["node_id"])
             elif query_type == "contradicting":
-                result = self._graph.get_contradicting_beliefs(data["node_id"])
+                _result = self._graph.get_contradicting_beliefs(data["node_id"])
             elif query_type == "export":
-                result = self._graph.export_to_dict()
+                _result = self._graph.export_to_dict()
         except Exception as e:
             self.logger.error(f"Error querying beliefs: {e}")
 
@@ -222,7 +274,7 @@ class BeliefsService(BaseService):
         """Handle contradiction detection requests."""
         try:
             threshold = data.get("threshold", 0.5)
-            contradictions = self._graph.find_contradictions(threshold)
+            self._graph.find_contradictions(threshold)
         except Exception as e:
             self.logger.error(f"Error finding contradictions: {e}")
 

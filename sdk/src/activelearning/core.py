@@ -5,12 +5,11 @@ These dataclasses define the fundamental data structures used throughout
 the system for observations, actions, decisions, and beliefs.
 """
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Generic, TypeVar, Optional
 import time
 import uuid
-
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -24,6 +23,7 @@ class KernelDecisionType(Enum):
     DENY: Rejected, do not execute
     DEFER: Needs human review, route to Dashboard for approval
     """
+
     ALLOW = "ALLOW"
     TRANSFORM = "TRANSFORM"
     DENY = "DENY"
@@ -32,17 +32,19 @@ class KernelDecisionType(Enum):
 
 class BeliefNodeType(Enum):
     """Types of nodes in the Belief Graph."""
-    VALUE = "value"      # Core values (e.g., "safety is important")
-    NORM = "norm"        # Behavioral norms (e.g., "don't harm humans")
-    FACT = "fact"        # Factual beliefs (e.g., "water is wet")
+
+    VALUE = "value"  # Core values (e.g., "safety is important")
+    NORM = "norm"  # Behavioral norms (e.g., "don't harm humans")
+    FACT = "fact"  # Factual beliefs (e.g., "water is wet")
 
 
 class BeliefEdgeType(Enum):
     """Types of edges in the Belief Graph."""
-    SUPPORTS = "supports"       # Evidence for belief
-    CONTRADICTS = "contradicts" # Evidence against belief
-    ENTAILS = "entails"         # Logical implication
-    REFINES = "refines"         # More specific version
+
+    SUPPORTS = "supports"  # Evidence for belief
+    CONTRADICTS = "contradicts"  # Evidence against belief
+    ENTAILS = "entails"  # Logical implication
+    REFINES = "refines"  # More specific version
 
 
 @dataclass
@@ -53,6 +55,7 @@ class RiskAnalysis:
     Used by the Safety Supervisor to communicate risk assessments
     to the Moral Kernel for decision making.
     """
+
     trace_id: str
     risk_score: float = 0.0
     flags: list[str] = field(default_factory=list)
@@ -86,6 +89,7 @@ class Observation(Generic[T]):
         confidence: Confidence score from 0.0 to 1.0
         tags: Semantic tags for categorization
     """
+
     trace_id: str
     provenance: str
     data: T
@@ -116,6 +120,7 @@ class ActionProposal(Generic[T]):
         requires_approval: Whether human approval is needed
         metadata: Additional context for the Kernel
     """
+
     trace_id: str
     provenance: str
     action: T
@@ -142,12 +147,13 @@ class KernelDecision(Generic[T]):
         expires_at: Unix timestamp when this decision expires
         issued_at: Unix timestamp when decision was made
     """
+
     trace_id: str
     type: KernelDecisionType
-    reason: Optional[str] = None
-    transformations: Optional[list[ActionProposal[T]]] = None
+    reason: str | None = None
+    transformations: list[ActionProposal[T]] | None = None
     risk_score: float = 0.0
-    expires_at: Optional[int] = None
+    expires_at: int | None = None
     issued_at: int = field(default_factory=current_timestamp)
 
     def __post_init__(self) -> None:
@@ -160,7 +166,7 @@ class KernelDecision(Generic[T]):
             return False
         return current_timestamp() > self.expires_at
 
-    def remaining_ttl_ms(self, now: Optional[int] = None) -> Optional[int]:
+    def remaining_ttl_ms(self, now: int | None = None) -> int | None:
         """Milliseconds left before this decision expires.
 
         Returns ``None`` when the decision has no expiry (it never goes
@@ -196,12 +202,13 @@ class Outcome(Generic[T]):
         error: Error message if execution failed
         timestamp: When the outcome was recorded
     """
+
     trace_id: str
     decision: KernelDecision[T]
     original: ActionProposal[T]
-    final: Optional[ActionProposal[T]] = None
+    final: ActionProposal[T] | None = None
     success: bool = True
-    error: Optional[str] = None
+    error: str | None = None
     timestamp: int = field(default_factory=current_timestamp)
 
 
@@ -220,6 +227,7 @@ class BeliefNode:
         updated_at: When this belief was last updated
         metadata: Additional attributes
     """
+
     id: str
     type: BeliefNodeType
     content: str
@@ -250,12 +258,13 @@ class BeliefEdge:
         evidence: Supporting evidence for this relationship
         created_at: When this edge was created
     """
+
     id: str
     type: BeliefEdgeType
     source_id: str
     target_id: str
     strength: float = 1.0
-    evidence: Optional[str] = None
+    evidence: str | None = None
     created_at: int = field(default_factory=current_timestamp)
 
     def __post_init__(self) -> None:
@@ -281,13 +290,14 @@ class AuditEntry:
         details: Additional context as JSON-serializable dict
         code_hash: SHA-256 hash of any code involved
     """
+
     id: str
     trace_id: str
     timestamp: int
     component: str
     action: str
     details: dict[str, Any] = field(default_factory=dict)
-    code_hash: Optional[str] = None
+    code_hash: str | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -314,6 +324,7 @@ class KnowledgeGap:
         allows_external_query: Whether external API queries are allowed
         source: What triggered the gap
     """
+
     trace_id: str
     description: str
     context: dict[str, Any] = field(default_factory=dict)
@@ -343,8 +354,9 @@ class CodeProposal:
         rollback_plan: Plan for reverting if needed
         agent: Which Meta-Programmer agent proposed this
     """
+
     trace_id: str
-    gap_ref: Optional[str]
+    gap_ref: str | None
     proposed_action: str
     target_path: str
     code_preview: str

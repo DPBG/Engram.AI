@@ -28,6 +28,7 @@ HARDENING=(
   --security-opt no-new-privileges
   --pids-limit 100
   --memory 512m
+  --memory-swap 512m
   --cpus 0.5
   --tmpfs /tmp:size=50M
 )

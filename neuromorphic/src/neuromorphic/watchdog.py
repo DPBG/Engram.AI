@@ -18,7 +18,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -30,48 +30,51 @@ logger = logging.getLogger(__name__)
 
 class AlertLevel(IntEnum):
     """Watchdog escalation levels."""
-    NOMINAL = 0     # All checks pass
-    WARNING = 1     # 1 check failed — log + dashboard alert
-    CAUTION = 2     # 2+ checks failed — alert + recommend plasticity reduction
-    CRITICAL = 3    # Critical threshold hit — freeze motor output recommendation
-    EMERGENCY = 4   # 3+ critical — request simulation halt
+
+    NOMINAL = 0  # All checks pass
+    WARNING = 1  # 1 check failed — log + dashboard alert
+    CAUTION = 2  # 2+ checks failed — alert + recommend plasticity reduction
+    CRITICAL = 3  # Critical threshold hit — freeze motor output recommendation
+    EMERGENCY = 4  # 3+ critical — request simulation halt
 
 
 @dataclass
 class WatchdogAlert:
     """A single watchdog alert."""
+
     check_name: str
     level: AlertLevel
     message: str
-    value: float = 0.0       # The observed value
-    threshold: float = 0.0   # The threshold that was exceeded
-    region: str = ""         # Which region (if applicable)
+    value: float = 0.0  # The observed value
+    threshold: float = 0.0  # The threshold that was exceeded
+    region: str = ""  # Which region (if applicable)
     timestamp: float = field(default_factory=time.time)
 
 
 @dataclass
 class WatchdogConfig:
     """Configurable thresholds for watchdog checks."""
+
     # Check interval (in simulation steps)
     check_interval: int = 100
 
     # Firing rate caps per region type
-    rate_warning: float = 0.40       # 40% → WARNING
-    rate_critical: float = 0.60      # 60% → CRITICAL
+    rate_warning: float = 0.40  # 40% → WARNING
+    rate_critical: float = 0.60  # 60% → CRITICAL
     motor_rate_warning: float = 0.30  # Motor cortex is more dangerous
     motor_rate_critical: float = 0.50
-    meta_rate_warning: float = 0.55   # Meta-controller is a modulator hub, naturally higher
+    meta_rate_warning: float = 0.55  # Meta-controller is a modulator hub, naturally higher
     meta_rate_critical: float = 0.70
 
     # Dead region detection
-    silence_steps: int = 200         # Steps of 0% rate before warning
+    silence_steps: int = 200  # Steps of 0% rate before warning
 
     # Weight drift detection
-    drift_window: int = 5            # Consecutive monotonic checks
+    drift_window: int = 5  # Consecutive monotonic checks
     weight_floor_multiplier: float = 2.0  # Alert if mean < 2x w_min
 
     # Motor spam detection
-    motor_spam_steps: int = 10       # Steps of >50% motor rate → CRITICAL
+    motor_spam_steps: int = 10  # Steps of >50% motor rate → CRITICAL
     motor_spam_rate: float = 0.50
 
     # Sensory starvation (extends existing zero-obs watchdog)
@@ -200,36 +203,42 @@ class NeuralWatchdog:
                 critical_thresh = cfg.rate_critical
 
             if rate >= critical_thresh:
-                alerts.append(WatchdogAlert(
-                    check_name="firing_rate_critical",
-                    level=AlertLevel.CRITICAL,
-                    message=f"Region '{region_name}' firing at {rate:.1%} (critical threshold: {critical_thresh:.0%})",
-                    value=rate,
-                    threshold=critical_thresh,
-                    region=region_name,
-                ))
+                alerts.append(
+                    WatchdogAlert(
+                        check_name="firing_rate_critical",
+                        level=AlertLevel.CRITICAL,
+                        message=f"Region '{region_name}' firing at {rate:.1%} (critical threshold: {critical_thresh:.0%})",
+                        value=rate,
+                        threshold=critical_thresh,
+                        region=region_name,
+                    )
+                )
             elif rate >= warning_thresh:
-                alerts.append(WatchdogAlert(
-                    check_name="firing_rate_warning",
-                    level=AlertLevel.WARNING,
-                    message=f"Region '{region_name}' firing at {rate:.1%} (warning threshold: {warning_thresh:.0%})",
-                    value=rate,
-                    threshold=warning_thresh,
-                    region=region_name,
-                ))
+                alerts.append(
+                    WatchdogAlert(
+                        check_name="firing_rate_warning",
+                        level=AlertLevel.WARNING,
+                        message=f"Region '{region_name}' firing at {rate:.1%} (warning threshold: {warning_thresh:.0%})",
+                        value=rate,
+                        threshold=warning_thresh,
+                        region=region_name,
+                    )
+                )
 
             # Silence detection (use epsilon, not exact float equality)
             if rate < 1e-6:
                 self._silence_counters[region_name] = self._silence_counters.get(region_name, 0) + 1
                 if self._silence_counters[region_name] >= cfg.silence_steps:
-                    alerts.append(WatchdogAlert(
-                        check_name="region_silence",
-                        level=AlertLevel.WARNING,
-                        message=f"Region '{region_name}' has been silent for {self._silence_counters[region_name]} checks",
-                        value=0.0,
-                        threshold=float(cfg.silence_steps),
-                        region=region_name,
-                    ))
+                    alerts.append(
+                        WatchdogAlert(
+                            check_name="region_silence",
+                            level=AlertLevel.WARNING,
+                            message=f"Region '{region_name}' has been silent for {self._silence_counters[region_name]} checks",
+                            value=0.0,
+                            threshold=float(cfg.silence_steps),
+                            region=region_name,
+                        )
+                    )
             else:
                 self._silence_counters[region_name] = 0
 
@@ -255,28 +264,32 @@ class NeuralWatchdog:
 
             # Check monotonic increase (saturation risk)
             if len(history) >= cfg.drift_window:
-                window = history[-cfg.drift_window:]
+                window = history[-cfg.drift_window :]
                 if all(window[i] < window[i + 1] for i in range(len(window) - 1)):
-                    alerts.append(WatchdogAlert(
-                        check_name="weight_drift_up",
-                        level=AlertLevel.WARNING,
-                        message=f"Synapse group '{name}' mean weight rising monotonically "
-                                f"({window[0]:.4f} → {window[-1]:.4f})",
-                        value=mean_w,
-                        region=name,
-                    ))
+                    alerts.append(
+                        WatchdogAlert(
+                            check_name="weight_drift_up",
+                            level=AlertLevel.WARNING,
+                            message=f"Synapse group '{name}' mean weight rising monotonically "
+                            f"({window[0]:.4f} → {window[-1]:.4f})",
+                            value=mean_w,
+                            region=name,
+                        )
+                    )
 
             # Check weight collapse
             if mean_w < w_min * cfg.weight_floor_multiplier:
-                alerts.append(WatchdogAlert(
-                    check_name="weight_collapse",
-                    level=AlertLevel.WARNING,
-                    message=f"Synapse group '{name}' mean weight {mean_w:.4f} "
-                            f"approaching floor ({w_min * cfg.weight_floor_multiplier:.4f})",
-                    value=mean_w,
-                    threshold=w_min * cfg.weight_floor_multiplier,
-                    region=name,
-                ))
+                alerts.append(
+                    WatchdogAlert(
+                        check_name="weight_collapse",
+                        level=AlertLevel.WARNING,
+                        message=f"Synapse group '{name}' mean weight {mean_w:.4f} "
+                        f"approaching floor ({w_min * cfg.weight_floor_multiplier:.4f})",
+                        value=mean_w,
+                        threshold=w_min * cfg.weight_floor_multiplier,
+                        region=name,
+                    )
+                )
 
         return alerts
 
@@ -293,15 +306,17 @@ class NeuralWatchdog:
             self._motor_spam_counter = 0
 
         if self._motor_spam_counter >= cfg.motor_spam_steps:
-            alerts.append(WatchdogAlert(
-                check_name="motor_spam",
-                level=AlertLevel.CRITICAL,
-                message=f"Motor cortex firing at {motor_rate:.1%} for "
-                        f"{self._motor_spam_counter} consecutive checks — pathological",
-                value=motor_rate,
-                threshold=cfg.motor_spam_rate,
-                region="motor_cortex",
-            ))
+            alerts.append(
+                WatchdogAlert(
+                    check_name="motor_spam",
+                    level=AlertLevel.CRITICAL,
+                    message=f"Motor cortex firing at {motor_rate:.1%} for "
+                    f"{self._motor_spam_counter} consecutive checks — pathological",
+                    value=motor_rate,
+                    threshold=cfg.motor_spam_rate,
+                    region="motor_cortex",
+                )
+            )
 
         return alerts
 
@@ -311,13 +326,15 @@ class NeuralWatchdog:
         cfg = self._config
 
         if steps_since_input >= cfg.sensory_critical_steps:
-            alerts.append(WatchdogAlert(
-                check_name="sensory_starvation",
-                level=AlertLevel.CRITICAL,
-                message=f"No sensory input for {steps_since_input} steps",
-                value=float(steps_since_input),
-                threshold=float(cfg.sensory_critical_steps),
-            ))
+            alerts.append(
+                WatchdogAlert(
+                    check_name="sensory_starvation",
+                    level=AlertLevel.CRITICAL,
+                    message=f"No sensory input for {steps_since_input} steps",
+                    value=float(steps_since_input),
+                    threshold=float(cfg.sensory_critical_steps),
+                )
+            )
 
         return alerts
 
@@ -352,15 +369,17 @@ class NeuralWatchdog:
                 counter = self._neuromod_floor_counters.get(channel, 0) + 1
                 self._neuromod_floor_counters[channel] = counter
                 if counter >= cfg.neuromod_floor_steps:
-                    alerts.append(WatchdogAlert(
-                        check_name="neuromod_floor",
-                        level=AlertLevel.WARNING,
-                        message=f"Neuromodulator {channel} at floor ({value:.3f}) "
-                                f"for {counter} checks — learning may be disabled",
-                        value=value,
-                        threshold=floor,
-                        region=channel,
-                    ))
+                    alerts.append(
+                        WatchdogAlert(
+                            check_name="neuromod_floor",
+                            level=AlertLevel.WARNING,
+                            message=f"Neuromodulator {channel} at floor ({value:.3f}) "
+                            f"for {counter} checks — learning may be disabled",
+                            value=value,
+                            threshold=floor,
+                            region=channel,
+                        )
+                    )
             else:
                 self._neuromod_floor_counters[channel] = 0
 
@@ -383,14 +402,16 @@ class NeuralWatchdog:
         if self._pred_error_high_counter >= (
             cfg.pred_error_stagnation_steps // max(cfg.check_interval, 1)
         ):
-            alerts.append(WatchdogAlert(
-                check_name="prediction_error_stagnation",
-                level=AlertLevel.WARNING,
-                message=f"Prediction error stuck above {cfg.pred_error_stagnation_threshold:.1f} "
-                        f"for ~{self._pred_error_high_counter * cfg.check_interval} steps",
-                value=pred_error,
-                threshold=cfg.pred_error_stagnation_threshold,
-            ))
+            alerts.append(
+                WatchdogAlert(
+                    check_name="prediction_error_stagnation",
+                    level=AlertLevel.WARNING,
+                    message=f"Prediction error stuck above {cfg.pred_error_stagnation_threshold:.1f} "
+                    f"for ~{self._pred_error_high_counter * cfg.check_interval} steps",
+                    value=pred_error,
+                    threshold=cfg.pred_error_stagnation_threshold,
+                )
+            )
 
         return alerts
 
@@ -426,15 +447,17 @@ class NeuralWatchdog:
                 amplitude = max(recent) - min(recent)
                 if amplitude < cfg.weight_oscillation_min_amplitude:
                     continue
-                alerts.append(WatchdogAlert(
-                    check_name="weight_oscillation",
-                    level=AlertLevel.WARNING,
-                    message=f"Synapse group '{name}' has {reversals} weight direction "
-                            f"reversals in last {window} checks — possible STDP instability",
-                    value=float(reversals),
-                    threshold=float(reversal_thresh),
-                    region=name,
-                ))
+                alerts.append(
+                    WatchdogAlert(
+                        check_name="weight_oscillation",
+                        level=AlertLevel.WARNING,
+                        message=f"Synapse group '{name}' has {reversals} weight direction "
+                        f"reversals in last {window} checks — possible STDP instability",
+                        value=float(reversals),
+                        threshold=float(reversal_thresh),
+                        region=name,
+                    )
+                )
         return alerts
 
     def _check_eligibility_saturation(self, network: NeuromorphicNetwork) -> list[WatchdogAlert]:
@@ -467,15 +490,17 @@ class NeuralWatchdog:
             near_max = np.abs(nnz_data) > 0.9 * max_val
             saturation_frac = near_max.sum() / len(nnz_data)
             if saturation_frac > cfg.elig_saturation_threshold:
-                alerts.append(WatchdogAlert(
-                    check_name="eligibility_saturation",
-                    level=AlertLevel.WARNING,
-                    message=f"Synapse group '{name}' eligibility traces {saturation_frac:.0%} "
-                            f"near max — three-factor learning resolution degraded",
-                    value=float(saturation_frac),
-                    threshold=cfg.elig_saturation_threshold,
-                    region=name,
-                ))
+                alerts.append(
+                    WatchdogAlert(
+                        check_name="eligibility_saturation",
+                        level=AlertLevel.WARNING,
+                        message=f"Synapse group '{name}' eligibility traces {saturation_frac:.0%} "
+                        f"near max — three-factor learning resolution degraded",
+                        value=float(saturation_frac),
+                        threshold=cfg.elig_saturation_threshold,
+                        region=name,
+                    )
+                )
         return alerts
 
     def _check_cross_modal_health(self, network: NeuromorphicNetwork) -> list[WatchdogAlert]:
@@ -503,15 +528,17 @@ class NeuralWatchdog:
             assoc_key = f"n_{mod_name}_associated"
             n_assoc = last_result.get(assoc_key, -1)
             if n_assoc == 0:
-                alerts.append(WatchdogAlert(
-                    check_name="cross_modal_binding_lost",
-                    level=AlertLevel.WARNING,
-                    message=f"Cross-modal binding lost for '{mod_name}': "
-                            f"{end - start} sensory neurons but 0 associated neurons",
-                    value=0.0,
-                    threshold=1.0,
-                    region=mod_name,
-                ))
+                alerts.append(
+                    WatchdogAlert(
+                        check_name="cross_modal_binding_lost",
+                        level=AlertLevel.WARNING,
+                        message=f"Cross-modal binding lost for '{mod_name}': "
+                        f"{end - start} sensory neurons but 0 associated neurons",
+                        value=0.0,
+                        threshold=1.0,
+                        region=mod_name,
+                    )
+                )
         return alerts
 
     def get_governor_corrections(
@@ -577,6 +604,7 @@ class NeuralWatchdog:
 @dataclass
 class WatchdogStatus:
     """Result of a watchdog check cycle."""
+
     level: AlertLevel
     alerts: list[WatchdogAlert]
     step: int

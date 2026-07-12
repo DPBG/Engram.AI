@@ -1,9 +1,8 @@
 """Tests for NMDA receptor dynamics and attractor working memory (CIP-24)."""
 
 import numpy as np
-import pytest
 
-from neuromorphic.config import LIFParams, NMDAConfig, NeuromorphicConfig
+from neuromorphic.config import LIFParams, NeuromorphicConfig, NMDAConfig
 from neuromorphic.neurons import NeuronPopulation
 
 
@@ -55,8 +54,9 @@ class TestNMDAConductance:
         # Step without further input (conductance should decay)
         for _ in range(100):
             pop.step(np.zeros(100, dtype=np.float32))
-        assert pop._nmda_conductance[0] < initial[0] * 0.2, \
-            "NMDA conductance should decay significantly after 100 steps (2*tau)"
+        assert (
+            pop._nmda_conductance[0] < initial[0] * 0.2
+        ), "NMDA conductance should decay significantly after 100 steps (2*tau)"
 
     def test_nmda_provides_depolarizing_current(self):
         """NMDA current should depolarize neurons (push V toward threshold)."""
@@ -74,8 +74,9 @@ class TestNMDAConductance:
         pop_control.step(zero_input.copy())
 
         # NMDA population should be more depolarized
-        assert pop_nmda.v_membrane.mean() > pop_control.v_membrane.mean(), \
-            "NMDA current should depolarize neurons"
+        assert (
+            pop_nmda.v_membrane.mean() > pop_control.v_membrane.mean()
+        ), "NMDA current should depolarize neurons"
 
     def test_mg_block_at_resting_potential(self):
         """Mg2+ block should suppress NMDA current at resting potential (-65mV)."""
@@ -99,8 +100,9 @@ class TestNMDAConductance:
         mg_block_dep = 1.0 / (1.0 + (1.0 / 3.57) * np.exp(-0.062 * v_depolarized))
         v_rest = -65.0
         mg_block_rest = 1.0 / (1.0 + (1.0 / 3.57) * np.exp(-0.062 * v_rest))
-        assert mg_block_dep > mg_block_rest * 3, \
-            f"Block should be much weaker at -30mV ({mg_block_dep}) vs -65mV ({mg_block_rest})"
+        assert (
+            mg_block_dep > mg_block_rest * 3
+        ), f"Block should be much weaker at -30mV ({mg_block_dep}) vs -65mV ({mg_block_rest})"
 
     def test_nmda_sustains_activity(self):
         """NMDA should sustain firing longer than pure fast synaptic input."""
@@ -132,8 +134,9 @@ class TestNMDAConductance:
                 pop_nmda.accumulate_nmda(pop_nmda.spikes.astype(np.float32) * 2.0)
 
         # NMDA population should have more sustained activity
-        assert nmda_spikes >= control_spikes, \
-            f"NMDA should sustain more spikes: nmda={nmda_spikes}, control={control_spikes}"
+        assert (
+            nmda_spikes >= control_spikes
+        ), f"NMDA should sustain more spikes: nmda={nmda_spikes}, control={control_spikes}"
 
     def test_nmda_state_persistence(self):
         """NMDA conductance should survive get_state/set_state."""
@@ -207,6 +210,7 @@ class TestWorkingRecurrentSynapse:
     def test_working_recurrent_exists(self):
         """Network should have working_recurrent synapse group."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         assert "working_recurrent" in net.synapses
@@ -214,6 +218,7 @@ class TestWorkingRecurrentSynapse:
     def test_working_recurrent_shape(self):
         """working_recurrent should be WM->WM (square)."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         syn = net.synapses["working_recurrent"]
@@ -223,6 +228,7 @@ class TestWorkingRecurrentSynapse:
     def test_working_recurrent_is_plastic(self):
         """working_recurrent should be plastic (STDP-modifiable)."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_config()
         net = NeuromorphicNetwork(cfg, seed=42)
         syn = net.synapses["working_recurrent"]
@@ -231,6 +237,7 @@ class TestWorkingRecurrentSynapse:
     def test_step_with_nmda_enabled(self):
         """Network step should work with NMDA enabled."""
         from neuromorphic.network import NeuromorphicNetwork
+
         cfg = _small_config(nmda=NMDAConfig(enabled=True))
         net = NeuromorphicNetwork(cfg, seed=42)
         # Should step without error

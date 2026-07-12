@@ -5,11 +5,12 @@ Parses natural language override prompts and applies them to system parameters
 after Kernel validation.
 """
 
+import json
 import logging
 import re
 from typing import Any
-import json
 
+from activelearning import current_timestamp, generate_trace_id
 from activelearning.nats_client import EventBus
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,9 @@ class OverrideProcessor:
             prompt_lower = prompt.lower().strip()
 
             # Pattern: "switch to X mode"
-            mode_match = re.search(r"(?:switch to|change to|set mode to|enter)\s+(\w+)\s+mode", prompt_lower)
+            mode_match = re.search(
+                r"(?:switch to|change to|set mode to|enter)\s+(\w+)\s+mode", prompt_lower
+            )
             if mode_match:
                 mode = mode_match.group(1).upper()
                 valid_modes = self.OPERATIONAL_PARAMS["planner.mode"]
@@ -121,7 +124,7 @@ class OverrideProcessor:
                 else:
                     try:
                         value = float(value_str)
-                    except:
+                    except Exception:
                         value = value_str
 
                 # Check if this is an operational parameter
@@ -181,6 +184,9 @@ class OverrideProcessor:
         parameter: str,
         value: Any,
         verified_by: str,
+        *,
+        prompt: str,
+        verification_confidence: float | None = None,
     ) -> dict:
         """
         Apply an override to the system.
@@ -212,21 +218,26 @@ class OverrideProcessor:
                     "error": f"Unknown parameter: {parameter}",
                 }
 
-            # Store in database
-            import uuid
+            # Store in database (schema: sdk/src/activelearning/schema.sql)
+            now = current_timestamp()
             await self.db.execute(
                 """
                 INSERT INTO human_overrides
-                (id, trace_id, parameter, value, verified_by, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (id, trace_id, override_type, prompt, parameter_path, value,
+                 verification_method, verification_confidence, applied_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(uuid.uuid4()),
+                    generate_trace_id(),
                     trace_id,
+                    "operational",
+                    prompt,
                     parameter,
                     json.dumps(value),
                     verified_by,
-                    int(__import__('time').time() * 1000),
+                    verification_confidence,
+                    now,
+                    now,
                 ),
             )
             await self.db.commit()

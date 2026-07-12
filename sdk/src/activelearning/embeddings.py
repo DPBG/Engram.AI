@@ -11,7 +11,6 @@ Uses Ollama's embedding models to generate text embeddings for:
 import hashlib
 import logging
 from collections import OrderedDict
-from typing import Optional
 
 import aiohttp
 
@@ -44,7 +43,7 @@ class EmbeddingService(_OllamaSession):
 
     def __init__(
         self,
-        ollama_host: Optional[str] = None,
+        ollama_host: str | None = None,
         model: str = "nomic-embed-text",
         dimensions: int = 768,
     ):
@@ -100,28 +99,9 @@ class EmbeddingService(_OllamaSession):
                     return self._zero_vector()
 
                 result = await response.json()
-                embedding = result.get("embedding")
-                if not isinstance(embedding, list):
-                    logger.error(
-                        "Embedding backend returned invalid payload",
-                        extra={"cache_key": cache_key[:8], "model": self.model},
-                    )
-                    return self._zero_vector()
-                if len(embedding) != self.dimensions:
-                    logger.error(
-                        "Embedding dimension mismatch: expected %d, got %d",
-                        self.dimensions,
-                        len(embedding),
-                        extra={"cache_key": cache_key[:8], "model": self.model},
-                    )
-                    return self._zero_vector()
-                if not all(isinstance(v, (int, float)) for v in embedding):
-                    logger.error(
-                        "Embedding payload contains non-numeric components",
-                        extra={"cache_key": cache_key[:8], "model": self.model},
-                    )
-                    return self._zero_vector()
-                embedding = [float(v) for v in embedding]
+                embedding = self._parse_embedding(result.get("embedding"))
+                if is_zero_vector(embedding):
+                    return embedding
 
         except Exception as e:
             logger.error(
@@ -135,19 +115,92 @@ class EmbeddingService(_OllamaSession):
         self._add_to_cache(cache_key, embedding)
         return embedding
 
+    def _parse_embedding(self, embedding: object) -> list[float]:
+        """Validate and normalize a single embedding vector from Ollama."""
+        if not isinstance(embedding, list):
+            logger.error(
+                "Embedding backend returned invalid payload",
+                extra={"model": self.model},
+            )
+            return self._zero_vector()
+        if len(embedding) != self.dimensions:
+            logger.error(
+                "Embedding dimension mismatch: expected %d, got %d",
+                self.dimensions,
+                len(embedding),
+                extra={"model": self.model},
+            )
+            return self._zero_vector()
+        if not all(isinstance(v, (int, float)) for v in embedding):
+            logger.error(
+                "Embedding payload contains non-numeric components",
+                extra={"model": self.model},
+            )
+            return self._zero_vector()
+        return [float(v) for v in embedding]
+
+    async def _fetch_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+        """Fetch multiple embeddings via Ollama's /api/embed endpoint."""
+        session = await self._get_session()
+        async with session.post(
+            f"{self.ollama_host}/api/embed",
+            json={"model": self.model, "input": texts},
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                raise RuntimeError(
+                    f"Batch embedding backend returned HTTP {response.status}: {error_text}"
+                )
+            result = await response.json()
+            embeddings = result.get("embeddings")
+            if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+                raise RuntimeError("Batch embedding backend returned invalid payload")
+            return [self._parse_embedding(embedding) for embedding in embeddings]
+
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """
         Generate embeddings for multiple texts.
 
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            List of embedding vectors
+        Cache hits are resolved first. Uncached texts are requested in a single
+        `/api/embed` call when possible, with sequential fallback on failure.
         """
-        # TODO: Ollama may support batch embeddings in the future
-        # For now, we process sequentially with caching
-        return [await self.embed_text(t) for t in texts]
+        if not texts:
+            return []
+
+        results: list[list[float] | None] = [None] * len(texts)
+        missing_indices: list[int] = []
+        missing_texts: list[str] = []
+
+        for index, text in enumerate(texts):
+            cache_key = self._cache_key(text)
+            if cache_key in self._cache:
+                logger.debug(f"Embedding cache hit for key {cache_key[:8]}...")
+                self._cache.move_to_end(cache_key)
+                results[index] = self._cache[cache_key]
+            else:
+                missing_indices.append(index)
+                missing_texts.append(text)
+
+        if missing_texts:
+            try:
+                fetched = await self._fetch_embeddings_batch(missing_texts)
+            except Exception as exc:
+                logger.warning(
+                    "Batch embedding failed, falling back to sequential: %s",
+                    exc,
+                    extra={"model": self.model, "count": len(missing_texts)},
+                )
+                fetched = [await self.embed_text(text) for text in missing_texts]
+
+            for index, text, embedding in zip(missing_indices, missing_texts, fetched):
+                results[index] = embedding
+                if not is_zero_vector(embedding):
+                    self._add_to_cache(self._cache_key(text), embedding)
+
+        return [
+            embedding if embedding is not None else self._zero_vector() for embedding in results
+        ]
 
     def _zero_vector(self) -> list[float]:
         """Sentinel vector returned when embedding generation fails."""
@@ -166,11 +219,6 @@ class EmbeddingService(_OllamaSession):
             # Evict the least-recently-used entry (front of the OrderedDict).
             self._cache.popitem(last=False)
 
-    def clear_cache(self) -> None:
-        """Clear the embedding cache."""
-        self._cache.clear()
-        logger.info("Embedding cache cleared")
-
     async def is_available(self) -> bool:
         """Check if the embedding service is available."""
         try:
@@ -182,9 +230,7 @@ class EmbeddingService(_OllamaSession):
                 if response.status == 200:
                     data = await response.json()
                     models = [m["name"] for m in data.get("models", [])]
-                    return self.model in models or any(
-                        self.model in m for m in models
-                    )
+                    return self.model in models or any(self.model in m for m in models)
                 return False
         except Exception as e:
             logger.warning(f"Embedding service not available: {e}")
@@ -192,7 +238,7 @@ class EmbeddingService(_OllamaSession):
 
 
 # Global embedding service instance
-_embedding_service: Optional[EmbeddingService] = None
+_embedding_service: EmbeddingService | None = None
 
 
 def get_embedding_service() -> EmbeddingService:

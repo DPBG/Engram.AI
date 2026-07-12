@@ -1,6 +1,6 @@
 """Beliefs Service for ActiveLearningAI."""
 
-from beliefs.service import BeliefsService
 from beliefs.graph import BeliefGraph
+from beliefs.service import BeliefsService
 
 __all__ = ["BeliefsService", "BeliefGraph"]

@@ -19,7 +19,6 @@ from collections import deque
 import numpy as np
 
 from neuromorphic.config import NeuromorphicConfig
-from neuromorphic.encoding import _resolve_modality
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +65,9 @@ class OrientingInstincts:
 
         # Phase-dependent gain scales from config
         self._phase_scales: dict[str, dict[str, float]] = {
-            "infant":     {"novelty": 1.0, "crossmodal": 1.0},
-            "toddler":    {"novelty": 1.0, "crossmodal": 1.0},
-            "juvenile":   {"novelty": 1.0, "crossmodal": 1.0},
+            "infant": {"novelty": 1.0, "crossmodal": 1.0},
+            "toddler": {"novelty": 1.0, "crossmodal": 1.0},
+            "juvenile": {"novelty": 1.0, "crossmodal": 1.0},
             "adolescent": {
                 "novelty": getattr(cfg, "adolescent_novelty_scale", 1.17),
                 "crossmodal": getattr(cfg, "adolescent_crossmodal_scale", 1.33),
@@ -93,7 +92,9 @@ class OrientingInstincts:
         """Update the developmental phase for gain scaling."""
         # E1: Validate phase name
         if phase not in self._VALID_PHASES:
-            logger.warning(f"Unknown developmental phase '{phase}', keeping current '{self._phase}'")
+            logger.warning(
+                f"Unknown developmental phase '{phase}', keeping current '{self._phase}'"
+            )
             return
         if phase != self._phase:
             # C3: Start smooth transition (progression driven by compute_gain)
@@ -197,9 +198,7 @@ class OrientingInstincts:
                 boost = mod_gain - 1.0
                 mod_gain = 1.0 + boost * (1.0 - hab)
             # Increase habituation for this modality (cap from config)
-            self._habituation[modality] = min(
-                self._habituation_cap, hab + self._habituation_rate
-            )
+            self._habituation[modality] = min(self._habituation_cap, hab + self._habituation_rate)
 
             # Apply gain to this modality's subrange (always >= 1.0)
             gain[sl] *= np.float32(mod_gain)

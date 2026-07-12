@@ -68,9 +68,17 @@ class SafetyHaltMessage(WireModel):
 
 
 class OperatorActionMessage(WireModel):
-    """Operator-initiated action with optional identity (``safety.resume``)."""
+    """Operator-initiated action with identity and replay-protection (``safety.resume``).
+
+    ``timestamp`` is the sender's epoch-millisecond clock at message creation.
+    ``_op_sig`` (carried as an extra field) is the HMAC-SHA256 signature over
+    ``operator_id``, ``action``, and ``timestamp``; see ``signing.verify_operator_action``.
+    A default timestamp of 0 ensures unsigned legacy messages fail the
+    tolerance check when ``ENGRAM_OPERATOR_KEY`` is set (fail-closed).
+    """
 
     operator_id: str = "unknown"
+    timestamp: int = 0
 
 
 # --- Safety analysis ---
@@ -232,6 +240,7 @@ SUBJECT_SCHEMAS: dict[str, type[WireModel]] = {
     Subjects.PROPOSAL_NEW: ActionProposalMessage,
     Subjects.CODE_PROPOSAL: CodeProposalMessage,
     Subjects.POLICY_RESTRICT: PolicyRestrictMessage,
+    Subjects.POLICY_RESTRICT_REQUEST: PolicyRestrictMessage,
     Subjects.SAFETY_HALT: SafetyHaltMessage,
     Subjects.SAFETY_RESUME: OperatorActionMessage,
     Subjects.SAFETY_ANALYZE_ACTION: SafetyAnalyzeMessage,
