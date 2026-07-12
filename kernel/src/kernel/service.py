@@ -10,6 +10,7 @@ import json
 import math
 import os
 import time
+from collections import defaultdict, deque
 from typing import Any
 
 from activelearning import (
@@ -42,6 +43,13 @@ from kernel.policy import (
 )
 
 _DECISION_TYPES = ("ALLOW", "TRANSFORM", "DENY", "DEFER")
+
+# Per-source code-proposal rate limiting (M1.14).
+# Exceeding the limit is fail-closed: a DENY decision is published so the
+# meta-programmer's Future resolves rather than hanging, and the over-rate
+# source is logged.  Both values are overridable via environment variables.
+_PROPOSAL_RATE_LIMIT = int(os.environ.get("KERNEL_PROPOSAL_RATE_LIMIT", "10"))
+_PROPOSAL_RATE_WINDOW_S = float(os.environ.get("KERNEL_PROPOSAL_RATE_WINDOW_S", "60"))
 
 
 def _empty_bucket() -> dict[str, Any]:
@@ -102,6 +110,12 @@ class KernelService(BaseService):
         self._decision_rates_window_hours = float(
             os.environ.get("KERNEL_DECISION_RATES_WINDOW_HOURS", "24")
         )
+        # Per-source proposal rate limiting (M1.14): sliding-window timestamp deques
+        # keyed by source name.  Fail-closed: over-limit proposals get a DENY.
+        self._proposal_timestamps: dict[str, deque] = defaultdict(deque)
+        self._proposal_rate_limit = _PROPOSAL_RATE_LIMIT
+        self._proposal_rate_window_s = _PROPOSAL_RATE_WINDOW_S
+
         # Heartbeat (E1.9.3): publish kernel.heartbeat so the watchdog can detect loss.
         # A non-positive or non-finite interval would collapse the publish cadence,
         # so we validate and refuse to start with an invalid configuration.
@@ -686,6 +700,24 @@ class KernelService(BaseService):
             }
         )
 
+    def _check_proposal_rate_limit(self, source: str) -> bool:
+        """Sliding-window rate check for a given source.
+
+        Records the current timestamp and returns True if the source is within
+        its budget, False if it has exceeded _proposal_rate_limit proposals in
+        the last _proposal_rate_window_s seconds.  The window is maintained as
+        a deque of monotonic timestamps; stale entries are evicted on each call.
+        """
+        now = time.monotonic()
+        timestamps = self._proposal_timestamps[source]
+        cutoff = now - self._proposal_rate_window_s
+        while timestamps and timestamps[0] <= cutoff:
+            timestamps.popleft()
+        if len(timestamps) >= self._proposal_rate_limit:
+            return False
+        timestamps.append(now)
+        return True
+
     async def _handle_code_proposal(self, data: dict) -> None:
         """Handle code proposals from Meta-Programmer."""
         proposal = data
@@ -693,6 +725,31 @@ class KernelService(BaseService):
         source = proposal.get("source", "meta-programmer")
         try:
             self.logger.debug(f"Evaluating code proposal: {trace_id}")
+
+            # Rate-limit check (M1.14): fail-closed DENY — never silently drop.
+            if not self._check_proposal_rate_limit(source):
+                self.logger.warning(
+                    f"Rate limit exceeded for source '{source}' "
+                    f"(>{self._proposal_rate_limit} proposals/"
+                    f"{self._proposal_rate_window_s:.0f}s) — denying {trace_id}"
+                )
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=(
+                        f"Rate limit exceeded: source '{source}' sent more than "
+                        f"{self._proposal_rate_limit} proposals in "
+                        f"{self._proposal_rate_window_s:.0f}s"
+                    ),
+                    risk_score=1.0,
+                )
+                await self._log_decision(trace_id, "code", source, deny)
+                await self.event_bus.publish(
+                    code_decision_subject(trace_id),
+                    self._signed_code_decision(deny),
+                )
+                self._deny_count += 1
+                return
 
             # Get risk analysis from Safety Supervisor
             risk_analysis = await self._get_risk_analysis(proposal, is_code=True)

@@ -117,11 +117,7 @@ class Database:
         and the pending statements are no-ops on it.
         """
         assert self._connection is not None
-        cursor = await self._connection.execute("PRAGMA user_version")
-        if not self._connection:
-            raise RuntimeError("Database not initialized")
         conn = self._connection
-
         cursor = await conn.execute("PRAGMA user_version")
         row = await cursor.fetchone()
         version = row[0] if row else 0
@@ -149,9 +145,10 @@ class Database:
         params: tuple[Any, ...] = (),
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement."""
-        if self._connection is None:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.execute(sql, params)
+        return await conn.execute(sql, params)
 
     async def executemany(
         self,
@@ -159,9 +156,10 @@ class Database:
         params_list: list[tuple[Any, ...]],
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement with multiple parameter sets."""
-        if self._connection is None:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.executemany(sql, params_list)
+        return await conn.executemany(sql, params_list)
 
     async def fetchone(
         self,
