@@ -322,7 +322,6 @@ class MetaProgrammerService(BaseService):
             self.logger.error(f"Error handling knowledge gap: {e}", exc_info=True)
             if "trace_id" in locals():
                 await self._publish_gap_result(trace_id, False, str(e))
-            await self._publish_gap_result(trace_id, False, str(e))
 
     async def _request_kernel_approval(
         self,

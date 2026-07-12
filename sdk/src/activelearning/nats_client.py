@@ -21,6 +21,7 @@ from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
 
+from activelearning.bus_metrics import EventBusMetrics
 from activelearning.connection_logging import (
     TRANSITION_ALREADY_CONNECTED,
     TRANSITION_CLOSED,
@@ -43,6 +44,7 @@ from activelearning.consumer_lag import (
     should_emit_lag_alert,
     should_monitor_consumer,
 )
+from activelearning.core import current_timestamp
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -51,7 +53,12 @@ from activelearning.messages import (
     validate_payload,
 )
 from activelearning.signing import verify_decision
-from activelearning.subjects import Subjects, code_decision_subject, decision_subject
+from activelearning.subjects import (
+    Subjects,
+    code_decision_subject,
+    decision_subject,
+    eventbus_metrics_subject,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +169,9 @@ class EventBus:
         self._connected = asyncio.Event()
         # consumer_name -> alert tier emitted while lag remains above threshold
         self._lag_alerts_emitted: dict[str, int] = {}
+        self._metrics = EventBusMetrics()
+        self._metrics_task: asyncio.Task[None] | None = None
+        self._metrics_interval_s = float(os.environ.get("EVENTBUS_METRICS_INTERVAL_S", "10"))
 
     async def connect(self) -> None:
         """Connect to the NATS server."""
@@ -231,6 +241,7 @@ class EventBus:
 
     async def close(self) -> None:
         """Close the NATS connection."""
+        await self.stop_metrics_reporter()
         if self._nc is not None:
             log_connection_event(
                 TRANSITION_CLOSING,
@@ -343,6 +354,11 @@ class EventBus:
             return True
         return False
 
+    @staticmethod
+    def _is_metrics_subject(subject: str) -> bool:
+        """Metrics heartbeats are excluded from publish counters."""
+        return subject.startswith(Subjects.EVENTBUS_METRICS_PREFIX)
+
     async def publish(
         self,
         subject: str,
@@ -366,7 +382,10 @@ class EventBus:
         if isinstance(data, dict):
             data = validate_payload(subject, data, message_model)
         payload = serialize_message(data)
-        if self._is_safety_critical(subject):
+        track_publish = not self._is_metrics_subject(subject)
+        t0 = time.perf_counter()
+        is_js = self._is_safety_critical(subject)
+        if is_js:
             assert self._js is not None
             ack = await self._js.publish(subject, payload)
             logger.debug("JS-published to %s (seq=%d): %d bytes", subject, ack.seq, len(payload))
@@ -374,6 +393,8 @@ class EventBus:
             assert self._nc is not None
             await self._nc.publish(subject, payload)
             logger.debug("Published to %s: %d bytes", subject, len(payload))
+        if track_publish:
+            self._metrics.record_publish((time.perf_counter() - t0) * 1000, jetstream=is_js)
 
     async def subscribe(
         self,
@@ -407,6 +428,7 @@ class EventBus:
         wire_model = message_model or schema_for_subject(subject)
 
         async def message_callback(msg: Msg) -> None:
+            t0 = time.perf_counter()
             try:
                 data = deserialize_message(msg.data)
                 if not isinstance(data, dict):
@@ -450,6 +472,8 @@ class EventBus:
                         )
                     except Exception:
                         pass  # best-effort error reply
+            finally:
+                self._metrics.record_subscribe_delivery((time.perf_counter() - t0) * 1000)
 
         assert self._nc is not None
         sub = await self._nc.subscribe(
@@ -465,6 +489,10 @@ class EventBus:
             self._request_handlers.add(subject)
         else:
             self._request_handlers.discard(subject)
+        # Flush so the server has processed the SUB before we return. Without
+        # this, a caller that immediately sends a request() after subscribe()
+        # can race the SUB through the write buffer and get NoRespondersError.
+        await self._nc.flush()
         logger.info(f"Subscribed to {subject}")
 
     async def js_subscribe(
@@ -520,53 +548,57 @@ class EventBus:
             self._poison_handlers[subject] = poison_handler
 
         async def _js_message_callback(msg: Msg) -> None:
-            # Structurally bad messages can never succeed on retry → poison now.
-            # This block only parses and validates — the handler runs exactly
-            # once, in the delivery block below. (A duplicated handler+ack here
-            # used to double-invoke every JS handler and double-ack the message,
-            # surfacing as MsgAlreadyAckdError and spurious redeliveries.)
+            t0 = time.perf_counter()
             try:
-                data = deserialize_message(msg.data)
-                if not isinstance(data, dict):
-                    raise MessageValidationError(
-                        subject,
-                        f"expected JSON object, got {type(data).__name__}",
-                    )
-                data = validate_payload(subject, data, wire_model)
-            except MessageValidationError as e:
-                logger.error("Poisoning unprocessable message on %s: %s", subject, e)
-                await self._route_to_poison(subject, msg, f"validation_error: {e}")
-                await msg.term()
-                return
-
-            try:
-                await handler(data)
-                await msg.ack()  # exactly-once ack, only after success
-            except Exception as e:
-                delivered = self._num_delivered(msg)
-                if delivered >= max_deliver:
-                    # Exhausted bounded redelivery → dead-letter, then term so it
-                    # stops redelivering (never an infinite loop, never dropped).
-                    logger.error(
-                        "Poisoning %s after %d/%d deliveries: %s",
-                        subject,
-                        delivered,
-                        max_deliver,
-                        e,
-                    )
-                    await self._route_to_poison(
-                        subject, msg, f"max_deliver_exhausted({delivered}): {e}"
-                    )
+                # Structurally bad messages can never succeed on retry → poison now.
+                # This block only parses and validates — the handler runs exactly
+                # once, in the delivery block below. (A duplicated handler+ack here
+                # used to double-invoke every JS handler and double-ack the message,
+                # surfacing as MsgAlreadyAckdError and spurious redeliveries.)
+                try:
+                    data = deserialize_message(msg.data)
+                    if not isinstance(data, dict):
+                        raise MessageValidationError(
+                            subject,
+                            f"expected JSON object, got {type(data).__name__}",
+                        )
+                    data = validate_payload(subject, data, wire_model)
+                except MessageValidationError as e:
+                    logger.error("Poisoning unprocessable message on %s: %s", subject, e)
+                    await self._route_to_poison(subject, msg, f"validation_error: {e}")
                     await msg.term()
-                else:
-                    logger.warning(
-                        "Handler failed on %s (delivery %d/%d), will redeliver: %s",
-                        subject,
-                        delivered,
-                        max_deliver,
-                        e,
-                    )
-                    await msg.nak()
+                    return
+
+                try:
+                    await handler(data)
+                    await msg.ack()  # exactly-once ack, only after success
+                except Exception as e:
+                    delivered = self._num_delivered(msg)
+                    if delivered >= max_deliver:
+                        # Exhausted bounded redelivery → dead-letter, then term so it
+                        # stops redelivering (never an infinite loop, never dropped).
+                        logger.error(
+                            "Poisoning %s after %d/%d deliveries: %s",
+                            subject,
+                            delivered,
+                            max_deliver,
+                            e,
+                        )
+                        await self._route_to_poison(
+                            subject, msg, f"max_deliver_exhausted({delivered}): {e}"
+                        )
+                        await msg.term()
+                    else:
+                        logger.warning(
+                            "Handler failed on %s (delivery %d/%d), will redeliver: %s",
+                            subject,
+                            delivered,
+                            max_deliver,
+                            e,
+                        )
+                        await msg.nak()
+            finally:
+                self._metrics.record_subscribe_delivery((time.perf_counter() - t0) * 1000)
 
         config = ConsumerConfig(
             durable_name=durable,
@@ -663,7 +695,9 @@ class EventBus:
         await self._ensure_connected()
         assert self._nc is not None
         payload = serialize_message(data)
+        t0 = time.perf_counter()
         response = await self._nc.request(subject, payload, timeout=timeout)
+        self._metrics.record_request((time.perf_counter() - t0) * 1000)
         return deserialize_message(response.data)
 
     async def wait_for_decision(
@@ -697,6 +731,7 @@ class EventBus:
 
         async def _js_handler(msg: Msg) -> None:
             nonlocal result
+            t0 = time.perf_counter()
             try:
                 data = deserialize_message(msg.data)
                 if not isinstance(data, dict):
@@ -716,12 +751,30 @@ class EventBus:
                     )
                     await msg.ack()  # remove from stream; retrying won't fix a bad sig
                     return
+                # Expiry is itself a signed field (activelearning.signing.
+                # SIGNED_FIELDS), so a valid signature alone isn't enough — a
+                # captured, still-validly-signed old decision must not be
+                # replayable past its TTL. Reject at accept time, same as a
+                # bad signature: ignore and keep waiting for the real thing.
+                expires_at = data.get("expires_at")
+                if expires_at is not None and current_timestamp() > expires_at:
+                    logger.error(
+                        "Rejected decision on %s: expired at %s (now %s) — "
+                        "possible replay of a stale decision.",
+                        subject,
+                        expires_at,
+                        current_timestamp(),
+                    )
+                    await msg.ack()  # remove from stream; it will never become valid
+                    return
                 result = data
                 decision_received.set()
                 await msg.ack()
             except MessageValidationError as e:
                 logger.error(str(e))
                 await msg.ack()
+            finally:
+                self._metrics.record_subscribe_delivery((time.perf_counter() - t0) * 1000)
 
         assert self._js is not None
         sub = await self._js.subscribe(
@@ -874,6 +927,43 @@ class EventBus:
             client_name=self.name,
             nats_url=self.nats_url,
         )
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Return a snapshot of in-process publish/subscribe/request stats."""
+        return self._metrics.snapshot(self.name)
+
+    async def start_metrics_reporter(self, interval_s: float | None = None) -> None:
+        """Periodically publish metrics to eventbus.metrics.{name}."""
+        if self._metrics_task is not None:
+            return
+        interval = interval_s if interval_s is not None else self._metrics_interval_s
+
+        async def _loop() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(interval)
+                    if self.is_connected:
+                        await self.publish(
+                            eventbus_metrics_subject(self.name),
+                            self.get_metrics(),
+                        )
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug("EventBus metrics reporter: %s", e)
+
+        self._metrics_task = asyncio.create_task(_loop())
+
+    async def stop_metrics_reporter(self) -> None:
+        """Stop the periodic metrics publisher."""
+        if self._metrics_task is None:
+            return
+        self._metrics_task.cancel()
+        try:
+            await self._metrics_task
+        except asyncio.CancelledError:
+            pass
+        self._metrics_task = None
 
 
 # Global event bus instance for convenience

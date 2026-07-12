@@ -141,6 +141,7 @@ class ActiveLearningAI {
                 this.updateTopStats(msg.data);
                 if (msg.data.halt_state) this.updateHaltUI(msg.data.halt_state);
                 if (msg.data.kernel_decision_rates) this.renderKernelDecisionRates(msg.data.kernel_decision_rates);
+                if (msg.data.bus_metrics) this.renderBusMetrics(msg.data.bus_metrics);
                 break;
             case 'safe_halt_status':
                 this.updateHaltUI(msg.data);
@@ -154,6 +155,10 @@ class ActiveLearningAI {
             case 'metrics_update':
                 if (msg.data.live) this.updateGauges(msg.data.live);
                 if (msg.data.docker) this.renderDockerMetrics(msg.data.docker);
+                if (msg.data.bus) this.renderBusMetrics(msg.data.bus);
+                break;
+            case 'bus_metrics_update':
+                this.renderBusMetrics(msg.data);
                 break;
             case 'message':
                 this.appendNATSMessage(msg.data);
@@ -321,8 +326,8 @@ class ActiveLearningAI {
         summary.innerHTML = `
             <div class="le-stat-grid">
                 <div class="le-stat">
-                    <span class="le-stat-label">Concepts</span>
-                    <span class="le-stat-val">${conceptVal != null ? conceptVal : '—'}</span>
+                    <span class="le-stat-label">Separability</span>
+                    <span class="le-stat-val">${conceptVal != null ? Number(conceptVal).toFixed(3) : '—'}</span>
                 </div>
                 <div class="le-stat">
                     <span class="le-stat-label">Binding F1</span>
@@ -889,6 +894,27 @@ class ActiveLearningAI {
                 <div class="ctn-row"><span>Mem</span><span class="val">${m.memory_mb.toFixed(0)} MB</span></div>
             </div>
         `).join('');
+    }
+
+    renderBusMetrics(metrics) {
+        const el = document.getElementById('bus-metrics-list');
+        if (!el) return;
+        if (!metrics || !metrics.length) {
+            el.innerHTML = '<div class="sys-loading">Waiting for metrics…</div>';
+            return;
+        }
+        el.innerHTML = metrics.map(m => {
+            const pub = m.publish || {};
+            const sub = m.subscribe || {};
+            const req = m.request || {};
+            return `
+            <div class="bus-item">
+                <div class="bus-name">${this.esc(m.service || '?')}</div>
+                <div class="bus-row"><span>Publish</span><span class="val">${pub.count || 0} · ${(pub.avg_ms || 0).toFixed(1)}ms</span></div>
+                <div class="bus-row"><span>Subscribe</span><span class="val">${sub.count || 0} · ${(sub.avg_ms || 0).toFixed(1)}ms</span></div>
+                <div class="bus-row"><span>Request</span><span class="val">${req.count || 0} · ${(req.avg_ms || 0).toFixed(1)}ms</span></div>
+            </div>`;
+        }).join('');
     }
 
     // ─── Top Stats ───────────────────────────────────────────────────

@@ -50,6 +50,15 @@ class _FakeNats:
         self.published.append((subject, payload))
         return None
 
+    def local_bus_metrics_snapshot(self) -> dict:
+        return {
+            "service": "dashboard",
+            "timestamp_ms": 0,
+            "publish": {"count": 0, "avg_ms": 0, "max_ms": 0, "jetstream_count": 0},
+            "subscribe": {"count": 0, "avg_ms": 0, "max_ms": 0},
+            "request": {"count": 0, "avg_ms": 0, "max_ms": 0},
+        }
+
 
 class _FakeChat:
     llm_model = "fake-model"
