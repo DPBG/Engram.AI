@@ -6,6 +6,7 @@ from activelearning.signing import (
     DECISION_KEY_ENV,
     DECISION_KEY_SECONDARY_ENV,
     SIGNATURE_FIELD,
+    accept_kernel_decision,
     sign_decision,
     signing_enabled,
     verify_decision,
@@ -78,6 +79,17 @@ def test_env_key_enforced(monkeypatch):
     signed = sign_decision(_decision())  # uses env key
     assert verify_decision(signed) is True  # uses env key
     assert verify_decision(_decision()) is False  # forged/unsigned rejected
+
+
+def test_accept_kernel_decision_rejects_expired_signed():
+    signed = sign_decision(_decision(), KEY)
+    signed["expires_at"] = 1
+    assert accept_kernel_decision(signed, now=10_000) is False
+
+
+def test_accept_kernel_decision_accepts_before_expiry():
+    signed = sign_decision(_decision(), KEY)
+    assert accept_kernel_decision(signed, now=signed["expires_at"] - 1) is True
 
 
 # ── key rotation (issue #206) ─────────────────────────────────────────────
