@@ -320,7 +320,7 @@ def _bump(root: Path, package: str, new_ver: str) -> int:
         if fn(path, canon, new_ver):
             print(f"  UPDATED  {path.relative_to(root)}")
 
-    print(f"\nRun `python scripts/constraints_manager.py verify` to confirm.")
+    print("\nRun `python scripts/constraints_manager.py verify` to confirm.")
     return 0
 
 
