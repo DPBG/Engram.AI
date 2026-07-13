@@ -129,6 +129,7 @@ class KernelService(BaseService):
             )
         self._heartbeat_interval_s = _raw_hb
         self._heartbeat_task: asyncio.Task | None = None
+        self._lag_monitor_task: asyncio.Task | None = None
 
         # Load body profile from env if set
         self._load_body_profile()
@@ -221,6 +222,8 @@ class KernelService(BaseService):
         self._decision_rates_task = asyncio.create_task(self._decision_rates_loop())
         # Heartbeat loop — lets the kernel-loss watchdog (E1.9.3) detect our death.
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        # JetStream consumer lag monitor (M2.1, issue #224).
+        self._lag_monitor_task = asyncio.create_task(self.event_bus.run_lag_monitor())
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
@@ -234,6 +237,12 @@ class KernelService(BaseService):
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        if self._lag_monitor_task and not self._lag_monitor_task.done():
+            self._lag_monitor_task.cancel()
+            try:
+                await self._lag_monitor_task
             except asyncio.CancelledError:
                 pass
 
