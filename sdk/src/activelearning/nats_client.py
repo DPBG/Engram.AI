@@ -88,6 +88,44 @@ DEFAULT_REDELIVERY_BACKOFF: list[float] = [1.0, 5.0, 15.0, 30.0]
 DLQ_SUBJECT_PREFIX: str = "dlq."
 
 
+def _env_timeout(name: str, default: float) -> float:
+    """Read a positive-float timeout override from the environment.
+
+    Invalid or non-positive values fall back to ``default`` with a warning so a
+    typo can never silently disable a timeout (which would let a call hang
+    forever).
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r (not a number); using default %.1fs", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("Invalid %s=%r (must be > 0); using default %.1fs", name, raw, default)
+        return default
+    return value
+
+
+# --- Centralized request-reply timeout policy (issue #233) ---
+#
+# Every EventBus request-reply and decision-wait uses one of these shared
+# defaults unless a caller passes an explicit ``timeout``. Each is overridable
+# per-deployment via an environment variable so operators can tune failure
+# behavior without editing call sites. See docs/EVENTBUS-TIMEOUT-POLICY.md.
+#
+# Default timeout (seconds) for EventBus.request() request-reply RPCs.
+DEFAULT_REQUEST_TIMEOUT_S: float = _env_timeout("ENGRAM_REQUEST_TIMEOUT_S", 30.0)
+# Default timeout (seconds) for EventBus.wait_for_decision() Kernel gate waits.
+DEFAULT_DECISION_TIMEOUT_S: float = _env_timeout("ENGRAM_DECISION_TIMEOUT_S", 30.0)
+# How long a queued operation waits for auto-reconnect before giving up.
+RECONNECT_WAIT_TIMEOUT_S: float = _env_timeout("ENGRAM_RECONNECT_WAIT_TIMEOUT_S", 10.0)
+# Grace period for draining a dead connection during force_reconnect().
+CONNECTION_DRAIN_TIMEOUT_S: float = _env_timeout("ENGRAM_CONNECTION_DRAIN_TIMEOUT_S", 5.0)
+
+
 def poison_subject(subject: str) -> str:
     """Dead-letter subject for a poisoned safety-critical message."""
     return f"{DLQ_SUBJECT_PREFIX}{subject}"
@@ -676,7 +714,7 @@ class EventBus:
         self,
         subject: str,
         data: Any,
-        timeout: float = 30.0,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """
         Send a request and wait for a response.
@@ -684,7 +722,10 @@ class EventBus:
         Args:
             subject: NATS subject
             data: Request payload
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds. ``None`` (the default) uses the shared
+                ``DEFAULT_REQUEST_TIMEOUT_S`` policy value (env-overridable via
+                ``ENGRAM_REQUEST_TIMEOUT_S``). Pass an explicit value only when a
+                specific call needs to deviate — see docs/EVENTBUS-TIMEOUT-POLICY.md.
 
         Returns:
             Response data as dict
@@ -692,18 +733,19 @@ class EventBus:
         Raises:
             asyncio.TimeoutError: If no response within timeout
         """
+        effective_timeout = DEFAULT_REQUEST_TIMEOUT_S if timeout is None else timeout
         await self._ensure_connected()
         assert self._nc is not None
         payload = serialize_message(data)
         t0 = time.perf_counter()
-        response = await self._nc.request(subject, payload, timeout=timeout)
+        response = await self._nc.request(subject, payload, timeout=effective_timeout)
         self._metrics.record_request((time.perf_counter() - t0) * 1000)
         return deserialize_message(response.data)
 
     async def wait_for_decision(
         self,
         trace_id: str,
-        timeout: float = 30.0,
+        timeout: float | None = None,
         *,
         code: bool = False,
     ) -> dict[str, Any]:
@@ -717,13 +759,17 @@ class EventBus:
 
         Args:
             trace_id: The trace ID to wait for
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds. ``None`` (the default) uses the shared
+                ``DEFAULT_DECISION_TIMEOUT_S`` policy value (env-overridable via
+                ``ENGRAM_DECISION_TIMEOUT_S``). On timeout the caller MUST fail
+                closed (deny/halt) — see docs/EVENTBUS-TIMEOUT-POLICY.md.
             code: When True, wait on ``code.decision.{trace_id}`` instead of
                 ``decision.{trace_id}`` (Kernel code-proposal gate).
 
         Returns:
             Decision data as dict
         """
+        effective_timeout = DEFAULT_DECISION_TIMEOUT_S if timeout is None else timeout
         subject = code_decision_subject(trace_id) if code else decision_subject(trace_id)
         durable = f"waiter-{'code' if code else 'action'}-{trace_id}"
         decision_received = asyncio.Event()
@@ -787,7 +833,7 @@ class EventBus:
             ),
         )
         try:
-            await asyncio.wait_for(decision_received.wait(), timeout=timeout)
+            await asyncio.wait_for(decision_received.wait(), timeout=effective_timeout)
             return result
         finally:
             await sub.unsubscribe()
@@ -821,7 +867,7 @@ class EventBus:
         # Best-effort close of old connection
         if self._nc is not None:
             try:
-                await asyncio.wait_for(self._nc.close(), timeout=5.0)
+                await asyncio.wait_for(self._nc.close(), timeout=CONNECTION_DRAIN_TIMEOUT_S)
             except Exception as e:
                 log_connection_event(
                     TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
@@ -880,11 +926,12 @@ class EventBus:
         """Ensure we're connected, waiting briefly for reconnection if needed."""
         if self.is_connected:
             return
-        # NATS client may be reconnecting — wait up to 10s before giving up.
-        # This prevents transient disconnects from crashing publish loops.
+        # NATS client may be reconnecting — wait up to RECONNECT_WAIT_TIMEOUT_S
+        # before giving up. This prevents transient disconnects from crashing
+        # publish loops.
         if self._nc is not None:
             try:
-                await asyncio.wait_for(self._connected.wait(), timeout=10.0)
+                await asyncio.wait_for(self._connected.wait(), timeout=RECONNECT_WAIT_TIMEOUT_S)
                 return
             except TimeoutError:
                 pass

@@ -37,7 +37,14 @@ from activelearning.messages import (
     schema_for_subject,
     validate_payload,
 )
-from activelearning.nats_client import EventBus, get_event_bus
+from activelearning.nats_client import (
+    CONNECTION_DRAIN_TIMEOUT_S,
+    DEFAULT_DECISION_TIMEOUT_S,
+    DEFAULT_REQUEST_TIMEOUT_S,
+    RECONNECT_WAIT_TIMEOUT_S,
+    EventBus,
+    get_event_bus,
+)
 from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuator, register_sensor
 from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
 from activelearning.signing import (
@@ -78,6 +85,11 @@ __all__ = [
     # NATS client
     "EventBus",
     "get_event_bus",
+    # EventBus timeout policy (issue #233)
+    "DEFAULT_REQUEST_TIMEOUT_S",
+    "DEFAULT_DECISION_TIMEOUT_S",
+    "RECONNECT_WAIT_TIMEOUT_S",
+    "CONNECTION_DRAIN_TIMEOUT_S",
     # Database
     "Database",
     "get_database",
