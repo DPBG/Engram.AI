@@ -43,11 +43,37 @@ _COLORS = [
 _RESET = "\033[0m"
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
-# Restart-with-backoff parameters.
-_BACKOFF_INITIAL = 1.0  # seconds before first restart
-_BACKOFF_FACTOR = 2.0  # multiply delay by this on each consecutive crash
-_BACKOFF_MAX = 30.0  # cap on per-restart delay
-_BACKOFF_RESET = 10.0  # if the process lived this long, reset backoff to initial
+
+def _env_float(name: str, default: float, *, minimum: float = 0.0) -> float:
+    """Read a float tuning override from the environment (issue #250).
+
+    Missing, non-numeric, or out-of-range (``<= minimum``) values fall back to
+    ``default`` with a warning, so an operator typo can never disable restart
+    backoff (e.g. a 0s delay hammering a crash-looping service).
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r (not a number); using default %s", name, raw, default)
+        return default
+    if value <= minimum:
+        logger.warning(
+            "Invalid %s=%r (must be > %s); using default %s", name, raw, minimum, default
+        )
+        return default
+    return value
+
+
+# Restart-with-backoff parameters. Each is overridable per-deployment via an
+# environment variable (issue #250), defaulting to the historical value so
+# behavior is unchanged unless an operator tunes it. Resolved once at import.
+_BACKOFF_INITIAL = _env_float("SUPERVISOR_BACKOFF_INITIAL_S", 1.0)  # secs before 1st restart
+_BACKOFF_FACTOR = _env_float("SUPERVISOR_BACKOFF_FACTOR", 2.0, minimum=1.0)  # per-crash multiplier
+_BACKOFF_MAX = _env_float("SUPERVISOR_BACKOFF_MAX_S", 30.0)  # cap on per-restart delay
+_BACKOFF_RESET = _env_float("SUPERVISOR_BACKOFF_RESET_S", 10.0)  # uptime that resets backoff
 
 # signal.SIGKILL is not available on Windows; fall back to SIGTERM so the name
 # is always safe to reference.  _kill_proc uses proc.kill() on Windows anyway.

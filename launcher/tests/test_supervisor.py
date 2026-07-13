@@ -25,6 +25,7 @@ from launcher.supervisor import (
     _SIGKILL,
     ManagedProcess,
     Supervisor,
+    _env_float,
 )
 from launcher.supervisor_alerts import SERVICE_FLAP_EVENT
 
@@ -547,3 +548,73 @@ class TestBackoffConstants:
 
     def test_reset_threshold_greater_than_initial(self) -> None:
         assert _BACKOFF_RESET > _BACKOFF_INITIAL
+
+    def test_default_values_match_historical(self) -> None:
+        """With no env overrides set, defaults match the pre-#250 constants."""
+        assert _BACKOFF_INITIAL == 1.0
+        assert _BACKOFF_FACTOR == 2.0
+        assert _BACKOFF_MAX == 30.0
+        assert _BACKOFF_RESET == 10.0
+
+
+# ---------------------------------------------------------------------------
+# Configurable backoff via env vars (issue #250)
+# ---------------------------------------------------------------------------
+
+
+class TestEnvFloat:
+    def test_returns_default_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SUPERVISOR_TEST_X", raising=False)
+        assert _env_float("SUPERVISOR_TEST_X", 1.0) == 1.0
+
+    def test_parses_valid_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SUPERVISOR_TEST_X", "2.5")
+        assert _env_float("SUPERVISOR_TEST_X", 1.0) == 2.5
+
+    def test_non_numeric_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SUPERVISOR_TEST_X", "abc")
+        assert _env_float("SUPERVISOR_TEST_X", 1.0) == 1.0
+
+    def test_zero_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A 0s initial delay would hammer a crash-looping service — reject it.
+        monkeypatch.setenv("SUPERVISOR_TEST_X", "0")
+        assert _env_float("SUPERVISOR_TEST_X", 1.0) == 1.0
+
+    def test_negative_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SUPERVISOR_TEST_X", "-3")
+        assert _env_float("SUPERVISOR_TEST_X", 1.0) == 1.0
+
+    def test_minimum_bound_rejects_at_or_below(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Factor must be > 1.0 for backoff to actually escalate.
+        monkeypatch.setenv("SUPERVISOR_TEST_X", "1.0")
+        assert _env_float("SUPERVISOR_TEST_X", 2.0, minimum=1.0) == 2.0
+        monkeypatch.setenv("SUPERVISOR_TEST_X", "1.5")
+        assert _env_float("SUPERVISOR_TEST_X", 2.0, minimum=1.0) == 1.5
+
+
+class TestBackoffEnvConfig:
+    def test_env_overrides_applied_on_reload(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Backoff constants pick up env overrides when the module is (re)imported."""
+        import importlib
+
+        import launcher.supervisor as sup_mod
+
+        monkeypatch.setenv("SUPERVISOR_BACKOFF_INITIAL_S", "0.5")
+        monkeypatch.setenv("SUPERVISOR_BACKOFF_FACTOR", "3.0")
+        monkeypatch.setenv("SUPERVISOR_BACKOFF_MAX_S", "60")
+        monkeypatch.setenv("SUPERVISOR_BACKOFF_RESET_S", "20")
+        try:
+            reloaded = importlib.reload(sup_mod)
+            assert reloaded._BACKOFF_INITIAL == 0.5
+            assert reloaded._BACKOFF_FACTOR == 3.0
+            assert reloaded._BACKOFF_MAX == 60.0
+            assert reloaded._BACKOFF_RESET == 20.0
+        finally:
+            for var in (
+                "SUPERVISOR_BACKOFF_INITIAL_S",
+                "SUPERVISOR_BACKOFF_FACTOR",
+                "SUPERVISOR_BACKOFF_MAX_S",
+                "SUPERVISOR_BACKOFF_RESET_S",
+            ):
+                monkeypatch.delenv(var, raising=False)
+            importlib.reload(sup_mod)
