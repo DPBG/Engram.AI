@@ -201,6 +201,10 @@ handler is invoked:
 - Decision subjects (`decision.*`, `code.decision.*`) are matched by prefix.
 - **Unknown subjects pass through unvalidated** — extra fields in known models are
   preserved (`extra="allow"`).
+- Every payload carries a `version` field (the wire-schema major version). A message
+  that omits `version` is normalized to `WIRE_SCHEMA_VERSION`. See
+  [`docs/MESSAGE-SCHEMA-VERSIONING.md`](MESSAGE-SCHEMA-VERSIONING.md) for the
+  compatibility policy that governs when the version is bumped.
 
 On validation failure:
 
