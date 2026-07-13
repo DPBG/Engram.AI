@@ -241,9 +241,13 @@ reply `{"error": "<str(e)>", "type": "error"}` so callers do not hang until time
 For durable consumers beyond the safety stream:
 
 ```python
-await self.event_bus.js_subscribe(subject, handler, durable="my-consumer-name")
+await self.event_bus.js_subscribe(subject, handler, durable="my-service-my-purpose")
 ```
 
+- `durable` is a required, caller-chosen name — see
+  [`docs/JETSTREAM-DURABLE-NAMING.md`](JETSTREAM-DURABLE-NAMING.md) for the
+  `<service>-<purpose>` naming convention and why it matters (two consumers
+  sharing a durable name silently share/steal each other's delivery cursor).
 - The consumer persists across broker restarts under `durable`.
 - Successful handler completion → automatic `msg.ack()`.
 - Validation failure → `msg.term()` (message terminated, not redelivered).
