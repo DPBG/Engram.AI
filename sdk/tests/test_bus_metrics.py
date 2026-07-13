@@ -87,6 +87,7 @@ class TestEventBusInstrumentation:
 
         bus._nc = MagicMock()
         bus._nc.is_connected = True
+        bus._nc.flush = AsyncMock()
         bus._connected.set()
 
         captured_cb = None
