@@ -97,6 +97,7 @@ class TestEventBusInstrumentation:
             return MagicMock()
 
         bus._nc.subscribe = AsyncMock(side_effect=capture_subscribe)
+        bus._nc.flush = AsyncMock()
         await bus.subscribe("observation.test", handler)
 
         msg = MagicMock()
