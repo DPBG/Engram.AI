@@ -8,6 +8,10 @@
   credentials, enforced allowlists, red-team test).
 - **Related:** Decision signing (Task 1.2, [#36](https://github.com/DPBG/Engram.AI/pull/36)),
   operator/dashboard publisher scope (Task 1.7).
+- **See also:** [GATE-THREAT-MODEL.md](../GATE-THREAT-MODEL.md) — consolidates
+  this ADR's transport-layer model with the application-layer decision/
+  operator-action signing into one threat model, with current implementation
+  state and residual risk (M1.19, issue [#212](https://github.com/DPBG/Engram.AI/issues/212)).
 
 ---
 

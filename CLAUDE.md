@@ -102,9 +102,16 @@ decision.**
    never degrade open.
 3. Changes here require maintainer review (see CONTRIBUTING.md).
 
-> **Known hardening work (tracked in [ROADMAP.md](ROADMAP.md) Phase 1):** the
-> decision bus is not yet authenticated/signed, and the sandbox is being made
-> fail-closed. Until that lands, do not build new autonomy on top of the gate.
+> **Full threat model:** [docs/GATE-THREAT-MODEL.md](docs/GATE-THREAT-MODEL.md)
+> consolidates the transport-layer (NATS subject authorization,
+> [ADR 0001](docs/adr/0001-nats-authz.md)) and application-layer (HMAC decision
+> and operator-action signing) defenses for this gate in one place, including
+> current implementation state and residual risk. Decision/operator-action
+> signing is implemented but **opt-in** — set `ENGRAM_DECISION_KEY` /
+> `ENGRAM_OPERATOR_KEY` to enforce it; unset, the gate falls back to unsigned
+> dev mode with a one-time warning. Until every deployment sets both keys and
+> the sandbox is fully fail-closed, do not build new autonomy on top of the
+> gate.
 
 ---
 
