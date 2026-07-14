@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
@@ -111,7 +110,8 @@ async def test_route_to_poison_is_observable_via_dlq_monitor(
     import uuid
 
     subject = f"decision.{uuid.uuid4().hex}"
-    max_deliver = 2
+    # NATS requires max_deliver > len(backoff); mirrors test_poison_after_max_deliver.
+    max_deliver = 3
     attempts: list[int] = []
 
     async def handler(_data: dict) -> None:
