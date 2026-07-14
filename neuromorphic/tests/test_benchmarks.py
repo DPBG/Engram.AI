@@ -13,9 +13,9 @@ from neuromorphic.benchmarks import (
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
     NoveltyDetectionBenchmark,
-    _to_native,
-    _flatten_numeric,
     _confidence_interval,
+    _flatten_numeric,
+    _to_native,
     generate_test_patterns,
 )
 from neuromorphic.config import NeuromorphicConfig
@@ -286,9 +286,11 @@ class TestMultiSeed:
         path = suite.save_results(results, str(tmp_path))
         assert path.exists()
         import json
+
         data = json.loads(path.read_text())
         assert data["n_seeds"] == 2
         assert "aggregate" in data
+
     def test_run_all_includes_concept_separability(self, small_network):
         """run_all() always includes concept_separability key (error or scores)."""
         suite = BenchmarkSuite(small_network)

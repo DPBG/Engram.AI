@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy import stats
 
-
 from neuromorphic.binding_fixtures import generate_correlated_stimulus_fixtures
 from neuromorphic.cross_modal_probe import CrossModalProbe
 
@@ -79,6 +78,7 @@ def _to_native(obj: Any) -> Any:
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     return obj
+
 
 def _flatten_numeric(d: Any, prefix: str = "") -> dict[str, float]:
     """Recursively flatten a nested results dict to {"dotted.path": numeric_value}.
@@ -773,9 +773,15 @@ class BenchmarkSuite:
             }
         )
 
-    def run_multi_seed(self, n_seeds: int = 5, n_patterns: int = 20, training_reps: int = 10,
-                       steps_per_pattern: int = 20, base_seed: int = 42,
-                       confidence: float = 0.95) -> dict[str, Any]:
+    def run_multi_seed(
+        self,
+        n_seeds: int = 5,
+        n_patterns: int = 20,
+        training_reps: int = 10,
+        steps_per_pattern: int = 20,
+        base_seed: int = 42,
+        confidence: float = 0.95,
+    ) -> dict[str, Any]:
         """Run the full suite across n_seeds distinct seeds and aggregate per-metric stats.
 
         A single-seed score can't distinguish "the network learned this" from
@@ -806,15 +812,17 @@ class BenchmarkSuite:
                 "n": len(values),
             }
 
-        return _to_native({
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "n_seeds": n_seeds,
-            "seeds": seeds,
-            "confidence": confidence,
-            "elapsed_s": round(time.perf_counter() - t0, 2),
-            "aggregate": aggregate,
-            "runs": runs,
-        })
+        return _to_native(
+            {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "n_seeds": n_seeds,
+                "seeds": seeds,
+                "confidence": confidence,
+                "elapsed_s": round(time.perf_counter() - t0, 2),
+                "aggregate": aggregate,
+                "runs": runs,
+            }
+        )
 
     def save_results(self, results: dict[str, Any], output_dir: str) -> Path:
         out = Path(output_dir)
@@ -903,7 +911,8 @@ class BenchmarkSuite:
             "=== Engram Multi-Seed Benchmark Summary ===",
             f"Seeds: {results.get('n_seeds', '?')} {results.get('seeds', [])}  |  "
             f"Confidence: {results.get('confidence', 0.95):.0%}  |  "
-            f"Time: {results.get('elapsed_s', '?')}s", "",
+            f"Time: {results.get('elapsed_s', '?')}s",
+            "",
         ]
         headline_metrics = [
             "cross_modal_recall.visual_to_auditory_recall",
@@ -921,9 +930,14 @@ class BenchmarkSuite:
                 f"  {name}: {stat['mean']:.4f}  "
                 f"(95% CI: [{stat['ci_low']:.4f}, {stat['ci_high']:.4f}], n={stat['n']})"
             )
-        lines += ["", f"  {len(agg)} metrics tracked across seeds (full detail in saved JSON)",
-                  "", "=" * 45]
+        lines += [
+            "",
+            f"  {len(agg)} metrics tracked across seeds (full detail in saved JSON)",
+            "",
+            "=" * 45,
+        ]
         return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # CLI: python -m neuromorphic.benchmarks
@@ -937,13 +951,17 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
     parser.add_argument(
-        "--seeds", type=int, default=1,
+        "--seeds",
+        type=int,
+        default=1,
         help="Number of distinct seeds to run (default: 1). When > 1, runs the "
-             "suite once per seed and reports mean + confidence interval per "
-             "metric instead of a single-run summary.",
+        "suite once per seed and reports mean + confidence interval per "
+        "metric instead of a single-run summary.",
     )
     parser.add_argument(
-        "--confidence", type=float, default=0.95,
+        "--confidence",
+        type=float,
+        default=0.95,
         help="Confidence level for multi-seed intervals (default: 0.95)",
     )
     args = parser.parse_args()
@@ -974,8 +992,12 @@ def main() -> None:
     suite = BenchmarkSuite(network)
     if args.seeds > 1:
         results = suite.run_multi_seed(
-            args.seeds, args.patterns, args.reps, args.steps,
-            base_seed=args.seed, confidence=args.confidence,
+            args.seeds,
+            args.patterns,
+            args.reps,
+            args.steps,
+            base_seed=args.seed,
+            confidence=args.confidence,
         )
         path = suite.save_results(results, args.output)
         print(suite.summary_multi_seed(results))
