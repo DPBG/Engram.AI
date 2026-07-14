@@ -31,7 +31,9 @@ from activelearning.embeddings import (
 from activelearning.llm import LLMClient, LLMConfig, LLMError
 from activelearning.messages import (
     SUBJECT_SCHEMAS,
+    WIRE_SCHEMA_VERSION,
     MessageValidationError,
+    WireModel,
     schema_for_subject,
     validate_payload,
 )
@@ -123,4 +125,6 @@ __all__ = [
     "validate_payload",
     "schema_for_subject",
     "SUBJECT_SCHEMAS",
+    "WireModel",
+    "WIRE_SCHEMA_VERSION",
 ]

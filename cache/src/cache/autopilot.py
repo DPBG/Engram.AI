@@ -8,11 +8,15 @@ Autopilot mode:
 """
 
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from activelearning.nats_client import EventBus
 
 logger = logging.getLogger(__name__)
+
+
+class _LLMClient(Protocol):
+    async def generate(self, prompt: str, *, model: str | None = None) -> str: ...
 
 
 class AutopilotController:
@@ -23,9 +27,10 @@ class AutopilotController:
     minimizes live LLM calls.
     """
 
-    def __init__(self, event_bus: EventBus, llm_cache: Any):
+    def __init__(self, event_bus: EventBus, llm_cache: Any, llm_client: _LLMClient | None = None):
         self.event_bus = event_bus
         self.llm_cache = llm_cache
+        self._llm_client = llm_client
 
         self._enabled = False
         self._confidence_threshold = 0.9  # Only use cache if very confident
@@ -84,9 +89,7 @@ class AutopilotController:
         # Publish cache miss event
         await self._publish_cache_event("miss", prompt, 0.0)
 
-        # TODO: Make actual LLM call (integrate with Meta-Programmer's Ollama client)
-        # For now, return placeholder
-        response = "Live LLM response (not implemented)"
+        response = await self._call_live_llm(prompt, model)
 
         # Cache the response
         if self._enabled:
@@ -98,6 +101,15 @@ class AutopilotController:
             "confidence": 1.0,
             "cached_at": None,
         }
+
+    async def _call_live_llm(self, prompt: str, model: str) -> str:
+        """Invoke the configured LLM client for a cache miss."""
+        if self._llm_client is None:
+            from activelearning.llm import LLMClient, LLMConfig
+
+            client: _LLMClient = LLMClient(LLMConfig(model=model))
+            return await client.generate(prompt, model=model)
+        return await self._llm_client.generate(prompt, model=model)
 
     async def _publish_cache_event(
         self,

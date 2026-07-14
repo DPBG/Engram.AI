@@ -14,7 +14,24 @@ from activelearning import BaseService
 from activelearning.nats_client import serialize_message
 from activelearning.subjects import Subjects
 
-from beliefs.graph import BeliefEdge, BeliefGraph, BeliefNode, EdgeType, NodeType
+from beliefs.graph import (
+    BeliefEdge,
+    BeliefGraph,
+    BeliefNode,
+    EdgeType,
+    FloorRejectionEvent,
+    NodeType,
+)
+
+
+class BeliefStoreCorruptedError(RuntimeError):
+    """Raised when the belief store exists but cannot be read back correctly.
+
+    Distinct from "empty database, first boot" (a successful ``fetchall()``
+    that returns zero rows) — this means the read itself failed or produced
+    unreadable data, which must fail closed (CLAUDE.md §3) rather than be
+    treated as a fresh boot and silently reseeded from hardcoded defaults.
+    """
 
 
 class BeliefsService(BaseService):
@@ -28,15 +45,22 @@ class BeliefsService(BaseService):
     def __init__(self):
         super().__init__("beliefs", use_database=True, use_event_bus=True)
         self._graph = BeliefGraph()
+        # Set when _load_from_db detects the store is present but corrupted
+        # (as opposed to legitimately empty). Gates _cleanup() so a failed
+        # boot doesn't also wipe the corrupted store on the way down — see
+        # _cleanup()'s docstring.
+        self._store_corrupted = False
 
     async def _setup(self) -> None:
         """Service-specific setup."""
         # Load existing beliefs from database
         await self._load_from_db()
+        await self._persist_floor_rejections(self._graph.drain_floor_rejections())
 
         # Seed constitutional beliefs (values + norms) on first boot.
         # Idempotent — skips if values already exist from DB load.
         self._graph.seed_constitutional_beliefs()
+        await self._persist_floor_rejections(self._graph.drain_floor_rejections())
 
         # Subscribe to belief events using EventBus
         await self.event_bus.subscribe(Subjects.BELIEFS_ADD_NODE, self._handle_add_node)
@@ -52,12 +76,41 @@ class BeliefsService(BaseService):
         )
 
     async def _cleanup(self) -> None:
-        """Service-specific cleanup."""
+        """Service-specific cleanup.
+
+        Skips the save when _load_from_db detected a corrupted store:
+        run() calls stop()/_cleanup() in a finally block even when _setup()
+        raised, and _save_to_db() unconditionally does DELETE FROM
+        belief_edges/belief_nodes before re-inserting — saving the
+        (empty or partially-loaded) in-memory graph at that point would
+        destroy whatever was still recoverable in the corrupted store on
+        the way down, on top of the boot failure itself.
+        """
+        if self._store_corrupted:
+            self.logger.error(
+                "Skipping save-to-db on shutdown: the belief store was "
+                "corrupted at boot — saving now would overwrite it with an "
+                "incomplete in-memory graph instead of leaving it for "
+                "manual recovery."
+            )
+            return
         # Save to database before shutdown
         await self._save_to_db()
 
     async def _load_from_db(self) -> None:
-        """Load beliefs from SQLite."""
+        """Load beliefs from SQLite.
+
+        A legitimately empty database (first boot) is a *successful*
+        fetchall() that returns zero rows — it never reaches the except
+        below. Anything that raises here means the store is present but
+        unreadable/corrupted (e.g. "database disk image is malformed", or a
+        row containing data that fails to parse), which is a fail-closed
+        case per CLAUDE.md §3 ("if a check cannot run, deny/halt — never
+        degrade open"): re-raised as BeliefStoreCorruptedError so the
+        caller (_setup) aborts before seed_constitutional_beliefs(), instead
+        of silently treating corruption as a fresh boot and reseeding
+        constitutional VALUEs from hardcoded defaults.
+        """
         try:
             # Load nodes
             rows = await self.database.fetchall(
@@ -101,7 +154,12 @@ class BeliefsService(BaseService):
                 f"Loaded {self._graph.node_count} nodes and {self._graph.edge_count} edges from database"
             )
         except Exception as e:
-            self.logger.warning(f"Could not load beliefs from database: {e}")
+            self._store_corrupted = True
+            self.logger.error(
+                f"Belief store present but unreadable/corrupted — failing "
+                f"closed rather than treating this as first boot: {e}"
+            )
+            raise BeliefStoreCorruptedError(f"Beliefs database unreadable/corrupted: {e}") from e
 
     async def _save_to_db(self) -> None:
         """Save beliefs to SQLite."""
@@ -162,6 +220,7 @@ class BeliefsService(BaseService):
                 metadata=data.get("metadata", {}),
             )
             self._graph.add_node(node)
+            await self._persist_floor_rejections(self._graph.drain_floor_rejections())
         except Exception as e:
             self.logger.error(f"Error adding node: {e}")
 
@@ -189,6 +248,7 @@ class BeliefsService(BaseService):
                 supports=data.get("supports", True),
                 source=data.get("source", "unknown"),
             )
+            await self._persist_floor_rejections(self._graph.drain_floor_rejections())
         except Exception as e:
             self.logger.error(f"Error updating belief: {e}")
 
@@ -250,6 +310,19 @@ class BeliefsService(BaseService):
                 result = [asdict(n) for n in norms if n.confidence >= threshold]
             elif query_type == "export":
                 result = self._graph.export_to_dict()
+            elif query_type == "floor_rejections":
+                limit = min(int(data.get("limit", 100)), 500)
+                rows = await self.database.fetchall(
+                    "SELECT id, timestamp, details FROM audit_entries "
+                    "WHERE component = 'beliefs' AND action = 'floor_rejection' "
+                    "ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                result = []
+                for row in rows:
+                    entry: dict = {"id": row["id"], "timestamp": row["timestamp"]}
+                    entry.update(json.loads(row["details"] or "{}"))
+                    result.append(entry)
 
             response = {"result": result, "query_type": query_type}
 
@@ -263,6 +336,46 @@ class BeliefsService(BaseService):
             self.logger.error(f"Error handling query request: {e}")
             if msg and msg.reply:
                 await msg.respond(serialize_message({"result": None, "error": str(e)}))
+
+    async def _persist_floor_rejections(self, events: list[FloorRejectionEvent]) -> None:
+        """Persist floor-rejection events to the audit_entries table.
+
+        Each event records an attempt to lower a constitutional VALUE's
+        confidence floor that was silently clamped. Persisting these turns
+        an invisible rejection into a queryable, durable security signal.
+        """
+        for event in events:
+            try:
+                await self.database.insert(
+                    "audit_entries",
+                    {
+                        "id": event.id,
+                        "trace_id": event.node_id,
+                        "timestamp": event.rejected_at,
+                        "component": "beliefs",
+                        "action": "floor_rejection",
+                        "details": json.dumps(
+                            {
+                                "node_id": event.node_id,
+                                "attempted_confidence": event.attempted_confidence,
+                                "enforced_confidence": event.enforced_confidence,
+                                "path": event.path,
+                                "source": event.source,
+                            }
+                        ),
+                    },
+                )
+                self.logger.warning(
+                    "Floor rejection audited: node=%s path=%s attempted=%.3f source=%s",
+                    event.node_id,
+                    event.path,
+                    event.attempted_confidence,
+                    event.source,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to persist floor rejection for %s: %s", event.node_id, exc
+                )
 
 
 async def main() -> None:

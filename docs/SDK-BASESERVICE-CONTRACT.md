@@ -201,6 +201,10 @@ handler is invoked:
 - Decision subjects (`decision.*`, `code.decision.*`) are matched by prefix.
 - **Unknown subjects pass through unvalidated** — extra fields in known models are
   preserved (`extra="allow"`).
+- Every payload carries a `version` field (the wire-schema major version). A message
+  that omits `version` is normalized to `WIRE_SCHEMA_VERSION`. See
+  [`docs/MESSAGE-SCHEMA-VERSIONING.md`](MESSAGE-SCHEMA-VERSIONING.md) for the
+  compatibility policy that governs when the version is bumped.
 
 On validation failure:
 
@@ -256,7 +260,10 @@ decision = await self.event_bus.wait_for_decision(trace_id, timeout=30.0)
 - Consumers auto-expire after 60 s of inactivity.
 - Signature verification: if `ENGRAM_DECISION_KEY` is set, unsigned or tampered
   decisions are **rejected** (logged as forgery attempts); the wait continues until
-  a valid decision arrives or timeout fires.
+  a valid decision arrives or timeout fires. A decision signed with
+  `ENGRAM_DECISION_KEY_SECONDARY`, if configured, is also accepted — see
+  [`docs/DECISION-KEY-ROTATION.md`](DECISION-KEY-ROTATION.md) for the key-rotation
+  procedure this enables.
 - On timeout: `asyncio.TimeoutError` is raised — the caller **MUST fail closed**
   (deny / halt, never default-allow).
 
@@ -324,6 +331,7 @@ All configuration is loaded from environment variables by `ServiceConfig.from_en
 | `TASKS_ROOT` | `/data/tasks` | Filesystem path for task artefacts |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 | `ENGRAM_DECISION_KEY` | *(unset)* | HMAC signing secret. **Unset = signing disabled (dev mode).** |
+| `ENGRAM_DECISION_KEY_SECONDARY` | *(unset)* | Verify-only second signing key, accepted alongside `ENGRAM_DECISION_KEY`. Used only during key rotation — see [`docs/DECISION-KEY-ROTATION.md`](DECISION-KEY-ROTATION.md). |
 
 ---
 

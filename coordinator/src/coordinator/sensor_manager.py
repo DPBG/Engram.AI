@@ -13,6 +13,20 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+def _looks_like_nmea_sentence(line: str) -> bool:
+    """Return True when a line looks like a valid NMEA 0183 sentence."""
+    line = line.strip()
+    if not line.startswith("$") or len(line) < 7:
+        return False
+    if line.count(",") < 1:
+        return False
+    talker = line[1:3]
+    sentence_type = line[3:6]
+    if not talker.isalpha() or not sentence_type.isalpha():
+        return False
+    return sentence_type in ("GGA", "RMC", "GLL", "VTG", "GSA")
+
+
 def _looks_like_imu_reading(raw: dict) -> bool:
     """Return True when a parsed JSON dict contains a full accelerometer triplet."""
     if not isinstance(raw, dict):
@@ -111,7 +125,10 @@ class SensorManager:
         if detected:
             logger.info("✓ IMU detected")
 
-        # TODO: Add detection for other sensor types
+        # Try to detect GPS
+        detected = await self._detect_gps()
+        if detected:
+            logger.info("✓ GPS detected")
 
         logger.info(f"Total sensors detected: {len(self._sensors)}")
 
@@ -189,6 +206,56 @@ class SensorManager:
             logger.debug(f"IMU detection failed: {e}")
 
         return detected_any
+
+    async def _detect_gps(self) -> bool:
+        """Detect USB serial GPS receivers emitting NMEA sentences."""
+        try:
+            import serial  # noqa: F401 — optional dependency
+            from serial.tools import list_ports
+        except ImportError:
+            logger.debug("pyserial not available; skipping GPS detection")
+            return False
+
+        loop = asyncio.get_running_loop()
+        detected_any = False
+        try:
+            for port_info in list_ports.comports():
+                port = port_info.device
+                if not await loop.run_in_executor(None, self._probe_gps_port_sync, port):
+                    continue
+                port_name = port.rsplit("/", 1)[-1]
+                sensor_id = f"gps_{port_name}"
+                self._sensors[sensor_id] = SensorInfo(
+                    sensor_id=sensor_id,
+                    sensor_type=SensorType.GPS,
+                    priority=self.SENSOR_PRIORITIES[SensorType.GPS],
+                    capabilities=["position", "nmea", "serial"],
+                )
+                detected_any = True
+        except Exception as e:
+            logger.debug(f"GPS detection failed: {e}")
+
+        return detected_any
+
+    @staticmethod
+    def _probe_gps_port_sync(port: str, baud_rate: int = 9600) -> bool:
+        """Open a serial port and look for one valid NMEA sentence."""
+        try:
+            import serial
+
+            ser = serial.Serial(port, baud_rate, timeout=0.5)
+            try:
+                for _ in range(5):
+                    line = ser.readline().decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    if _looks_like_nmea_sentence(line):
+                        return True
+            finally:
+                ser.close()
+        except Exception:
+            return False
+        return False
 
     @staticmethod
     def _probe_imu_port_sync(port: str, baud_rate: int = 115200) -> bool:

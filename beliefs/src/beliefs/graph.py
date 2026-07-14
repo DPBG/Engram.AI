@@ -7,6 +7,7 @@ confidence updates, contradiction detection, and belief propagation.
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -83,6 +84,25 @@ class BeliefUpdate:
 
 
 @dataclass
+class FloorRejectionEvent:
+    """Audit record for a rejected attempt to lower a VALUE's confidence floor.
+
+    Every enforcement site that clamps a VALUE back to ``VALUE_CONFIDENCE_FLOOR``
+    appends one of these so the security signal is never silently discarded
+    (CLAUDE.md §3, issue #191). Call ``drain_floor_rejections()`` to retrieve
+    and clear the pending list for durable persistence.
+    """
+
+    id: str
+    node_id: str
+    attempted_confidence: float
+    enforced_confidence: float
+    path: str  # "add_node" | "update_belief" | "import_from_dict"
+    source: str
+    rejected_at: int  # epoch milliseconds
+
+
+@dataclass
 class Contradiction:
     """A detected contradiction between beliefs."""
 
@@ -107,6 +127,7 @@ class BeliefGraph:
     def __init__(self):
         self._graph = nx.DiGraph()
         self._update_history: list[BeliefUpdate] = []
+        self._floor_rejections: list[FloorRejectionEvent] = []
         self._constitutional_seeded: bool = False
 
     def add_node(self, node: BeliefNode) -> str:
@@ -133,6 +154,17 @@ class BeliefGraph:
                 node.id,
                 confidence,
                 VALUE_CONFIDENCE_FLOOR,
+            )
+            self._floor_rejections.append(
+                FloorRejectionEvent(
+                    id=str(uuid.uuid4()),
+                    node_id=node.id,
+                    attempted_confidence=confidence,
+                    enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                    path="add_node",
+                    source=node.source,
+                    rejected_at=int(time.time() * 1000),
+                )
             )
             confidence = VALUE_CONFIDENCE_FLOOR
 
@@ -240,6 +272,18 @@ class BeliefGraph:
         # This is the constitutional constraint: the brain can learn facts
         # and norms, but cannot learn to override core values.
         if node_data.get("type") == NodeType.VALUE.value:
+            if new_confidence < VALUE_CONFIDENCE_FLOOR:
+                self._floor_rejections.append(
+                    FloorRejectionEvent(
+                        id=str(uuid.uuid4()),
+                        node_id=node_id,
+                        attempted_confidence=new_confidence,
+                        enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                        path="update_belief",
+                        source=source,
+                        rejected_at=int(time.time() * 1000),
+                    )
+                )
             new_confidence = max(new_confidence, VALUE_CONFIDENCE_FLOOR)
 
         # Update node
@@ -381,7 +425,20 @@ class BeliefGraph:
             # Enforce VALUE confidence floor on import — protects against
             # corrupted or tampered persistence data.
             if node.get("type") == NodeType.VALUE.value:
-                node["confidence"] = max(node.get("confidence", 1.0), VALUE_CONFIDENCE_FLOOR)
+                raw_conf = node.get("confidence", 1.0)
+                if raw_conf < VALUE_CONFIDENCE_FLOOR:
+                    self._floor_rejections.append(
+                        FloorRejectionEvent(
+                            id=str(uuid.uuid4()),
+                            node_id=node_id,
+                            attempted_confidence=raw_conf,
+                            enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                            path="import_from_dict",
+                            source="persistence_import",
+                            rejected_at=int(time.time() * 1000),
+                        )
+                    )
+                node["confidence"] = max(raw_conf, VALUE_CONFIDENCE_FLOOR)
             self._graph.add_node(node_id, **node)
 
         for edge in data.get("edges", []):
@@ -403,6 +460,16 @@ class BeliefGraph:
     def update_history(self) -> list[BeliefUpdate]:
         """Get the history of belief updates."""
         return self._update_history.copy()
+
+    def drain_floor_rejections(self) -> list[FloorRejectionEvent]:
+        """Return and clear all pending floor-rejection audit events.
+
+        The service calls this after each mutating operation to persist the
+        events to the ``audit_entries`` table (SQLite) for durable queryability.
+        The list is cleared atomically so events are never double-reported.
+        """
+        events, self._floor_rejections = self._floor_rejections, []
+        return events
 
     def seed_constitutional_beliefs(self) -> None:
         """Seed the graph with constitutional values and norms.

@@ -93,6 +93,14 @@ class DashboardState:
         self.watchdog_status: dict[str, Any] = {}
         self.service_status: dict[str, dict] = {}
         self.concept_probe_results: list[dict] = []
+        self.bus_metrics_by_service: dict[str, dict] = {}
+
+    def bus_metrics_list(self, *, include_dashboard: dict | None = None) -> list[dict]:
+        """Sorted per-service EventBus metric snapshots for the UI."""
+        merged = dict(self.bus_metrics_by_service)
+        if include_dashboard is not None:
+            merged["dashboard"] = include_dashboard
+        return sorted(merged.values(), key=lambda row: row.get("service", ""))
 
     # ── chat history ──────────────────────────────────────────────────────
     def append_chat(self, role: str, content: str) -> None:

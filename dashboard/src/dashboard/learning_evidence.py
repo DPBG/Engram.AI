@@ -55,14 +55,27 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+_BENCHMARK_FILENAME = re.compile(r"^benchmarks?_\d{8}_\d{6}\.json$", re.IGNORECASE)
+
+
+def is_benchmark_result_file(filename: str) -> bool:
+    """True for benchmark run JSON, excluding CI baselines and other artifacts."""
+    return bool(_BENCHMARK_FILENAME.match(filename))
+
+
 def extract_learning_metrics(raw: dict[str, Any]) -> dict[str, float | int | None]:
     """Pull normalized learning-evidence scalars from one benchmark JSON blob."""
     assoc = raw.get("association_strength") or {}
     binding_acc = raw.get("cross_modal_binding_accuracy") or {}
     cm_recall = raw.get("cross_modal_recall") or {}
     learning = raw.get("learning") or {}
+    concept_sep_block = raw.get("concept_separability") or {}
 
-    concept_sep = assoc.get("concept_count")
+    concept_sep = _safe_float(concept_sep_block.get("silhouette_score"))
+    if concept_sep is None:
+        concept_sep = _safe_float(concept_sep_block.get("linear_probe_accuracy"))
+    if concept_sep is None:
+        concept_sep = assoc.get("concept_count")
     if concept_sep is None:
         concept_sep = learning.get("concept_count")
 
@@ -86,6 +99,7 @@ def extract_learning_metrics(raw: dict[str, Any]) -> dict[str, float | int | Non
         "binding_accuracy": _safe_float(binding_f1),
         "binding_precision": _safe_float(binding_acc.get("precision")),
         "binding_recall": _safe_float(binding_acc.get("recall")),
+        "binding_matched_decoy_ratio": _safe_float(binding_acc.get("matched_to_decoy_ratio")),
         "step_count": raw.get("step_count") or raw.get("final_state", {}).get("step_count"),
         "total_neurons": raw.get("total_neurons") or raw.get("config", {}).get("total_neurons"),
     }
@@ -108,6 +122,8 @@ def load_benchmark_files(
             continue
         scanned_dirs.append(str(directory))
         for path in sorted(directory.glob("*.json")):
+            if not is_benchmark_result_file(path.name):
+                continue
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):

@@ -20,12 +20,16 @@ from dashboard.state import DashboardState
 from dashboard.system import get_live_metrics
 from dashboard.util import now_iso
 
+if False:  # TYPE_CHECKING
+    from dashboard.nats_stream import NatsStreamManager
+
 
 class MetricsMonitor:
     """Background health/metrics loops and the cached Docker-stats fetch."""
 
-    def __init__(self, state: DashboardState):
+    def __init__(self, state: DashboardState, nats: "NatsStreamManager | None" = None):
         self._state = state
+        self._nats = nats
         self.logger = logging.getLogger("dashboard.metrics")
 
     async def _broadcast(self, message: dict) -> None:
@@ -168,11 +172,18 @@ class MetricsMonitor:
                     t0 = time.time()
                     live = get_live_metrics()
                     docker = await self.fetch_docker()
+                    if self._nats is not None:
+                        await self._nats.publish_dashboard_metrics()
+                    bus = self._state.bus_metrics_list(
+                        include_dashboard=(
+                            self._nats.local_bus_metrics_snapshot() if self._nats else None
+                        ),
+                    )
                     self._state.skills.record_call("env.monitor", (time.time() - t0) * 1000)
                     await self._broadcast(
                         {
                             "type": "metrics_update",
-                            "data": {"live": live, "docker": docker},
+                            "data": {"live": live, "docker": docker, "bus": bus},
                         }
                     )
             except asyncio.CancelledError:
