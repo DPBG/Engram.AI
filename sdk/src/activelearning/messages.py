@@ -13,11 +13,28 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from activelearning.subjects import Subjects
 
+# Current wire-schema major version stamped onto every outbound payload.
+#
+# Bump this ONLY for a *breaking* change to a wire model (removing/renaming a
+# required field, changing a field's type or semantics). Additive changes
+# (new optional fields) are backward compatible and MUST NOT bump it.
+# See docs/MESSAGE-SCHEMA-VERSIONING.md for the full compatibility policy.
+WIRE_SCHEMA_VERSION = 1
+
 
 class WireModel(BaseModel):
-    """Base wire model — allows forward-compatible extra fields."""
+    """Base wire model — allows forward-compatible extra fields.
+
+    Every payload carries a ``version`` field identifying the wire-schema major
+    version it was produced against. A message that omits ``version`` (a legacy,
+    pre-versioning sender) is normalized to ``WIRE_SCHEMA_VERSION`` so downstream
+    code always sees an explicit version. Consumers can compare ``version``
+    against the versions they understand and reject or adapt accordingly.
+    """
 
     model_config = ConfigDict(extra="allow")
+
+    version: int = WIRE_SCHEMA_VERSION
 
 
 # --- Governance / kernel ---
@@ -68,9 +85,17 @@ class SafetyHaltMessage(WireModel):
 
 
 class OperatorActionMessage(WireModel):
-    """Operator-initiated action with optional identity (``safety.resume``)."""
+    """Operator-initiated action with identity and replay-protection (``safety.resume``).
+
+    ``timestamp`` is the sender's epoch-millisecond clock at message creation.
+    ``_op_sig`` (carried as an extra field) is the HMAC-SHA256 signature over
+    ``operator_id``, ``action``, and ``timestamp``; see ``signing.verify_operator_action``.
+    A default timestamp of 0 ensures unsigned legacy messages fail the
+    tolerance check when ``ENGRAM_OPERATOR_KEY`` is set (fail-closed).
+    """
 
     operator_id: str = "unknown"
+    timestamp: int = 0
 
 
 # --- Safety analysis ---
@@ -208,11 +233,31 @@ class ObservationMessage(WireModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class CognitiveQueryMessage(WireModel):
+    """Brain cognitive query (``cognitive.execute`` / ``cognitive.query``)."""
+
+    step: int = 0
+    prediction_error: float = 0.0
+    drives: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str = ""
+
+
+class CognitiveResponseValidateMessage(WireModel):
+    """LLM response submitted to Kernel validation gate."""
+
+    response_text: str
+    trace_id: str = ""
+    query_step: int = 0
+    prediction_error: float = 0.0
+    model: str = ""
+
+
 # Registry: subscription pattern -> wire model
 SUBJECT_SCHEMAS: dict[str, type[WireModel]] = {
     Subjects.PROPOSAL_NEW: ActionProposalMessage,
     Subjects.CODE_PROPOSAL: CodeProposalMessage,
     Subjects.POLICY_RESTRICT: PolicyRestrictMessage,
+    Subjects.POLICY_RESTRICT_REQUEST: PolicyRestrictMessage,
     Subjects.SAFETY_HALT: SafetyHaltMessage,
     Subjects.SAFETY_RESUME: OperatorActionMessage,
     Subjects.SAFETY_ANALYZE_ACTION: SafetyAnalyzeMessage,
@@ -230,6 +275,9 @@ SUBJECT_SCHEMAS: dict[str, type[WireModel]] = {
     Subjects.PLANNER_MODE: PlannerModeMessage,
     Subjects.SYSTEM_SHUTDOWN: SystemShutdownMessage,
     Subjects.OBSERVATION: ObservationMessage,
+    Subjects.COGNITIVE_EXECUTE: CognitiveQueryMessage,
+    Subjects.COGNITIVE_QUERY: CognitiveQueryMessage,
+    Subjects.COGNITIVE_RESPONSE_VALIDATE: CognitiveResponseValidateMessage,
 }
 
 

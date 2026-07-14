@@ -5,10 +5,8 @@ Uses camera (face detection + liveness) and microphone (voice activity)
 to verify that a real human is present and issuing the override.
 """
 
-import logging
-import time
-from typing import Optional
 import asyncio
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +33,7 @@ class HumanVerifier:
         # Try camera
         try:
             import cv2
+
             self._camera = cv2.VideoCapture(0)
             if self._camera.isOpened():
                 self._camera_available = True
@@ -49,6 +48,7 @@ class HumanVerifier:
         # Try microphone
         try:
             import pyaudio
+
             self._audio = pyaudio.PyAudio()
             # Check if any input devices are available
             if self._audio.get_device_count() > 0:
@@ -75,7 +75,9 @@ class HumanVerifier:
                 - method: str indicating which method was used
                 - error: optional error message
         """
-        if not any([self._camera_available, self._microphone_available, self._physical_button_available]):
+        if not any(
+            [self._camera_available, self._microphone_available, self._physical_button_available]
+        ):
             logger.error("No verification methods available")
             return {
                 "verified": False,
@@ -87,7 +89,10 @@ class HumanVerifier:
         # Try camera-based verification first (strongest signal)
         if self._camera_available:
             camera_result = await self._verify_camera()
-            if camera_result["verified"] and camera_result["confidence"] >= self.confidence_threshold:
+            if (
+                camera_result["verified"]
+                and camera_result["confidence"] >= self.confidence_threshold
+            ):
                 return camera_result
 
         # Try microphone-based verification
@@ -121,7 +126,9 @@ class HumanVerifier:
             import numpy as np
 
             # Load face detector
-            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
 
             # Capture multiple frames for liveness check
             frames = []
@@ -160,7 +167,7 @@ class HumanVerifier:
             # Simple liveness check: detect movement between frames
             movement_scores = []
             for i in range(1, len(frames)):
-                diff = cv2.absdiff(frames[i-1], frames[i])
+                diff = cv2.absdiff(frames[i - 1], frames[i])
                 movement = np.mean(diff)
                 movement_scores.append(movement)
 
@@ -174,7 +181,11 @@ class HumanVerifier:
                 "verified": final_confidence >= self.confidence_threshold,
                 "confidence": final_confidence,
                 "method": "camera",
-                "error": None if final_confidence >= self.confidence_threshold else "Liveness check failed",
+                "error": (
+                    None
+                    if final_confidence >= self.confidence_threshold
+                    else "Liveness check failed"
+                ),
             }
 
         except Exception as e:
@@ -193,14 +204,14 @@ class HumanVerifier:
         Uses voice activity detection to confirm human speech.
         """
         try:
-            import pyaudio
             import numpy as np
+            import pyaudio
 
-            CHUNK = 1024
-            FORMAT = pyaudio.paInt16
-            CHANNELS = 1
-            RATE = 16000
-            RECORD_SECONDS = 2
+            CHUNK = 1024  # noqa: N806
+            FORMAT = pyaudio.paInt16  # noqa: N806
+            CHANNELS = 1  # noqa: N806
+            RATE = 16000  # noqa: N806
+            RECORD_SECONDS = 2  # noqa: N806
 
             stream = self._audio.open(
                 format=FORMAT,
@@ -222,7 +233,7 @@ class HumanVerifier:
             stream.close()
 
             # Convert to numpy array
-            audio_data = np.frombuffer(b''.join(frames), dtype=np.int16)
+            audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
 
             # Simple voice activity detection based on energy
             energy = np.abs(audio_data).mean()
@@ -268,7 +279,7 @@ class HumanVerifier:
 
     def __del__(self):
         """Cleanup resources."""
-        if hasattr(self, '_camera') and self._camera_available:
+        if hasattr(self, "_camera") and self._camera_available:
             self._camera.release()
-        if hasattr(self, '_audio') and self._microphone_available:
+        if hasattr(self, "_audio") and self._microphone_available:
             self._audio.terminate()

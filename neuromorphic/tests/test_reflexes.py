@@ -1,11 +1,10 @@
 """Tests for hardwired reflex arc responses."""
 
-import numpy as np
 import pytest
 
 from neuromorphic.config import NeuromorphicConfig
-from neuromorphic.regions import ReflexArc
 from neuromorphic.reflexes import ReflexManager, ReflexResponse
+from neuromorphic.regions import ReflexArc
 
 
 @pytest.fixture

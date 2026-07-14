@@ -644,6 +644,14 @@ html, body {
 
 /* ─── Container List ────────────────────────────────────────────── */
 .container-list { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+.bus-metrics-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+.bus-item {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 7px; background: var(--bg-3); border-radius: var(--radius-sm); font-size: 10px;
+}
+.bus-name { font-weight: 600; color: var(--green, #6fcf97); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bus-row { display: flex; justify-content: space-between; color: var(--text-2); }
+.bus-row .val { color: var(--text-1); font-weight: 500; }
 .ctn-item {
     display: flex; flex-direction: column; gap: 2px;
     padding: 6px 7px; background: var(--bg-3); border-radius: var(--radius-sm); font-size: 10px;
@@ -823,6 +831,25 @@ html, body {
 }
 .btn-resume:hover:not(:disabled) { background: #28a745; color: #fff; }
 .btn-resume:disabled { border-color: #6c757d; color: #6c757d; cursor: not-allowed; opacity: 0.5; }
+
+/* ─── Learning Evidence panel ───────────────────────────────────── */
+.le-summary { margin-bottom: 10px; }
+.le-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.le-stat {
+    background: var(--bg-3); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 6px 8px; text-align: center;
+}
+.le-stat-label { display: block; font-size: 9px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.3px; }
+.le-stat-val { display: block; font-size: 14px; font-weight: 700; color: var(--cyan); font-family: 'SF Mono', Monaco, monospace; margin-top: 2px; }
+.le-chart-block { margin-bottom: 8px; }
+.le-chart-label { font-size: 9px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 4px; }
+.le-chart {
+    width: 100%; height: 72px; display: block;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg-2);
+}
+.le-meta { font-size: 10px; color: var(--text-3); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.le-empty { font-size: 11px; color: var(--text-3); line-height: 1.4; }
 
 /* ─── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 1200px) { .sidebar-right { display: none; } }

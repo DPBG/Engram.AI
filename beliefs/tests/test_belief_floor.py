@@ -12,11 +12,40 @@ This is the canonical regression for the floor invariant.
 
 import os
 import sys
+import types
 
 # beliefs/src on path so `import beliefs.*` resolves without installing.
 _SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
+
+# Stub `activelearning` so that beliefs/__init__.py (which re-exports BeliefsService)
+# doesn't fail when the SDK is not installed in this environment.
+if "activelearning" not in sys.modules:
+    _al = types.ModuleType("activelearning")
+
+    class _BaseService:  # minimal stand-in
+        pass
+
+    _al.BaseService = _BaseService  # type: ignore[attr-defined]
+    sys.modules["activelearning"] = _al
+
+    _al_subj = types.ModuleType("activelearning.subjects")
+
+    class _Subjects:
+        BELIEFS_ADD_NODE = "beliefs.add_node"
+        BELIEFS_ADD_EDGE = "beliefs.add_edge"
+        BELIEFS_UPDATE = "beliefs.update"
+        BELIEFS_QUERY = "beliefs.query"
+        BELIEFS_CONTRADICTIONS = "beliefs.contradictions"
+        BELIEFS_QUERY_REQUEST = "beliefs.query.request"
+
+    _al_subj.Subjects = _Subjects  # type: ignore[attr-defined]
+    sys.modules["activelearning.subjects"] = _al_subj
+
+    _al_nats = types.ModuleType("activelearning.nats_client")
+    _al_nats.serialize_message = lambda m: m  # type: ignore[attr-defined]
+    sys.modules["activelearning.nats_client"] = _al_nats
 
 from beliefs.graph import (  # noqa: E402
     VALUE_CONFIDENCE_FLOOR,
@@ -24,6 +53,7 @@ from beliefs.graph import (  # noqa: E402
     BeliefGraph,
     BeliefNode,
     EdgeType,
+    FloorRejectionEvent,
     NodeType,
 )
 
@@ -49,8 +79,11 @@ def test_readd_cannot_lower_existing_value():
     g = _seeded()
     before = g.get_node("value.human_safety").confidence
     assert before >= VALUE_CONFIDENCE_FLOOR
-    g.add_node(BeliefNode(id="value.human_safety", type=NodeType.VALUE,
-                          content="hijacked", confidence=0.01))
+    g.add_node(
+        BeliefNode(
+            id="value.human_safety", type=NodeType.VALUE, content="hijacked", confidence=0.01
+        )
+    )
     assert g.get_node("value.human_safety").confidence >= VALUE_CONFIDENCE_FLOOR
 
 
@@ -106,10 +139,16 @@ def test_floor_survives_db_load_path_with_tampering():
     g2 = BeliefGraph()
     for node in data["nodes"]:
         conf = 0.0 if node["type"] == NodeType.VALUE.value else node["confidence"]
-        g2.add_node(BeliefNode(
-            id=node["id"], type=NodeType(node["type"]), content=node["content"],
-            confidence=conf, source=node["source"], metadata=node.get("metadata", {}),
-        ))
+        g2.add_node(
+            BeliefNode(
+                id=node["id"],
+                type=NodeType(node["type"]),
+                content=node["content"],
+                confidence=conf,
+                source=node["source"],
+                metadata=node.get("metadata", {}),
+            )
+        )
     for v in g2.get_beliefs_by_type(NodeType.VALUE):
         assert v.confidence >= VALUE_CONFIDENCE_FLOOR
 
@@ -119,9 +158,18 @@ def test_floor_survives_db_load_path_with_tampering():
 
 def _add_conflicting(g: BeliefGraph, conf_a=0.9, conf_b=0.9, strength=0.9):
     g.add_node(BeliefNode(id="fact.a", type=NodeType.FACT, content="A is safe", confidence=conf_a))
-    g.add_node(BeliefNode(id="fact.b", type=NodeType.FACT, content="A is unsafe", confidence=conf_b))
-    g.add_edge(BeliefEdge(id="e.ab", type=EdgeType.CONTRADICTS,
-                          source_id="fact.a", target_id="fact.b", strength=strength))
+    g.add_node(
+        BeliefNode(id="fact.b", type=NodeType.FACT, content="A is unsafe", confidence=conf_b)
+    )
+    g.add_edge(
+        BeliefEdge(
+            id="e.ab",
+            type=EdgeType.CONTRADICTS,
+            source_id="fact.a",
+            target_id="fact.b",
+            strength=strength,
+        )
+    )
 
 
 def test_find_contradictions_flags_conflict():
@@ -154,3 +202,87 @@ def test_seeded_values_and_norms_present():
     assert len(values) == 4
     assert {v.id for v in values} >= {"value.human_safety", "value.operator_obey"}
     assert {n.id for n in norms} >= {"norm.force_limit", "norm.gradual_motor"}
+
+
+# ── audit trail: floor-rejection events (issue #191) ─────────────────────────
+
+
+def test_add_node_below_floor_records_rejection():
+    g = BeliefGraph()
+    g.add_node(
+        BeliefNode(
+            id="value.x", type=NodeType.VALUE, content="x", confidence=0.1, source="attacker"
+        )
+    )
+    events = g.drain_floor_rejections()
+    assert len(events) == 1
+    ev = events[0]
+    assert isinstance(ev, FloorRejectionEvent)
+    assert ev.node_id == "value.x"
+    assert ev.attempted_confidence == 0.1
+    assert ev.enforced_confidence == VALUE_CONFIDENCE_FLOOR
+    assert ev.path == "add_node"
+    assert ev.source == "attacker"
+    assert ev.rejected_at > 0
+
+
+def test_update_belief_contradiction_records_rejection():
+    g = _seeded()
+    # Drain any events from seeding (none expected, but keep list clean)
+    g.drain_floor_rejections()
+    # Apply enough contradicting evidence to push below the floor.
+    for _ in range(10):
+        g.update_belief(
+            "value.human_safety", evidence_strength=1.0, supports=False, source="bad_agent"
+        )
+    events = g.drain_floor_rejections()
+    assert len(events) >= 1
+    assert all(ev.path == "update_belief" for ev in events)
+    assert all(ev.node_id == "value.human_safety" for ev in events)
+    assert all(ev.source == "bad_agent" for ev in events)
+    assert all(ev.attempted_confidence < VALUE_CONFIDENCE_FLOOR for ev in events)
+
+
+def test_import_from_dict_tampered_records_rejection():
+    g = _seeded()
+    data = g.export_to_dict()
+    # Tamper: drive every VALUE to zero confidence.
+    for node in data["nodes"]:
+        if node.get("type") == NodeType.VALUE.value:
+            node["confidence"] = 0.0
+    g2 = BeliefGraph()
+    g2.import_from_dict(data)
+    events = g2.drain_floor_rejections()
+    assert len(events) == 4  # 4 constitutional VALUES
+    assert all(ev.path == "import_from_dict" for ev in events)
+    assert all(ev.attempted_confidence == 0.0 for ev in events)
+    assert all(ev.source == "persistence_import" for ev in events)
+
+
+def test_no_rejection_for_above_floor_value():
+    g = BeliefGraph()
+    g.add_node(BeliefNode(id="value.y", type=NodeType.VALUE, content="y", confidence=1.0))
+    assert g.drain_floor_rejections() == []
+
+
+def test_no_rejection_for_norm_update():
+    g = _seeded()
+    g.drain_floor_rejections()
+    for _ in range(10):
+        g.update_belief("norm.force_limit", evidence_strength=1.0, supports=False)
+    assert g.drain_floor_rejections() == []
+
+
+def test_drain_clears_list():
+    g = BeliefGraph()
+    g.add_node(BeliefNode(id="value.z", type=NodeType.VALUE, content="z", confidence=0.0))
+    assert len(g.drain_floor_rejections()) == 1
+    # Second drain returns nothing — list was cleared atomically.
+    assert g.drain_floor_rejections() == []
+
+
+def test_seeding_generates_no_floor_rejections():
+    # Constitutional values are seeded at confidence=1.0, so no rejection expected.
+    g = BeliefGraph()
+    g.seed_constitutional_beliefs()
+    assert g.drain_floor_rejections() == []

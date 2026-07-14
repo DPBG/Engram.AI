@@ -22,8 +22,6 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import numpy as np
-
 from neuromorphic.config import OscillatoryConfig
 
 
@@ -48,7 +46,7 @@ class OscillatorBank:
 
     def step(self, dt: float = 1.0) -> None:
         """Advance oscillator phases by dt milliseconds."""
-        TWO_PI = 2.0 * math.pi
+        TWO_PI = 2.0 * math.pi  # noqa: N806
         self._gamma_phase = (self._gamma_phase + self._gamma_omega * dt) % TWO_PI
         self._theta_phase = (self._theta_phase + self._theta_omega * dt) % TWO_PI
 

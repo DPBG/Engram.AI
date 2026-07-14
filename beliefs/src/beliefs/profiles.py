@@ -18,7 +18,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -31,6 +31,7 @@ _PROFILES_DIR = Path(__file__).resolve().parent.parent.parent / "profiles"
 @dataclass
 class MotorLimits:
     """Per-channel motor limits from a body profile."""
+
     max_intensity: float = 1.0
     max_acceleration: float = 1.0
     precision_mode: bool = False
@@ -43,6 +44,7 @@ class MotorLimits:
 @dataclass
 class ProfileNorm:
     """A safety norm defined by a body profile."""
+
     id: str
     content: str
     risk_boost: float = 0.2
@@ -52,8 +54,9 @@ class ProfileNorm:
 @dataclass
 class EmergencyBehavior:
     """Behavior to execute on a specific emergency condition."""
-    trigger: str       # e.g., "fall_detected", "force_exceeded"
-    response: str      # e.g., "lock_all_joints", "retract_5mm"
+
+    trigger: str  # e.g., "fall_detected", "force_exceeded"
+    response: str  # e.g., "lock_all_joints", "retract_5mm"
 
 
 @dataclass
@@ -62,6 +65,7 @@ class BodyProfile:
 
     Defines the physical and safety envelope for a specific robot type.
     """
+
     name: str
     description: str = ""
     version: int = 1
@@ -134,8 +138,7 @@ class BodyProfile:
                 errors.append("All norms must have an id")
             if not 0.0 <= norm.risk_boost <= 1.0:
                 errors.append(
-                    f"Norm '{norm.id}' risk_boost must be in [0.0, 1.0], "
-                    f"got {norm.risk_boost}"
+                    f"Norm '{norm.id}' risk_boost must be in [0.0, 1.0], " f"got {norm.risk_boost}"
                 )
 
         return errors
@@ -177,8 +180,7 @@ def load_profile(name: str, profiles_dir: Path | None = None) -> BodyProfile:
     errors = profile.validate()
     if errors:
         raise ValueError(
-            f"Profile '{name}' validation failed:\n" +
-            "\n".join(f"  - {e}" for e in errors)
+            f"Profile '{name}' validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
         )
 
     logger.info(
@@ -190,7 +192,7 @@ def load_profile(name: str, profiles_dir: Path | None = None) -> BodyProfile:
     return profile
 
 
-def load_profile_from_env(profiles_dir: Path | None = None) -> Optional[BodyProfile]:
+def load_profile_from_env(profiles_dir: Path | None = None) -> BodyProfile | None:
     """Load body profile from BODY_PROFILE env var. Returns None if not set."""
     name = os.environ.get("BODY_PROFILE")
     if not name:
@@ -219,6 +221,7 @@ def apply_runtime_restrictions(
         ValueError: If an override attempts to expand beyond the profile.
     """
     import copy
+
     restricted = copy.deepcopy(base)
 
     # Motor-limit overrides — can only reduce max_intensity
@@ -233,9 +236,7 @@ def apply_runtime_restrictions(
                 f"exceeds profile limit {base_limit.max_intensity} — "
                 f"overrides can only restrict, not expand"
             )
-        new_accel = float(
-            new_limits.get("max_acceleration", base_limit.max_acceleration)
-        )
+        new_accel = float(new_limits.get("max_acceleration", base_limit.max_acceleration))
         if new_accel > base_limit.max_acceleration:
             raise ValueError(
                 f"Runtime override for '{channel}' max_acceleration={new_accel} "
@@ -306,12 +307,14 @@ def _parse_profile(name: str, raw: dict[str, Any]) -> BodyProfile:
         )
     for norm_raw in raw_norms:
         if isinstance(norm_raw, dict):
-            norms.append(ProfileNorm(
-                id=norm_raw.get("id", ""),
-                content=norm_raw.get("content", ""),
-                risk_boost=float(norm_raw.get("risk_boost", 0.2)),
-                metadata=norm_raw.get("metadata", {}),
-            ))
+            norms.append(
+                ProfileNorm(
+                    id=norm_raw.get("id", ""),
+                    content=norm_raw.get("content", ""),
+                    risk_boost=float(norm_raw.get("risk_boost", 0.2)),
+                    metadata=norm_raw.get("metadata", {}),
+                )
+            )
 
     # Parse emergency behaviors
     emergency: list[EmergencyBehavior] = []

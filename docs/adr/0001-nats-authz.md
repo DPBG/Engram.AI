@@ -200,6 +200,8 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `code.decision.>` | **kernel only** | meta, waiters | Per-trace code decisions. JetStream. |
 | `kernel.status` | dashboard (request) | kernel | Request/reply status. |
 | `kernel.status.response` | kernel | dashboard | Reply payload. |
+| `kernel.heartbeat` | kernel | kernel-watchdog, dashboard | Liveness pulse published by the Kernel on a fixed interval (E1.9.3). Absence triggers SAFE_HALT via the kernel-loss watchdog. |
+| `kernel.decision_rates` | kernel | dashboard | Periodic decision-rate metrics (ALLOW/DENY/TRANSFORM/DEFER counts) for the dashboard's safety panel. |
 
 ### Policy (Kernel-owned; see §3)
 
@@ -217,6 +219,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `cognitive.response.validate` | neuro | kernel | Brain asks Kernel to validate an LLM response. |
 | `cognitive.response.validated` | **kernel only** | neuro | Kernel's attestation. |
 | `cognitive.response.rejected` | kernel | neuro, dashboard | |
+| `cognitive.query` | neuro | cognitive-bridge | Legacy direct query; superseded by `proposal.new` → `cognitive.execute`. |
 
 ### Safety
 
@@ -346,6 +349,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `system.shutdown` | operator | all services | Broadcast. |
 | `system.health` | all services | dashboard | Liveness. |
 | `heartbeat.*` | all services | dashboard | Per-service heartbeat (`heartbeat.<service>`). |
+| `eventbus.metrics.>` | all services, dashboard | dashboard | Periodic EventBus publish/subscribe/request latency snapshots (`eventbus.metrics.<service>`). |
 
 > The dashboard additionally holds a single broad **subscribe-only** grant on
 > `>` to drive the live UI. It conveys **no** publish rights. This is the one

@@ -19,22 +19,35 @@ import time
 from pathlib import Path
 
 from .registry import ROOT, Service
+from .supervisor_alerts import (
+    emit_service_flap_alert,
+    flap_threshold,
+    flap_window_seconds,
+    record_restart,
+    should_emit_flap_alert,
+)
 
 logger = logging.getLogger("launcher.supervisor")
 
 # Simple ANSI colors for log prefixes (disabled automatically when not a TTY).
 _COLORS = [
-    "\033[36m", "\033[32m", "\033[33m", "\033[35m",
-    "\033[34m", "\033[31m", "\033[96m", "\033[92m",
+    "\033[36m",
+    "\033[32m",
+    "\033[33m",
+    "\033[35m",
+    "\033[34m",
+    "\033[31m",
+    "\033[96m",
+    "\033[92m",
 ]
 _RESET = "\033[0m"
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 # Restart-with-backoff parameters.
-_BACKOFF_INITIAL = 1.0   # seconds before first restart
-_BACKOFF_FACTOR  = 2.0   # multiply delay by this on each consecutive crash
-_BACKOFF_MAX     = 30.0  # cap on per-restart delay
-_BACKOFF_RESET   = 10.0  # if the process lived this long, reset backoff to initial
+_BACKOFF_INITIAL = 1.0  # seconds before first restart
+_BACKOFF_FACTOR = 2.0  # multiply delay by this on each consecutive crash
+_BACKOFF_MAX = 30.0  # cap on per-restart delay
+_BACKOFF_RESET = 10.0  # if the process lived this long, reset backoff to initial
 
 # signal.SIGKILL is not available on Windows; fall back to SIGTERM so the name
 # is always safe to reference.  _kill_proc uses proc.kill() on Windows anyway.
@@ -50,13 +63,25 @@ class ManagedProcess:
         # Set once the process has been alive for svc.readiness_timeout seconds.
         self.ready = threading.Event()
         self.restart_count = 0
+        # Rolling restart timestamps (monotonic) for flap detection (issue #261).
+        self.restart_times: list[float] = []
+        self.flap_alerts_emitted = 0
 
 
 class Supervisor:
-    def __init__(self, base_env: dict, data_dir: Path) -> None:
+    def __init__(
+        self,
+        base_env: dict,
+        data_dir: Path,
+        creds_dir: Path | None = None,
+    ) -> None:
         self.base_env = base_env
         self.data_dir = data_dir
         self.sqlite_dir = data_dir / "sqlite"
+        # Directory containing per-service .creds files (secrets/<name>.creds).
+        # When set, _service_env() injects NATS_CREDS for each service whose
+        # creds file exists. Missing files are silently skipped (dev fallback).
+        self.creds_dir = creds_dir
         self.procs: list[ManagedProcess] = []
         self._print_lock = threading.Lock()
         self._stopping = False
@@ -75,6 +100,16 @@ class Supervisor:
             if key == "SQLITE_PATH_BASENAME":
                 continue
             env[key] = value
+
+        # Inject per-service NATS credentials when the creds file exists.
+        # The SDK logs a warning and falls back gracefully when the path is set
+        # but the file is absent, so we only set it when the file is present.
+        if self.creds_dir is not None:
+            creds_file = self.creds_dir / f"{svc.name}.creds"
+            if creds_file.is_file():
+                env["NATS_CREDS"] = str(creds_file)
+                logger.debug("injecting NATS_CREDS=%s for %s", creds_file, svc.name)
+
         return env
 
     # -- output streaming ----------------------------------------------------
@@ -150,9 +185,7 @@ class Supervisor:
             # Drain stdout in a background thread so that proc.wait() is never
             # blocked by a grandchild that keeps the pipe open after the main
             # service process has already exited.
-            drain_thread = threading.Thread(
-                target=self._drain, args=(mp,), daemon=True
-            )
+            drain_thread = threading.Thread(target=self._drain, args=(mp,), daemon=True)
             drain_thread.start()
             code = mp.proc.wait()
             uptime = time.monotonic() - started_at
@@ -164,15 +197,43 @@ class Supervisor:
             with self._print_lock:
                 print(f"{prefix}*** exited (code {code}) ***", flush=True)
 
-            # Long-lived processes get a fresh backoff budget.
+            # Long-lived processes get a fresh backoff budget and flap history.
             if uptime >= _BACKOFF_RESET:
                 delay = _BACKOFF_INITIAL
+                mp.restart_times.clear()
+                mp.flap_alerts_emitted = 0
 
             actual_delay = min(delay, _BACKOFF_MAX)
             mp.restart_count += 1
+            now = time.monotonic()
+            window_restarts = record_restart(
+                mp.restart_times,
+                now=now,
+                window_seconds=flap_window_seconds(),
+            )
+            threshold = flap_threshold()
+            if should_emit_flap_alert(len(window_restarts), threshold, mp.flap_alerts_emitted):
+                alert = emit_service_flap_alert(
+                    service_name=mp.name,
+                    restart_count=mp.restart_count,
+                    restarts_in_window=len(window_restarts),
+                    window_seconds=flap_window_seconds(),
+                    threshold=threshold,
+                    exit_code=code,
+                    uptime_seconds=uptime,
+                )
+                mp.flap_alerts_emitted = len(window_restarts) // threshold
+                with self._print_lock:
+                    print(
+                        f"{prefix}*** ALERT: {alert['message']} ***",
+                        flush=True,
+                    )
+
             logger.info(
                 "restarting %s in %.1fs (attempt %d)",
-                mp.name, actual_delay, mp.restart_count,
+                mp.name,
+                actual_delay,
+                mp.restart_count,
             )
 
             # Interruptible sleep — exits immediately on shutdown.
@@ -210,7 +271,8 @@ class Supervisor:
             if dep is None:
                 logger.warning(
                     "dep %r of %s was not started — skipping readiness wait",
-                    dep_name, svc.name,
+                    dep_name,
+                    svc.name,
                 )
                 continue
             wait_secs = dep.svc.readiness_timeout + 5.0
@@ -218,7 +280,9 @@ class Supervisor:
             if not dep.ready.wait(timeout=wait_secs):
                 logger.warning(
                     "%s dep %r not ready after %.1fs — starting anyway",
-                    svc.name, dep_name, wait_secs,
+                    svc.name,
+                    dep_name,
+                    wait_secs,
                 )
 
         color = _COLORS[len(self.procs) % len(_COLORS)]
@@ -229,9 +293,6 @@ class Supervisor:
         threading.Thread(target=self._manage, args=(mp,), daemon=True).start()
         if stagger:
             time.sleep(stagger)
-
-    def any_alive(self) -> bool:
-        return any(mp.proc.poll() is None for mp in self.procs)
 
     def wait(self) -> None:
         """Block until interrupted; then shut everything down."""

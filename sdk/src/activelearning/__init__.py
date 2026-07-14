@@ -31,17 +31,25 @@ from activelearning.embeddings import (
 from activelearning.llm import LLMClient, LLMConfig, LLMError
 from activelearning.messages import (
     SUBJECT_SCHEMAS,
+    WIRE_SCHEMA_VERSION,
     MessageValidationError,
+    WireModel,
     schema_for_subject,
     validate_payload,
 )
 from activelearning.nats_client import EventBus, get_event_bus
 from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuator, register_sensor
+from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
 from activelearning.signing import (
     DECISION_KEY_ENV,
+    OPERATOR_KEY_ENV,
+    OPERATOR_TIMESTAMP_TOLERANCE_MS,
+    operator_signing_enabled,
     sign_decision,
+    sign_operator_action,
     signing_enabled,
     verify_decision,
+    verify_operator_action,
 )
 from activelearning.subjects import (
     Subjects,
@@ -78,6 +86,10 @@ __all__ = [
     "get_embedding_service",
     "embed_text",
     "embed_batch",
+    # Vector store
+    "QdrantStore",
+    "QdrantHit",
+    "QdrantPoint",
     # LLM (text generation / chat)
     "LLMClient",
     "LLMConfig",
@@ -93,9 +105,14 @@ __all__ = [
     "register_actuator",
     # Decision signing (safety gate authentication)
     "sign_decision",
+    "sign_operator_action",
     "verify_decision",
+    "verify_operator_action",
     "signing_enabled",
+    "operator_signing_enabled",
     "DECISION_KEY_ENV",
+    "OPERATOR_KEY_ENV",
+    "OPERATOR_TIMESTAMP_TOLERANCE_MS",
     # NATS subject registry
     "Subjects",
     "decision_subject",
@@ -106,4 +123,6 @@ __all__ = [
     "validate_payload",
     "schema_for_subject",
     "SUBJECT_SCHEMAS",
+    "WireModel",
+    "WIRE_SCHEMA_VERSION",
 ]

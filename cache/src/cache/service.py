@@ -8,14 +8,14 @@ Manages:
 """
 
 import asyncio
-from typing import Optional
 
-from activelearning import BaseService
+from activelearning import BaseService, get_embedding_service
+from activelearning.llm import LLMClient, LLMConfig
 from activelearning.nats_client import serialize_message
 
-from cache.llm_cache import LLMCache
 from cache.autopilot import AutopilotController
 from cache.invalidator import CacheInvalidator
+from cache.llm_cache import LLMCache
 
 
 class CacheService(BaseService):
@@ -26,21 +26,27 @@ class CacheService(BaseService):
     def __init__(self):
         super().__init__("cache", use_database=True, use_event_bus=True)
 
-        self._llm_cache: Optional[LLMCache] = None
-        self._autopilot: Optional[AutopilotController] = None
-        self._invalidator: Optional[CacheInvalidator] = None
+        self._llm_cache: LLMCache | None = None
+        self._autopilot: AutopilotController | None = None
+        self._invalidator: CacheInvalidator | None = None
+        # One shared embedding client per service, injected into the cache and
+        # closed on shutdown.
+        self._embedding_service = get_embedding_service()
+        self._llm_client = LLMClient(LLMConfig.from_env())
 
     async def _setup(self) -> None:
         """Service-specific setup."""
         self._llm_cache = LLMCache(
             qdrant_url=self.config.qdrant_url,
-            ollama_url=self.config.ollama_url,
             db=self.database,
+            embedding_service=self._embedding_service,
         )
+        await self._llm_cache.setup()
 
         self._autopilot = AutopilotController(
             event_bus=self.event_bus,
             llm_cache=self._llm_cache,
+            llm_client=self._llm_client,
         )
 
         self._invalidator = CacheInvalidator(
@@ -69,17 +75,21 @@ class CacheService(BaseService):
             await self._invalidator.stop()
         if self._llm_cache:
             await self._llm_cache.close()
+        await self._llm_client.close()
+        await self._embedding_service.close()
 
     async def _handle_cache_query(self, data: dict, msg) -> None:
         """Handle cache query request."""
         prompt = data.get("prompt", "")
         model = data.get("model", "deepseek-coder:6.7b")
         force_live = data.get("force_live", False)
+        tags = data.get("tags")
 
         result = await self._autopilot.query_llm(
             prompt=prompt,
             model=model,
             force_live=force_live,
+            tags=tags,
         )
 
         if msg.reply:

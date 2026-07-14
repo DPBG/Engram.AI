@@ -29,7 +29,6 @@ from __future__ import annotations
 import hmac
 import logging
 import os
-from typing import Optional
 
 logger = logging.getLogger("dashboard.auth")
 
@@ -42,7 +41,7 @@ MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 _warned_open = False
 
 
-def get_dashboard_token() -> Optional[str]:
+def get_dashboard_token() -> str | None:
     """Return the configured control-plane token, or ``None`` if auth is off."""
     token = os.environ.get(DASHBOARD_TOKEN_ENV, "").strip()
     return token or None
@@ -53,7 +52,7 @@ def auth_enabled() -> bool:
     return get_dashboard_token() is not None
 
 
-def parse_bearer(header: Optional[str]) -> Optional[str]:
+def parse_bearer(header: str | None) -> str | None:
     """Extract the token from an ``Authorization: Bearer <token>`` header."""
     if not header:
         return None
@@ -63,7 +62,7 @@ def parse_bearer(header: Optional[str]) -> Optional[str]:
     return None
 
 
-def authorize(provided_token: Optional[str]) -> bool:
+def authorize(provided_token: str | None) -> bool:
     """Return ``True`` if ``provided_token`` may perform a state change.
 
     - Auth disabled (no token configured) → ``True`` (legacy mode), with a
@@ -79,7 +78,8 @@ def authorize(provided_token: Optional[str]) -> bool:
                 "Dashboard control plane is UNAUTHENTICATED (%s not set) — any "
                 "client can inject observations, drive motors, and answer Kernel "
                 "approval requests. Set %s to lock it down.",
-                DASHBOARD_TOKEN_ENV, DASHBOARD_TOKEN_ENV,
+                DASHBOARD_TOKEN_ENV,
+                DASHBOARD_TOKEN_ENV,
             )
             _warned_open = True
         return True
@@ -88,7 +88,7 @@ def authorize(provided_token: Optional[str]) -> bool:
     return hmac.compare_digest(provided_token, configured)
 
 
-def request_is_authorized(method: str, authorization_header: Optional[str]) -> bool:
+def request_is_authorized(method: str, authorization_header: str | None) -> bool:
     """Authorize an HTTP request by method + ``Authorization`` header.
 
     Non-mutating methods (GET/HEAD/OPTIONS/...) are always allowed; mutating
@@ -114,7 +114,10 @@ def install_auth_middleware(app) -> None:
         if not request_is_authorized(request.method, request.headers.get("authorization")):
             return JSONResponse(
                 status_code=401,
-                content={"error": "unauthorized", "detail": f"Set {DASHBOARD_TOKEN_ENV} and send 'Authorization: Bearer <token>'."},
+                content={
+                    "error": "unauthorized",
+                    "detail": f"Set {DASHBOARD_TOKEN_ENV} and send 'Authorization: Bearer <token>'.",
+                },
             )
         return await call_next(request)
 

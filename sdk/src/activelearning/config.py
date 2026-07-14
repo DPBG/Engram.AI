@@ -8,7 +8,6 @@ with sensible defaults.
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 from activelearning.database import default_sqlite_path
 
@@ -37,6 +36,10 @@ class ServiceConfig:
     # Logging
     log_level: str
 
+    # Path to a per-service NATS .creds file (NKEY + signed JWT).
+    # None → unauthenticated / URL-embedded token (dev mode).
+    nats_creds: str | None = None
+
     @classmethod
     def from_env(cls, service_name: str) -> "ServiceConfig":
         """
@@ -56,6 +59,7 @@ class ServiceConfig:
             qdrant_url=os.environ.get("QDRANT_URL", "http://localhost:6333"),
             tasks_root=os.environ.get("TASKS_ROOT", "/data/tasks"),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
+            nats_creds=os.environ.get("NATS_CREDS") or None,
         )
 
     def setup_logging(self) -> None:

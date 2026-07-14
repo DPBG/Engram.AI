@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, cast
 
 import aiosqlite
 
@@ -56,6 +56,19 @@ def _load_schema() -> str:
 
 SCHEMA_SQL = _load_schema()
 
+# Ordered migrations applied before the (declarative) schema is reapplied. Entry
+# i upgrades a database from user_version i to i+1. Because the schema is all
+# CREATE ... IF NOT EXISTS, a migration only needs to drop or alter objects whose
+# shape changed; executescript then recreates them. This keeps the table DDL in
+# schema.sql as the single source of truth.
+_MIGRATIONS: list[tuple[str, ...]] = [
+    # v1: llm_cache changed shape (added model/tags/cached_at, dropped legacy
+    # columns). It is a disposable index over the Qdrant cache, so drop the old
+    # table and let the schema recreate it with the current columns.
+    ("DROP TABLE IF EXISTS llm_cache",),
+]
+SCHEMA_VERSION = len(_MIGRATIONS)
+
 
 class Database:
     """
@@ -65,7 +78,7 @@ class Database:
     the unified ActiveLearningAI database.
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize the database.
 
@@ -73,7 +86,7 @@ class Database:
             db_path: Path to SQLite database file
         """
         self.db_path = db_path or default_sqlite_path()
-        self._connection: Optional[aiosqlite.Connection] = None
+        self._connection: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
         """Initialize the database and create schema."""
@@ -89,11 +102,37 @@ class Database:
         await self._connection.execute("PRAGMA journal_mode=WAL")
         await self._connection.execute("PRAGMA synchronous=NORMAL")
 
-        # Create schema
+        # Bring an older database up to date, then (re)create the schema
+        await self._migrate()
         await self._connection.executescript(SCHEMA_SQL)
+        await self._connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         await self._connection.commit()
 
         logger.info(f"Database initialized at {self.db_path}")
+
+    async def _migrate(self) -> None:
+        """Run pending migrations so existing databases adopt schema changes.
+
+        Tracks progress with PRAGMA user_version; a fresh database starts at 0
+        and the pending statements are no-ops on it.
+        """
+        cursor = await self._connection.execute("PRAGMA user_version")  # type: ignore[union-attr]
+        assert self._connection is not None
+        conn = self._connection
+        cursor = await conn.execute("PRAGMA user_version")
+        row = await cursor.fetchone()
+        version = row[0] if row else 0
+
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema version {version} is newer than this build "
+                f"supports ({SCHEMA_VERSION}); upgrade the application"
+            )
+
+        for statements in _MIGRATIONS[version:]:
+            for statement in statements:
+                await self._connection.execute(statement)  # type: ignore[union-attr]
+                await conn.execute(statement)
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -108,9 +147,10 @@ class Database:
         params: tuple[Any, ...] = (),
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement."""
-        if not self._connection:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.execute(sql, params)
+        return await conn.execute(sql, params)
 
     async def executemany(
         self,
@@ -118,15 +158,16 @@ class Database:
         params_list: list[tuple[Any, ...]],
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement with multiple parameter sets."""
-        if not self._connection:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.executemany(sql, params_list)
+        return await conn.executemany(sql, params_list)
 
     async def fetchone(
         self,
         sql: str,
         params: tuple[Any, ...] = (),
-    ) -> Optional[aiosqlite.Row]:
+    ) -> aiosqlite.Row | None:
         """Execute and fetch one result."""
         cursor = await self.execute(sql, params)
         return await cursor.fetchone()
@@ -138,7 +179,7 @@ class Database:
     ) -> list[aiosqlite.Row]:
         """Execute and fetch all results."""
         cursor = await self.execute(sql, params)
-        return await cursor.fetchall()
+        return cast(list[Any], await cursor.fetchall())
 
     async def commit(self) -> None:
         """Commit the current transaction."""
@@ -165,7 +206,7 @@ class Database:
         sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
         await self.execute(sql, tuple(data.values()))
         await self.commit()
-        return data.get("id", "")
+        return cast(str, data.get("id", ""))
 
     async def update(
         self,
@@ -194,7 +235,7 @@ class Database:
 
 
 # Global database instance
-_db: Optional[Database] = None
+_db: Database | None = None
 
 
 async def get_database() -> Database:
@@ -204,3 +245,20 @@ async def get_database() -> Database:
         _db = Database()
         await _db.initialize()
     return _db
+
+
+async def close_database() -> None:
+    """Close and reset the global database singleton, if open.
+
+    Production services never call this — BaseService.stop() deliberately
+    leaves the singleton open and relies on process exit to reap it. But
+    aiosqlite's connection worker runs on a non-daemon thread, so a test
+    process that opens the singleton via get_database() (e.g. by driving a
+    service through its real start()/stop() lifecycle) and never closes it
+    will hang at interpreter shutdown waiting for that thread to join. Tests
+    doing real end-to-end service lifecycles must call this in teardown.
+    """
+    global _db
+    if _db is not None:
+        await _db.close()
+        _db = None

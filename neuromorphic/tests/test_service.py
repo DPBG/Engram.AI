@@ -1,7 +1,8 @@
 """Tests for NeuromorphicService with mocked EventBus."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
+
 import pytest
 
 from neuromorphic.config import NeuromorphicConfig
@@ -80,7 +81,7 @@ class TestNeuromorphicServiceHandlers:
         cfg.populations.working_memory = 20
 
         net = NeuromorphicNetwork(cfg, seed=42)
-        initial_energy = net.drives.energy
+        _initial_energy = net.drives.energy
         net.drives.handle_event({"type": "damage", "amount": 0.3})
         assert net.drives.damage == pytest.approx(0.3)
 

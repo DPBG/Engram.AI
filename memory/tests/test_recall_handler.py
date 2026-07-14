@@ -65,6 +65,28 @@ async def test_handle_recall_accepts_query_alias():
 
 
 @pytest.mark.asyncio
+async def test_handle_recall_tags_invalid_payload_publishes_error():
+    service = MemoryService.__new__(MemoryService)
+    service.logger = MagicMock()
+    service.event_bus = MagicMock()
+    service.event_bus.publish = AsyncMock()
+
+    await service._handle_recall(
+        {
+            "query_id": "query-bad-tags",
+            "query_type": "tags",
+            "tags": "safe",
+        }
+    )
+
+    service.event_bus.publish.assert_called_once()
+    subject, payload = service.event_bus.publish.call_args[0]
+    assert subject == "memory.recall.result.query-bad-tags"
+    assert payload["count"] == 0
+    assert "tags must be a list of strings" in payload["error"]
+
+
+@pytest.mark.asyncio
 async def test_handle_recall_publishes_error_payload():
     service = MemoryService.__new__(MemoryService)
     service.logger = MagicMock()
