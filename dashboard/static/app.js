@@ -142,6 +142,7 @@ class ActiveLearningAI {
                 if (msg.data.halt_state) this.updateHaltUI(msg.data.halt_state);
                 if (msg.data.kernel_decision_rates) this.renderKernelDecisionRates(msg.data.kernel_decision_rates);
                 if (msg.data.bus_metrics) this.renderBusMetrics(msg.data.bus_metrics);
+                if (msg.data.dlq) this.renderDlq(msg.data.dlq);
                 break;
             case 'safe_halt_status':
                 this.updateHaltUI(msg.data);
@@ -159,6 +160,9 @@ class ActiveLearningAI {
                 break;
             case 'bus_metrics_update':
                 this.renderBusMetrics(msg.data);
+                break;
+            case 'dlq_update':
+                this.renderDlq(msg.data);
                 break;
             case 'message':
                 this.appendNATSMessage(msg.data);
@@ -913,6 +917,31 @@ class ActiveLearningAI {
                 <div class="bus-row"><span>Publish</span><span class="val">${pub.count || 0} · ${(pub.avg_ms || 0).toFixed(1)}ms</span></div>
                 <div class="bus-row"><span>Subscribe</span><span class="val">${sub.count || 0} · ${(sub.avg_ms || 0).toFixed(1)}ms</span></div>
                 <div class="bus-row"><span>Request</span><span class="val">${req.count || 0} · ${(req.avg_ms || 0).toFixed(1)}ms</span></div>
+            </div>`;
+        }).join('');
+    }
+
+    renderDlq(dlq) {
+        const totalEl = document.getElementById('dlq-total');
+        if (totalEl) totalEl.textContent = (dlq && dlq.total) || 0;
+        const el = document.getElementById('dlq-list');
+        if (!el) return;
+        const bySubject = (dlq && dlq.by_subject) || {};
+        const subjects = Object.keys(bySubject);
+        if (!subjects.length) {
+            el.innerHTML = '<div class="sys-loading">No dead letters observed</div>';
+            return;
+        }
+        subjects.sort((a, b) => bySubject[b] - bySubject[a]);
+        const recentBySubject = {};
+        ((dlq && dlq.recent) || []).forEach(r => { recentBySubject[r.original_subject] = r; });
+        el.innerHTML = subjects.map(subject => {
+            const last = recentBySubject[subject];
+            return `
+            <div class="dlq-item">
+                <div class="dlq-subject">${this.esc(subject)}</div>
+                <div class="dlq-row"><span>Count</span><span class="val">${bySubject[subject]}</span></div>
+                ${last ? `<div class="dlq-row"><span>Reason</span><span class="val">${this.esc(String(last.reason || '?'))}</span></div>` : ''}
             </div>`;
         }).join('');
     }

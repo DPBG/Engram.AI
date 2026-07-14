@@ -75,6 +75,9 @@ class Subjects:
     # Kernel watchdog (E1.9.3)
     KERNEL_HEARTBEAT = "kernel.heartbeat"
 
+    # Dead-letter queue (issue #246) — poisoned messages land on dlq.<subject>
+    DLQ_WILDCARD = "dlq.>"
+
 
 def decision_subject(trace_id: str) -> str:
     """Per-trace kernel decision subject."""
