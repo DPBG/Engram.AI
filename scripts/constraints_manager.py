@@ -55,21 +55,21 @@ def _name_pattern(canon: str) -> str:
 _SPEC = re.compile(
     r"^"
     r"([A-Za-z0-9][A-Za-z0-9._-]*)"  # package name
-    r"(\[[^\]]*\])?"                   # optional [extras]
-    r"\s*(>=|==|~=|!=|>|<|<=)\s*"     # operator
-    r"([\d][^\s;#,\\]*)",              # version (up to whitespace / comment / marker)
+    r"(\[[^\]]*\])?"  # optional [extras]
+    r"\s*(>=|==|~=|!=|>|<|<=)\s*"  # operator
+    r"([\d][^\s;#,\\]*)",  # version (up to whitespace / comment / marker)
     re.IGNORECASE,
 )
 
 
 @dataclass
 class Dep:
-    pkg: str      # canonical name
-    raw: str      # name as written in the source file
-    extras: str   # e.g. "[standard]" or ""
-    op: str       # ">=", "==", …
+    pkg: str  # canonical name
+    raw: str  # name as written in the source file
+    extras: str  # e.g. "[standard]" or ""
+    op: str  # ">=", "==", …
     version: str  # "2.6.0"
-    lineno: int   # 1-based; 0 = from TOML (no line info available)
+    lineno: int  # 1-based; 0 = from TOML (no line info available)
 
 
 def _parse(line: str, lineno: int = 0) -> Dep | None:
@@ -138,6 +138,7 @@ def _read(path: Path) -> list[Dep]:
 # File discovery
 # ---------------------------------------------------------------------------
 
+
 def _dep_files(root: Path) -> list[Path]:
     """Return requirements-local.txt + per-service requirements.txt / pyproject.toml."""
     found: list[Path] = []
@@ -158,6 +159,7 @@ def _dep_files(root: Path) -> list[Path]:
 # Version comparison (stdlib only — no `packaging` required)
 # ---------------------------------------------------------------------------
 
+
 def _vtuple(v: str) -> tuple[int, ...]:
     # Strip local version suffix (+something) then extract all numeric segments.
     return tuple(int(x) for x in re.findall(r"\d+", v.split("+")[0]))
@@ -174,6 +176,7 @@ def _veq(a: str, b: str) -> bool:
 # ---------------------------------------------------------------------------
 # verify
 # ---------------------------------------------------------------------------
+
 
 def _verify(root: Path) -> int:
     """Check all dep files against constraints.txt. Returns exit code."""
@@ -206,8 +209,8 @@ def _verify(root: Path) -> int:
 
     labels = {
         "CONFLICT": "CONFLICT  (below floor — pip may install an incompatible version)",
-        "EXACT":    "EXACT-PIN (== pins silently break on the next bump; use >= instead)",
-        "DRIFT":    "DRIFT     (floor is above constraints.txt — informational only)",
+        "EXACT": "EXACT-PIN (== pins silently break on the next bump; use >= instead)",
+        "DRIFT": "DRIFT     (floor is above constraints.txt — informational only)",
     }
     for kind in ("CONFLICT", "EXACT", "DRIFT"):
         group = [(f, d, fl) for k, f, d, fl in issues if k == kind]
@@ -234,6 +237,7 @@ def _verify(root: Path) -> int:
 # bump — in-place text replacement
 # ---------------------------------------------------------------------------
 
+
 def _bump_req(path: Path, canon: str, new_ver: str) -> bool:
     """Update the floor for *canon* in a requirements*.txt file. Returns True if changed."""
     lines = path.read_text().splitlines(keepends=True)
@@ -248,7 +252,7 @@ def _bump_req(path: Path, canon: str, new_ver: str) -> bool:
         if m:
             indent, raw, extras, op, ver = m.group(1, 2, 3, 4, 5)
             extras = extras or ""
-            tail = line[m.end():]  # trailing comment, env-marker, or newline
+            tail = line[m.end() :]  # trailing comment, env-marker, or newline
             # Update when: == pin at or below new_ver, or >= floor below new_ver
             need = (op == "==" and not _vlt(new_ver, ver)) or (op == ">=" and _vlt(ver, new_ver))
             if need:
@@ -328,6 +332,7 @@ def _bump(root: Path, package: str, new_ver: str) -> int:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     p = argparse.ArgumentParser(
         prog="constraints_manager.py",
@@ -343,7 +348,9 @@ def main() -> None:
     bp.add_argument("version", help="New minimum version (e.g. 2.7.0)")
 
     args = p.parse_args()
-    sys.exit(_verify(REPO_ROOT) if args.cmd == "verify" else _bump(REPO_ROOT, args.package, args.version))
+    sys.exit(
+        _verify(REPO_ROOT) if args.cmd == "verify" else _bump(REPO_ROOT, args.package, args.version)
+    )
 
 
 if __name__ == "__main__":
