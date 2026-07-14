@@ -102,6 +102,9 @@ class BaseService:
         # Service-specific setup
         await self._setup()
 
+        if self.event_bus is not None:
+            await self.event_bus.start_metrics_reporter()
+
         self.logger.info(f"{self.service_name} service started successfully")
 
     async def stop(self) -> None:

@@ -349,6 +349,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `system.shutdown` | operator | all services | Broadcast. |
 | `system.health` | all services | dashboard | Liveness. |
 | `heartbeat.*` | all services | dashboard | Per-service heartbeat (`heartbeat.<service>`). |
+| `eventbus.metrics.>` | all services, dashboard | dashboard | Periodic EventBus publish/subscribe/request latency snapshots (`eventbus.metrics.<service>`). |
 
 > The dashboard additionally holds a single broad **subscribe-only** grant on
 > `>` to drive the live UI. It conveys **no** publish rights. This is the one

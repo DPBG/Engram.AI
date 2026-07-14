@@ -13,11 +13,28 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from activelearning.subjects import Subjects
 
+# Current wire-schema major version stamped onto every outbound payload.
+#
+# Bump this ONLY for a *breaking* change to a wire model (removing/renaming a
+# required field, changing a field's type or semantics). Additive changes
+# (new optional fields) are backward compatible and MUST NOT bump it.
+# See docs/MESSAGE-SCHEMA-VERSIONING.md for the full compatibility policy.
+WIRE_SCHEMA_VERSION = 1
+
 
 class WireModel(BaseModel):
-    """Base wire model — allows forward-compatible extra fields."""
+    """Base wire model — allows forward-compatible extra fields.
+
+    Every payload carries a ``version`` field identifying the wire-schema major
+    version it was produced against. A message that omits ``version`` (a legacy,
+    pre-versioning sender) is normalized to ``WIRE_SCHEMA_VERSION`` so downstream
+    code always sees an explicit version. Consumers can compare ``version``
+    against the versions they understand and reject or adapt accordingly.
+    """
 
     model_config = ConfigDict(extra="allow")
+
+    version: int = WIRE_SCHEMA_VERSION
 
 
 # --- Governance / kernel ---
