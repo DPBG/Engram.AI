@@ -16,7 +16,6 @@ class ActiveLearningAI {
         this.gwPendingSensors = new Set(); // sensor_ids with pending commands
         this.videoSessions = {}; // session_id -> status
         this.videoQueueState = null; // { queue, active, completed, queue_length }
-        this.approvalTimers = {}; // trace_id -> timeoutId
         this.approvalsSent = new Set(); // trace_ids already responded to
         this.isHalted = false;
 
@@ -1002,8 +1001,8 @@ class ActiveLearningAI {
     showApprovalRequest(data) {
         const traceId = data.trace_id || '?';
 
-        // Deduplicate — skip if already showing this approval
-        if (this.approvalsSent.has(traceId) || this.approvalTimers[traceId]) {
+        // Deduplicate — skip if we already answered this approval
+        if (this.approvalsSent.has(traceId)) {
             return;
         }
 
@@ -1077,24 +1076,15 @@ class ActiveLearningAI {
         container.appendChild(div);
         container.scrollTop = container.scrollHeight;
 
-        // Auto-expire after 30 seconds (fail-open: allow by default)
-        this.approvalTimers[traceId] = setTimeout(() => {
-            if (!this.approvalsSent.has(traceId)) {
-                this.sendApprovalResponse(traceId, channel, true);
-            }
-        }, 30000);
+        // Do not auto-ALLOW unanswered prompts. DEFER is fail-closed: if the
+        // operator never answers (or NATS is partitioned), Meta-Programmer's
+        // DEFER_TTL_MS sweep treats the review as DENY. See docs/META-PROGRAMMER.md.
     }
 
     sendApprovalResponse(traceId, channel, approved) {
-        // Prevent double-send (race between user click and auto-expire timer)
+        // Prevent double-send
         if (this.approvalsSent.has(traceId)) return;
         this.approvalsSent.add(traceId);
-
-        // Clear auto-expire timer
-        if (this.approvalTimers[traceId]) {
-            clearTimeout(this.approvalTimers[traceId]);
-            delete this.approvalTimers[traceId];
-        }
 
         // Update UI
         const actions = document.getElementById(`approval-actions-${traceId}`);

@@ -751,10 +751,23 @@ The Safety Supervisor and Moral Kernel work together but have distinct roles:
 │  │  - Protected path → DENY (always)                            │    │
 │  │  - Human safety concern → DEFER to Dashboard (human review)  │    │
 │  │  - Normal operation → ALLOW                                  │    │
+│  │                                                               │    │
+│  │  DEFER is provisional: if human review does not answer       │    │
+│  │  before expires_at / DEFER_TTL_MS, consumers MUST treat it   │    │
+│  │  as DENY (fail-closed). A NATS partition that prevents the   │    │
+│  │  Dashboard from publishing approval.response is therefore   │    │
+│  │  safe — silence expires to DENY, never to ALLOW.             │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+**DEFER → human review TTL (fail-closed):** Kernel stamps `expires_at` on
+`DEFER` decisions (`defer_ttl_ms`, default 5 minutes). Callers that stage work
+for human approval (notably Meta-Programmer `human_review/`) must reject the
+staged item when the TTL elapses with no `approval.response` — including when
+the Dashboard cannot reach NATS. See [META-PROGRAMMER.md](META-PROGRAMMER.md)
+§ Human-in-the-Loop.
 
 **Key Distinctions:**
 
@@ -843,7 +856,7 @@ class KernelDecisionType(Enum):
     ALLOW = "ALLOW"
     TRANSFORM = "TRANSFORM"
     DENY = "DENY"
-    DEFER = "DEFER"  # Routes to Dashboard for human review
+    DEFER = "DEFER"  # Provisional; unanswered TTL → DENY (fail-closed)
 
 @dataclass
 class Observation(Generic[T]):
