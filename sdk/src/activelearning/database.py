@@ -7,6 +7,7 @@ for all ActiveLearningAI tables.
 
 import logging
 import os
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -62,10 +63,13 @@ SCHEMA_SQL = _load_schema()
 # shape changed; executescript then recreates them. This keeps the table DDL in
 # schema.sql as the single source of truth.
 _MIGRATIONS: list[tuple[str, ...]] = [
-    # v1: llm_cache changed shape (added model/tags/cached_at, dropped legacy
-    # columns). It is a disposable index over the Qdrant cache, so drop the old
-    # table and let the schema recreate it with the current columns.
+    # v0 → v1: llm_cache changed shape (added model/tags/cached_at, dropped
+    # legacy columns). It is a disposable index over the Qdrant cache, so drop
+    # the old table and let the schema recreate it with the current columns.
     ("DROP TABLE IF EXISTS llm_cache",),
+    # v1 → v2: add latency_ms to kernel_decisions so per-decision processing
+    # time can be persisted alongside the decision record (supports SLO audits).
+    ("ALTER TABLE kernel_decisions ADD COLUMN latency_ms REAL",),
 ]
 SCHEMA_VERSION = len(_MIGRATIONS)
 
@@ -130,7 +134,18 @@ class Database:
 
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
-                await conn.execute(statement)
+                try:
+                    await conn.execute(statement)
+                except sqlite3.OperationalError as exc:
+                    # ALTER TABLE on a missing table is safe to skip on a fresh
+                    # database: executescript creates the table (with all current
+                    # columns already in schema.sql) immediately after _migrate()
+                    # returns, so the column will exist regardless.
+                    if "no such table" in str(exc) and statement.strip().upper().startswith(
+                        "ALTER TABLE"
+                    ):
+                        continue
+                    raise
 
     async def close(self) -> None:
         """Close the database connection."""
