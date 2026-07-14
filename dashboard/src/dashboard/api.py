@@ -516,7 +516,7 @@ class DashboardService:
         self.state = DashboardState()
         self.nats = NatsStreamManager(self.state)
         self.chat = ChatEngine(self.state, self.nats)
-        self.metrics = MetricsMonitor(self.state)
+        self.metrics = MetricsMonitor(self.state, self.nats)
         self.ctx = DashboardContext(
             state=self.state,
             nats=self.nats,

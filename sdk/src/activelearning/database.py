@@ -116,9 +116,10 @@ class Database:
         Tracks progress with PRAGMA user_version; a fresh database starts at 0
         and the pending statements are no-ops on it.
         """
-        if not self._connection:
-            raise RuntimeError("Database not initialized")
-        cursor = await self._connection.execute("PRAGMA user_version")
+        cursor = await self._connection.execute("PRAGMA user_version")  # type: ignore[union-attr]
+        assert self._connection is not None
+        conn = self._connection
+        cursor = await conn.execute("PRAGMA user_version")
         row = await cursor.fetchone()
         version = row[0] if row else 0
 
@@ -130,7 +131,8 @@ class Database:
 
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
-                await self._connection.execute(statement)
+                await self._connection.execute(statement)  # type: ignore[union-attr]
+                await conn.execute(statement)
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -145,9 +147,10 @@ class Database:
         params: tuple[Any, ...] = (),
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement."""
-        if self._connection is None:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.execute(sql, params)
+        return await conn.execute(sql, params)
 
     async def executemany(
         self,
@@ -155,9 +158,10 @@ class Database:
         params_list: list[tuple[Any, ...]],
     ) -> aiosqlite.Cursor:
         """Execute a SQL statement with multiple parameter sets."""
-        if self._connection is None:
+        conn = self._connection
+        if conn is None:
             raise RuntimeError("Database not initialized")
-        return await self._connection.executemany(sql, params_list)
+        return await conn.executemany(sql, params_list)
 
     async def fetchone(
         self,
@@ -255,6 +259,15 @@ async def close_database() -> None:
     join — and the still-open singleton leaks into whatever test runs next in
     the same pytest process, regardless of collection order. Tests that
     exercise the real singleton must call this in teardown.
+    """Close and reset the global database singleton, if open.
+
+    Production services never call this — BaseService.stop() deliberately
+    leaves the singleton open and relies on process exit to reap it. But
+    aiosqlite's connection worker runs on a non-daemon thread, so a test
+    process that opens the singleton via get_database() (e.g. by driving a
+    service through its real start()/stop() lifecycle) and never closes it
+    will hang at interpreter shutdown waiting for that thread to join. Tests
+    doing real end-to-end service lifecycles must call this in teardown.
     """
     global _db
     if _db is not None:

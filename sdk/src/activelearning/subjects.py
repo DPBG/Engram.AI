@@ -66,6 +66,8 @@ class Subjects:
     # System
     SYSTEM_SHUTDOWN = "system.shutdown"
     SYSTEM_HEALTH = "system.health"
+    EVENTBUS_METRICS_PREFIX = "eventbus.metrics."
+    EVENTBUS_METRICS_WILDCARD = "eventbus.metrics.>"
 
     # Meta-programmer / learning
     KNOWLEDGE_GAP = "knowledge.gap"
@@ -87,3 +89,8 @@ def code_decision_subject(trace_id: str) -> str:
 def observation_subject(sensor_id: str) -> str:
     """Per-sensor observation subject."""
     return f"{Subjects.OBSERVATION.removesuffix('*')}{sensor_id}"
+
+
+def eventbus_metrics_subject(service_name: str) -> str:
+    """Per-service EventBus metrics subject."""
+    return f"{Subjects.EVENTBUS_METRICS_PREFIX}{service_name}"

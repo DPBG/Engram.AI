@@ -21,6 +21,30 @@ from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
 
+from activelearning.bus_metrics import EventBusMetrics
+from activelearning.connection_logging import (
+    TRANSITION_ALREADY_CONNECTED,
+    TRANSITION_CLOSED,
+    TRANSITION_CLOSING,
+    TRANSITION_CONNECTED,
+    TRANSITION_CONNECTING,
+    TRANSITION_DISCONNECTED,
+    TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
+    TRANSITION_FORCE_RECONNECT_COMPLETE,
+    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+    TRANSITION_FORCE_RECONNECT_START,
+    TRANSITION_RECONNECTED,
+    log_connection_event,
+)
+from activelearning.consumer_lag import (
+    ConsumerLagSnapshot,
+    emit_consumer_lag_alert,
+    lag_check_interval_seconds,
+    lag_threshold,
+    should_emit_lag_alert,
+    should_monitor_consumer,
+)
+from activelearning.core import current_timestamp
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -29,7 +53,12 @@ from activelearning.messages import (
     validate_payload,
 )
 from activelearning.signing import verify_decision
-from activelearning.subjects import Subjects, code_decision_subject, decision_subject
+from activelearning.subjects import (
+    Subjects,
+    code_decision_subject,
+    decision_subject,
+    eventbus_metrics_subject,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,11 +167,21 @@ class EventBus:
         # redelivery or unprocessable). Optional; the DLQ subject is always used.
         self._poison_handlers: dict[str, MessageHandler] = {}
         self._connected = asyncio.Event()
+        # consumer_name -> alert tier emitted while lag remains above threshold
+        self._lag_alerts_emitted: dict[str, int] = {}
+        self._metrics = EventBusMetrics()
+        self._metrics_task: asyncio.Task[None] | None = None
+        self._metrics_interval_s = float(os.environ.get("EVENTBUS_METRICS_INTERVAL_S", "10"))
 
     async def connect(self) -> None:
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
-            logger.debug("Already connected to NATS")
+            log_connection_event(
+                TRANSITION_ALREADY_CONNECTED,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                level=logging.DEBUG,
+            )
             return
 
         connect_kwargs: dict[str, Any] = {
@@ -153,24 +192,38 @@ class EventBus:
             "max_reconnect_attempts": -1,
         }
 
+        creds_mode = "none"
         if self.nats_creds:
             if os.path.isfile(self.nats_creds):
                 connect_kwargs["user_credentials"] = self.nats_creds
-                logger.info(
-                    "Connecting to NATS at %s with credentials %s", self.nats_url, self.nats_creds
-                )
+                creds_mode = "file"
             else:
                 # Credentials configured but file absent — dev fallback, never
                 # crash so local runs work before gen-creds.sh has been run.
-                logger.warning(
-                    "NATS_CREDS=%s not found — connecting without per-service "
-                    "credentials (dev fallback). Run deploy/scripts/gen-creds.sh "
-                    "to enable per-service identities.",
-                    self.nats_creds,
+                creds_mode = "missing_file"
+                log_connection_event(
+                    TRANSITION_CONNECTING,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    creds_mode=creds_mode,
+                    creds_path=self.nats_creds,
+                    level=logging.WARNING,
+                    message=(
+                        "NATS_CREDS file not found; connecting without per-service "
+                        "credentials (dev fallback)"
+                    ),
                 )
-                logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
         else:
-            logger.info("Connecting to NATS at %s (no credentials)", self.nats_url)
+            creds_mode = "none"
+
+        if creds_mode != "missing_file":
+            log_connection_event(
+                TRANSITION_CONNECTING,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                creds_mode=creds_mode,
+                creds_path=self.nats_creds if creds_mode == "file" else None,
+            )
 
         self._nc = await nats.connect(self.nats_url, **connect_kwargs)
 
@@ -179,12 +232,23 @@ class EventBus:
         await self._ensure_safety_stream()
 
         self._connected.set()
-        logger.info("Connected to NATS successfully (name=%s)", self.name)
+        log_connection_event(
+            TRANSITION_CONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            creds_mode=creds_mode,
+        )
 
     async def close(self) -> None:
         """Close the NATS connection."""
+        await self.stop_metrics_reporter()
         if self._nc is not None:
-            logger.info("Closing NATS connection")
+            log_connection_event(
+                TRANSITION_CLOSING,
+                client_name=self.name,
+                nats_url=self.nats_url,
+                subscription_count=len(self._subscriptions),
+            )
             await self._nc.drain()
             await self._nc.close()
             self._nc = None
@@ -195,6 +259,12 @@ class EventBus:
             self._request_handlers.clear()
             self._js_durables.clear()
             self._poison_handlers.clear()
+            self._lag_alerts_emitted.clear()
+            log_connection_event(
+                TRANSITION_CLOSED,
+                client_name=self.name,
+                nats_url=self.nats_url,
+            )
 
     async def _ensure_safety_stream(self) -> None:
         """Create or update the durable JetStream stream for safety-critical subjects.
@@ -210,6 +280,69 @@ class EventBus:
         await self._js.add_stream(config)
         logger.info("JetStream stream '%s' ready", SAFETY_STREAM_NAME)
 
+    async def fetch_consumer_lag_snapshots(
+        self,
+        stream: str = SAFETY_STREAM_NAME,
+    ) -> list[ConsumerLagSnapshot]:
+        """Return pending/ack lag for durable consumers on a JetStream stream."""
+        await self._ensure_connected()
+        assert self._js is not None
+        snapshots: list[ConsumerLagSnapshot] = []
+        consumers = await self._js.consumers_info(stream)
+        for info in consumers:
+            consumer_name = info.name
+            if not should_monitor_consumer(consumer_name):
+                continue
+            filter_subject = getattr(info.config, "filter_subject", None)
+            snapshots.append(
+                ConsumerLagSnapshot(
+                    stream=stream,
+                    consumer=consumer_name,
+                    num_pending=info.num_pending or 0,
+                    num_ack_pending=info.num_ack_pending or 0,
+                    filter_subject=filter_subject,
+                )
+            )
+        return snapshots
+
+    async def check_consumer_lags(
+        self,
+        stream: str = SAFETY_STREAM_NAME,
+    ) -> list[dict[str, Any]]:
+        """Poll consumer_info and emit structured alerts when lag exceeds threshold."""
+        threshold = lag_threshold()
+        alerts: list[dict[str, Any]] = []
+        for snapshot in await self.fetch_consumer_lag_snapshots(stream):
+            if snapshot.lag < threshold:
+                self._lag_alerts_emitted.pop(snapshot.consumer, None)
+                continue
+            emitted = self._lag_alerts_emitted.get(snapshot.consumer, 0)
+            if should_emit_lag_alert(snapshot.lag, threshold, emitted):
+                alert = emit_consumer_lag_alert(
+                    snapshot,
+                    threshold=threshold,
+                    monitor=self.name,
+                )
+                self._lag_alerts_emitted[snapshot.consumer] = snapshot.lag // threshold
+                alerts.append(alert)
+        return alerts
+
+    async def run_lag_monitor(
+        self,
+        interval_s: float | None = None,
+        stream: str = SAFETY_STREAM_NAME,
+    ) -> None:
+        """Background poll loop for JetStream consumer lag (issue #224)."""
+        interval = interval_s if interval_s is not None else lag_check_interval_seconds()
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self.check_consumer_lags(stream)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("JetStream lag monitor error: %s", e)
+
     @staticmethod
     def _is_safety_critical(subject: str) -> bool:
         """Return True when this subject must use JetStream persistence."""
@@ -220,6 +353,11 @@ class EventBus:
         ):
             return True
         return False
+
+    @staticmethod
+    def _is_metrics_subject(subject: str) -> bool:
+        """Metrics heartbeats are excluded from publish counters."""
+        return subject.startswith(Subjects.EVENTBUS_METRICS_PREFIX)
 
     async def publish(
         self,
@@ -244,7 +382,10 @@ class EventBus:
         if isinstance(data, dict):
             data = validate_payload(subject, data, message_model)
         payload = serialize_message(data)
-        if self._is_safety_critical(subject):
+        track_publish = not self._is_metrics_subject(subject)
+        t0 = time.perf_counter()
+        is_js = self._is_safety_critical(subject)
+        if is_js:
             assert self._js is not None
             ack = await self._js.publish(subject, payload)
             logger.debug("JS-published to %s (seq=%d): %d bytes", subject, ack.seq, len(payload))
@@ -252,6 +393,8 @@ class EventBus:
             assert self._nc is not None
             await self._nc.publish(subject, payload)
             logger.debug("Published to %s: %d bytes", subject, len(payload))
+        if track_publish:
+            self._metrics.record_publish((time.perf_counter() - t0) * 1000, jetstream=is_js)
 
     async def subscribe(
         self,
@@ -285,6 +428,7 @@ class EventBus:
         wire_model = message_model or schema_for_subject(subject)
 
         async def message_callback(msg: Msg) -> None:
+            t0 = time.perf_counter()
             try:
                 data = deserialize_message(msg.data)
                 if not isinstance(data, dict):
@@ -328,6 +472,8 @@ class EventBus:
                         )
                     except Exception:
                         pass  # best-effort error reply
+            finally:
+                self._metrics.record_subscribe_delivery((time.perf_counter() - t0) * 1000)
 
         assert self._nc is not None
         sub = await self._nc.subscribe(
@@ -343,6 +489,10 @@ class EventBus:
             self._request_handlers.add(subject)
         else:
             self._request_handlers.discard(subject)
+        # Flush so the server has processed the SUB before we return. Without
+        # this, a caller that immediately sends a request() after subscribe()
+        # can race the SUB through the write buffer and get NoRespondersError.
+        await self._nc.flush()
         logger.info(f"Subscribed to {subject}")
 
     async def js_subscribe(
@@ -398,53 +548,57 @@ class EventBus:
             self._poison_handlers[subject] = poison_handler
 
         async def _js_message_callback(msg: Msg) -> None:
-            # Structurally bad messages can never succeed on retry → poison now.
-            # This block only parses and validates — the handler runs exactly
-            # once, in the delivery block below. (A duplicated handler+ack here
-            # used to double-invoke every JS handler and double-ack the message,
-            # surfacing as MsgAlreadyAckdError and spurious redeliveries.)
+            t0 = time.perf_counter()
             try:
-                data = deserialize_message(msg.data)
-                if not isinstance(data, dict):
-                    raise MessageValidationError(
-                        subject,
-                        f"expected JSON object, got {type(data).__name__}",
-                    )
-                data = validate_payload(subject, data, wire_model)
-            except MessageValidationError as e:
-                logger.error("Poisoning unprocessable message on %s: %s", subject, e)
-                await self._route_to_poison(subject, msg, f"validation_error: {e}")
-                await msg.term()
-                return
-
-            try:
-                await handler(data)
-                await msg.ack()  # exactly-once ack, only after success
-            except Exception as e:
-                delivered = self._num_delivered(msg)
-                if delivered >= max_deliver:
-                    # Exhausted bounded redelivery → dead-letter, then term so it
-                    # stops redelivering (never an infinite loop, never dropped).
-                    logger.error(
-                        "Poisoning %s after %d/%d deliveries: %s",
-                        subject,
-                        delivered,
-                        max_deliver,
-                        e,
-                    )
-                    await self._route_to_poison(
-                        subject, msg, f"max_deliver_exhausted({delivered}): {e}"
-                    )
+                # Structurally bad messages can never succeed on retry → poison now.
+                # This block only parses and validates — the handler runs exactly
+                # once, in the delivery block below. (A duplicated handler+ack here
+                # used to double-invoke every JS handler and double-ack the message,
+                # surfacing as MsgAlreadyAckdError and spurious redeliveries.)
+                try:
+                    data = deserialize_message(msg.data)
+                    if not isinstance(data, dict):
+                        raise MessageValidationError(
+                            subject,
+                            f"expected JSON object, got {type(data).__name__}",
+                        )
+                    data = validate_payload(subject, data, wire_model)
+                except MessageValidationError as e:
+                    logger.error("Poisoning unprocessable message on %s: %s", subject, e)
+                    await self._route_to_poison(subject, msg, f"validation_error: {e}")
                     await msg.term()
-                else:
-                    logger.warning(
-                        "Handler failed on %s (delivery %d/%d), will redeliver: %s",
-                        subject,
-                        delivered,
-                        max_deliver,
-                        e,
-                    )
-                    await msg.nak()
+                    return
+
+                try:
+                    await handler(data)
+                    await msg.ack()  # exactly-once ack, only after success
+                except Exception as e:
+                    delivered = self._num_delivered(msg)
+                    if delivered >= max_deliver:
+                        # Exhausted bounded redelivery → dead-letter, then term so it
+                        # stops redelivering (never an infinite loop, never dropped).
+                        logger.error(
+                            "Poisoning %s after %d/%d deliveries: %s",
+                            subject,
+                            delivered,
+                            max_deliver,
+                            e,
+                        )
+                        await self._route_to_poison(
+                            subject, msg, f"max_deliver_exhausted({delivered}): {e}"
+                        )
+                        await msg.term()
+                    else:
+                        logger.warning(
+                            "Handler failed on %s (delivery %d/%d), will redeliver: %s",
+                            subject,
+                            delivered,
+                            max_deliver,
+                            e,
+                        )
+                        await msg.nak()
+            finally:
+                self._metrics.record_subscribe_delivery((time.perf_counter() - t0) * 1000)
 
         config = ConsumerConfig(
             durable_name=durable,
@@ -541,7 +695,9 @@ class EventBus:
         await self._ensure_connected()
         assert self._nc is not None
         payload = serialize_message(data)
+        t0 = time.perf_counter()
         response = await self._nc.request(subject, payload, timeout=timeout)
+        self._metrics.record_request((time.perf_counter() - t0) * 1000)
         return deserialize_message(response.data)
 
     async def wait_for_decision(
@@ -575,6 +731,7 @@ class EventBus:
 
         async def _js_handler(msg: Msg) -> None:
             nonlocal result
+            t0 = time.perf_counter()
             try:
                 data = deserialize_message(msg.data)
                 if not isinstance(data, dict):
@@ -594,12 +751,30 @@ class EventBus:
                     )
                     await msg.ack()  # remove from stream; retrying won't fix a bad sig
                     return
+                # Expiry is itself a signed field (activelearning.signing.
+                # SIGNED_FIELDS), so a valid signature alone isn't enough — a
+                # captured, still-validly-signed old decision must not be
+                # replayable past its TTL. Reject at accept time, same as a
+                # bad signature: ignore and keep waiting for the real thing.
+                expires_at = data.get("expires_at")
+                if expires_at is not None and current_timestamp() > expires_at:
+                    logger.error(
+                        "Rejected decision on %s: expired at %s (now %s) — "
+                        "possible replay of a stale decision.",
+                        subject,
+                        expires_at,
+                        current_timestamp(),
+                    )
+                    await msg.ack()  # remove from stream; it will never become valid
+                    return
                 result = data
                 decision_received.set()
                 await msg.ack()
             except MessageValidationError as e:
                 logger.error(str(e))
                 await msg.ack()
+            finally:
+                self._metrics.record_subscribe_delivery((time.perf_counter() - t0) * 1000)
 
         assert self._js is not None
         sub = await self._js.subscribe(
@@ -635,9 +810,12 @@ class EventBus:
         for subject, handler in self._handlers.items():
             saved_handlers[subject] = (handler, subject in self._request_handlers)
 
-        logger.warning(
-            "force_reconnect: tearing down NATS connection (%d subs to restore)",
-            len(saved_handlers),
+        log_connection_event(
+            TRANSITION_FORCE_RECONNECT_START,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            subscription_count=len(saved_handlers),
+            level=logging.WARNING,
         )
 
         # Best-effort close of old connection
@@ -645,7 +823,13 @@ class EventBus:
             try:
                 await asyncio.wait_for(self._nc.close(), timeout=5.0)
             except Exception as e:
-                logger.warning("force_reconnect: close failed (expected): %s", e)
+                log_connection_event(
+                    TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    error=str(e),
+                    level=logging.WARNING,
+                )
             self._nc = None
             self._js = None
             self._connected.clear()
@@ -671,9 +855,21 @@ class EventBus:
                 else:
                     await self.subscribe(subject, handler, is_request_handler=is_req)
             except Exception as e:
-                logger.error("force_reconnect: failed to re-subscribe %s: %s", subject, e)
+                log_connection_event(
+                    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+                    client_name=self.name,
+                    nats_url=self.nats_url,
+                    subject=subject,
+                    error=str(e),
+                    level=logging.ERROR,
+                )
 
-        logger.info("force_reconnect: complete, %d subs restored", len(self._subscriptions))
+        log_connection_event(
+            TRANSITION_FORCE_RECONNECT_COMPLETE,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            subscription_count=len(self._subscriptions),
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -716,12 +912,58 @@ class EventBus:
     async def _disconnected_callback(self) -> None:
         """Handle NATS disconnection."""
         self._connected.clear()
-        logger.warning("Disconnected from NATS")
+        log_connection_event(
+            TRANSITION_DISCONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+            level=logging.WARNING,
+        )
 
     async def _reconnected_callback(self) -> None:
         """Handle NATS reconnection."""
         self._connected.set()
-        logger.info("Reconnected to NATS")
+        log_connection_event(
+            TRANSITION_RECONNECTED,
+            client_name=self.name,
+            nats_url=self.nats_url,
+        )
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Return a snapshot of in-process publish/subscribe/request stats."""
+        return self._metrics.snapshot(self.name)
+
+    async def start_metrics_reporter(self, interval_s: float | None = None) -> None:
+        """Periodically publish metrics to eventbus.metrics.{name}."""
+        if self._metrics_task is not None:
+            return
+        interval = interval_s if interval_s is not None else self._metrics_interval_s
+
+        async def _loop() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(interval)
+                    if self.is_connected:
+                        await self.publish(
+                            eventbus_metrics_subject(self.name),
+                            self.get_metrics(),
+                        )
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug("EventBus metrics reporter: %s", e)
+
+        self._metrics_task = asyncio.create_task(_loop())
+
+    async def stop_metrics_reporter(self) -> None:
+        """Stop the periodic metrics publisher."""
+        if self._metrics_task is None:
+            return
+        self._metrics_task.cancel()
+        try:
+            await self._metrics_task
+        except asyncio.CancelledError:
+            pass
+        self._metrics_task = None
 
 
 # Global event bus instance for convenience

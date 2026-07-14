@@ -142,6 +142,8 @@ class OverrideService(BaseService):
             parameter=parameter,
             value=value,
             verified_by=verification["method"],
+            prompt=prompt,
+            verification_confidence=verification.get("confidence"),
         )
 
         if result["success"]:
