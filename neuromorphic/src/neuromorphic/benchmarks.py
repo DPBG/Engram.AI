@@ -13,8 +13,14 @@ Usage:
     results = suite.run_all()
     suite.save_results(results, "benchmarks/")
 
+    # Multiple seeds, with mean + confidence interval per metric — a single-seed
+    # score can't tell "the network learned this" from "this init got lucky":
+    results = suite.run_multi_seed(n_seeds=5)
+    print(suite.summary_multi_seed(results))
+
     # Or run from checkpoint on server:
     cd neuromorphic && uv run python -m neuromorphic.benchmarks --checkpoint /data/sqlite/neuromorphic.db
+    cd neuromorphic && uv run python -m neuromorphic.benchmarks --seeds 5
 """
 from __future__ import annotations
 
@@ -23,6 +29,8 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 import numpy as np
+from scipy import stats
+
 from neuromorphic.cross_modal_probe import CrossModalProbe
 
 if TYPE_CHECKING:
@@ -52,6 +60,40 @@ def _to_native(obj: Any) -> Any:
     if isinstance(obj, np.floating): return float(obj)
     if isinstance(obj, np.ndarray): return obj.tolist()
     return obj
+
+def _flatten_numeric(d: Any, prefix: str = "") -> dict[str, float]:
+    """Recursively flatten a nested results dict to {"dotted.path": numeric_value}.
+
+    Strings (timestamps, phase names, ...) and booleans are dropped; only
+    values that can be aggregated across seeds survive.
+    """
+    out: dict[str, float] = {}
+    if isinstance(d, dict):
+        for k, v in d.items():
+            out.update(_flatten_numeric(v, f"{prefix}.{k}" if prefix else k))
+    elif isinstance(d, bool):
+        pass
+    elif isinstance(d, (int, float, np.integer, np.floating)):
+        out[prefix] = float(d)
+    return out
+
+
+def _confidence_interval(values: list[float], confidence: float = 0.95) -> tuple[float, float]:
+    """Mean and CI half-width via Student's t-distribution (valid for small N).
+
+    Returns (mean, half_width) such that the interval is [mean - half_width,
+    mean + half_width]. With fewer than 2 samples the interval collapses to
+    a point (half_width=0) since variance is undefined.
+    """
+    arr = np.asarray(values, dtype=np.float64)
+    mean = float(arr.mean())
+    n = len(arr)
+    if n < 2:
+        return mean, 0.0
+    sem = float(arr.std(ddof=1)) / np.sqrt(n)
+    t_crit = float(stats.t.ppf((1 + confidence) / 2, df=n - 1))
+    return mean, t_crit * sem
+
 
 def _inject_paired(net: NeuromorphicNetwork, pat: dict, steps: int) -> None:
     """Inject visual then paired visual+auditory for the given step count."""
@@ -294,6 +336,49 @@ class BenchmarkSuite:
             "association_strength": ass, "energy_efficiency": en,
         })
 
+    def run_multi_seed(self, n_seeds: int = 5, n_patterns: int = 20, training_reps: int = 10,
+                       steps_per_pattern: int = 20, base_seed: int = 42,
+                       confidence: float = 0.95) -> dict[str, Any]:
+        """Run the full suite across n_seeds distinct seeds and aggregate per-metric stats.
+
+        A single-seed score can't distinguish "the network learned this" from
+        "this particular initialization got lucky" — this runs the suite N
+        times with distinct seeds and reports a mean + confidence interval for
+        every numeric metric, so claims about performance are defensible.
+        """
+        seeds = [base_seed + i for i in range(n_seeds)]
+        t0 = time.perf_counter()
+        runs = []
+        for i, seed in enumerate(seeds):
+            logger.info("Multi-seed run %d/%d (seed=%d)", i + 1, n_seeds, seed)
+            runs.append(self.run_all(n_patterns, training_reps, steps_per_pattern, seed))
+
+        flattened = [_flatten_numeric(r) for r in runs]
+        metric_names = sorted({name for f in flattened for name in f})
+        aggregate = {}
+        for name in metric_names:
+            values = [f[name] for f in flattened if name in f]
+            if not values:
+                continue
+            mean, half_width = _confidence_interval(values, confidence)
+            aggregate[name] = {
+                "mean": round(mean, 6),
+                "std": round(float(np.std(values, ddof=1)), 6) if len(values) > 1 else 0.0,
+                "ci_low": round(mean - half_width, 6),
+                "ci_high": round(mean + half_width, 6),
+                "n": len(values),
+            }
+
+        return _to_native({
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "n_seeds": n_seeds,
+            "seeds": seeds,
+            "confidence": confidence,
+            "elapsed_s": round(time.perf_counter() - t0, 2),
+            "aggregate": aggregate,
+            "runs": runs,
+        })
+
     def save_results(self, results: dict[str, Any], output_dir: str) -> Path:
         out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
         path = out / f"benchmarks_{time.strftime('%Y%m%d_%H%M%S')}.json"
@@ -333,6 +418,36 @@ class BenchmarkSuite:
                   "", "=" * 35]
         return "\n".join(lines)
 
+    @staticmethod
+    def summary_multi_seed(results: dict[str, Any]) -> str:
+        """Human-readable mean + confidence-interval summary for a multi-seed run."""
+        agg = results.get("aggregate", {})
+        lines = [
+            "=== Engram Multi-Seed Benchmark Summary ===",
+            f"Seeds: {results.get('n_seeds', '?')} {results.get('seeds', [])}  |  "
+            f"Confidence: {results.get('confidence', 0.95):.0%}  |  "
+            f"Time: {results.get('elapsed_s', '?')}s", "",
+        ]
+        headline_metrics = [
+            "cross_modal_recall.visual_to_auditory_recall",
+            "cross_modal_recall.auditory_to_visual_recall",
+            "cross_modal_recall.binding_strength_delta",
+            "novelty_detection.discrimination_ratio",
+            "association_strength.concept_count",
+            "energy_efficiency.global_firing_rate",
+        ]
+        for name in headline_metrics:
+            stat = agg.get(name)
+            if not stat:
+                continue
+            lines.append(
+                f"  {name}: {stat['mean']:.4f}  "
+                f"(95% CI: [{stat['ci_low']:.4f}, {stat['ci_high']:.4f}], n={stat['n']})"
+            )
+        lines += ["", f"  {len(agg)} metrics tracked across seeds (full detail in saved JSON)",
+                  "", "=" * 45]
+        return "\n".join(lines)
+
 # ---------------------------------------------------------------------------
 # CLI: python -m neuromorphic.benchmarks
 # ---------------------------------------------------------------------------
@@ -343,6 +458,17 @@ def main() -> None:
     parser.add_argument("--patterns", type=int, default=20)
     parser.add_argument("--reps", type=int, default=10)
     parser.add_argument("--steps", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=42, help="Base random seed (default: 42)")
+    parser.add_argument(
+        "--seeds", type=int, default=1,
+        help="Number of distinct seeds to run (default: 1). When > 1, runs the "
+             "suite once per seed and reports mean + confidence interval per "
+             "metric instead of a single-run summary.",
+    )
+    parser.add_argument(
+        "--confidence", type=float, default=0.95,
+        help="Confidence level for multi-seed intervals (default: 0.95)",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     from neuromorphic.config import NeuromorphicConfig
@@ -363,9 +489,17 @@ def main() -> None:
             network.set_state(state)
             print(f"  Restored at step {network.step_count:,}")
     suite = BenchmarkSuite(network)
-    results = suite.run_all(args.patterns, args.reps, args.steps)
-    path = suite.save_results(results, args.output)
-    print(suite.summary(results))
+    if args.seeds > 1:
+        results = suite.run_multi_seed(
+            args.seeds, args.patterns, args.reps, args.steps,
+            base_seed=args.seed, confidence=args.confidence,
+        )
+        path = suite.save_results(results, args.output)
+        print(suite.summary_multi_seed(results))
+    else:
+        results = suite.run_all(args.patterns, args.reps, args.steps, args.seed)
+        path = suite.save_results(results, args.output)
+        print(suite.summary(results))
     print(f"\nResults saved: {path}")
 
 if __name__ == "__main__":

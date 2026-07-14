@@ -16,6 +16,8 @@ from neuromorphic.benchmarks import (
     EnergyEfficiencyBenchmark,
     generate_test_patterns,
     _to_native,
+    _flatten_numeric,
+    _confidence_interval,
 )
 
 
@@ -170,3 +172,102 @@ class TestBenchmarkSuite:
         import json
         data = json.loads(path.read_text())
         assert "cross_modal_recall" in data
+
+
+class TestFlattenNumeric:
+    def test_flattens_nested_dicts(self):
+        d = {"a": 1, "b": {"c": 2.5, "d": {"e": 3}}}
+        flat = _flatten_numeric(d)
+        assert flat == {"a": 1.0, "b.c": 2.5, "b.d.e": 3.0}
+
+    def test_drops_non_numeric(self):
+        d = {"label": "pattern_000", "enabled": True, "value": 1.5, "items": [1, 2, 3]}
+        flat = _flatten_numeric(d)
+        assert flat == {"value": 1.5}
+
+    def test_empty_dict(self):
+        assert _flatten_numeric({}) == {}
+
+
+class TestConfidenceInterval:
+    def test_single_value_has_zero_width(self):
+        mean, half_width = _confidence_interval([5.0])
+        assert mean == 5.0
+        assert half_width == 0.0
+
+    def test_identical_values_have_zero_width(self):
+        mean, half_width = _confidence_interval([3.0, 3.0, 3.0])
+        assert mean == 3.0
+        assert half_width == pytest.approx(0.0, abs=1e-9)
+
+    def test_wider_confidence_gives_wider_interval(self):
+        values = [1.0, 2.0, 3.0, 4.0, 5.0]
+        _, narrow = _confidence_interval(values, confidence=0.80)
+        _, wide = _confidence_interval(values, confidence=0.99)
+        assert wide > narrow
+
+    def test_mean_is_correct(self):
+        mean, _ = _confidence_interval([2.0, 4.0, 6.0])
+        assert mean == pytest.approx(4.0)
+
+
+class TestMultiSeed:
+    def test_run_multi_seed_structure(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=3, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        assert results["n_seeds"] == 3
+        assert len(results["seeds"]) == 3
+        assert len(results["seeds"]) == len(set(results["seeds"]))  # distinct seeds
+        assert len(results["runs"]) == 3
+        assert "aggregate" in results
+
+    def test_aggregate_has_mean_and_ci(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=3, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        agg = results["aggregate"]
+        assert len(agg) > 0
+        for name, stat in agg.items():
+            assert set(stat.keys()) == {"mean", "std", "ci_low", "ci_high", "n"}
+            assert stat["n"] == 3
+            assert stat["ci_low"] <= stat["mean"] <= stat["ci_high"]
+
+    def test_single_seed_collapses_ci(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=1, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        agg = results["aggregate"]
+        for stat in agg.values():
+            assert stat["ci_low"] == stat["mean"] == stat["ci_high"]
+
+    def test_base_seed_controls_seed_sequence(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=2, n_patterns=2, training_reps=1, steps_per_pattern=4, base_seed=100
+        )
+        assert results["seeds"] == [100, 101]
+
+    def test_summary_multi_seed(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=2, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        text = suite.summary_multi_seed(results)
+        assert "Multi-Seed" in text
+        assert "95% CI" in text or "metrics tracked" in text
+
+    def test_save_multi_seed_results(self, small_network, tmp_path):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=2, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        path = suite.save_results(results, str(tmp_path))
+        assert path.exists()
+        import json
+        data = json.loads(path.read_text())
+        assert data["n_seeds"] == 2
+        assert "aggregate" in data
