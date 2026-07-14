@@ -236,11 +236,7 @@ def test_nats_partition_during_defer_window_expires_as_deny():
 
         # Partition heals: late Approve must not deploy / revive.
         consumer, late_results = _make_consumer(sm, bus, defer_ttl_ms=_DEFER_TTL_MS)
-        _run(
-            consumer.handle_approval_response(
-                {"trace_id": "defer-partition-1", "approved": True}
-            )
-        )
+        _run(consumer.handle_approval_response({"trace_id": "defer-partition-1", "approved": True}))
         assert late_results == []
         assert sm.get_metadata("defer-partition-1")["stage"] == "rejected"
 
