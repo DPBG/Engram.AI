@@ -15,7 +15,28 @@ from urllib.parse import urlparse
 
 import pytest
 
+import activelearning.database as _database_module
+import activelearning.nats_client as _nats_client_module
 from activelearning.nats_client import EventBus
+
+
+@pytest.fixture(autouse=True)
+async def _reset_global_singletons() -> AsyncGenerator[None, None]:
+    """Guarantee each test starts and ends with no live global singleton.
+
+    ``activelearning.database._db`` and ``activelearning.nats_client._global_bus``
+    are lazily-created module-level singletons with no built-in reset (issue
+    #248). A test that exercises either one for real — e.g. by driving a
+    ``BaseService`` subclass through its actual ``start()``/``stop()``
+    lifecycle instead of mocking ``get_database``/``get_event_bus`` — leaves it
+    connected for every later test in the same pytest process to inherit,
+    regardless of collection order. This autouse fixture closes and resets
+    both after every test in this suite so that class of leak cannot occur
+    here even if a future test forgets to clean up after itself.
+    """
+    yield
+    await _database_module.close_database()
+    await _nats_client_module.close_event_bus()
 
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
