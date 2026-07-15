@@ -74,9 +74,7 @@ def test_action_proposal_denies_when_beliefs_unavailable():
     async def _low_risk(*args, **kwargs):
         return RiskAnalysis(trace_id="t-down", risk_score=0.65, flags=[])
 
-    async def _capture_publish(
-        trace_id, proposal_type, source, decision, **kwargs
-    ):
+    async def _capture_publish(trace_id, proposal_type, source, decision, **kwargs):
         decisions.append(decision)
 
     svc.event_bus = type("Bus", (), {"request": _beliefs_timeout})()
