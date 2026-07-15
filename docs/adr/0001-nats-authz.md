@@ -350,6 +350,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `system.health` | all services | dashboard | Liveness. |
 | `heartbeat.*` | all services | dashboard | Per-service heartbeat (`heartbeat.<service>`). |
 | `eventbus.metrics.>` | all services, dashboard | dashboard | Periodic EventBus publish/subscribe/request latency snapshots (`eventbus.metrics.<service>`). |
+| `dlq.>` | kernel (via `_route_to_poison`) | kernel, dashboard | Dead-letter envelope for a message that exhausted redelivery or failed validation (`dlq.<original_subject>`, issue #246). Kernel's `start_dlq_monitor()` consumes and alerts; the dashboard surfaces counts/content in the Dead Letters panel. |
 
 > The dashboard additionally holds a single broad **subscribe-only** grant on
 > `>` to drive the live UI. It conveys **no** publish rights. This is the one

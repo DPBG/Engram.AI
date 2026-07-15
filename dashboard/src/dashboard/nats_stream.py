@@ -35,6 +35,8 @@ DEDICATED_SUBJECTS = frozenset(
     }
 )
 EVENTBUS_METRICS_PREFIX = "eventbus.metrics."
+# Dead-letter queue (issue #246) — poisoned messages land on dlq.<subject>.
+DLQ_SUBJECT_PREFIX = "dlq."
 
 
 class NatsStreamManager:
@@ -182,6 +184,7 @@ class NatsStreamManager:
             await nc.subscribe("observation.visual.body", cb=self._handle_visual_body)
             await nc.subscribe("safety.halt.status", cb=self._handle_safe_halt_status)
             await nc.subscribe("eventbus.metrics.>", cb=self._handle_bus_metrics)
+            await nc.subscribe("dlq.>", cb=self._handle_dlq_message)
         except Exception as e:
             self.logger.warning(f"NATS failed (non-fatal): {e}")
             self._connected = False
@@ -195,6 +198,7 @@ class NatsStreamManager:
             msg.subject in DEDICATED_SUBJECTS
             or msg.subject.startswith("heartbeat.")
             or msg.subject.startswith(EVENTBUS_METRICS_PREFIX)
+            or msg.subject.startswith(DLQ_SUBJECT_PREFIX)
         ):
             return
 
@@ -270,6 +274,20 @@ class NatsStreamManager:
             )
         except Exception as e:
             self.logger.debug("Failed to handle bus metrics: %s", e)
+
+    async def _handle_dlq_message(self, msg):
+        """Surface a dead-lettered message (issue #246) — previously nothing
+        consumed dlq.<subject>, so operators had zero visibility into it."""
+        try:
+            data = json.loads(msg.data.decode())
+        except Exception:
+            data = {"raw": msg.data.decode(errors="replace")[:500]}
+        if not isinstance(data, dict):
+            data = {"payload": data}
+        record = {**data, "dlq_subject": msg.subject, "observed_at": now_iso()}
+        self._state.record_dlq_message(record)
+        self.logger.error("Dead-lettered message observed on %s: %s", msg.subject, record)
+        await self._broadcast({"type": "dlq_update", "data": self._state.dlq_summary()})
 
     async def _handle_heartbeat(self, msg):
         try:

@@ -115,4 +115,10 @@ def build_system_router(ctx: DashboardContext, static_dir: str) -> APIRouter:
         payload["timestamp"] = now_iso()
         return payload
 
+    # ── Dead-letter queue ─────────────────────────────────────────────────
+    @router.get("/api/dlq")
+    async def get_dlq():
+        """Dead-letter counts/content (issue #246) — dlq.<subject> visibility."""
+        return {**state.dlq_summary(), "timestamp": now_iso()}
+
     return router
