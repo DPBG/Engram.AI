@@ -45,6 +45,7 @@ from activelearning.consumer_lag import (
     should_monitor_consumer,
 )
 from activelearning.core import current_timestamp
+from activelearning.dlq_monitor import emit_dlq_alert, parse_dlq_envelope
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -342,6 +343,17 @@ class EventBus:
                 break
             except Exception as e:
                 logger.warning("JetStream lag monitor error: %s", e)
+
+    async def _handle_dlq_message(self, data: dict[str, Any]) -> None:
+        """Alert on a dead-lettered message (issue #246): observe, never re-drop."""
+        original_subject = str(data.get("original_subject", "unknown"))
+        record = parse_dlq_envelope(poison_subject(original_subject), data)
+        emit_dlq_alert(record, monitor=self.name)
+
+    async def start_dlq_monitor(self) -> None:
+        """Subscribe to the dead-letter wildcard so poisoned messages are observed
+        and alerted on (issue #246) instead of accumulating silently forever."""
+        await self.subscribe(Subjects.DLQ_WILDCARD, self._handle_dlq_message)
 
     @staticmethod
     def _is_safety_critical(subject: str) -> bool:

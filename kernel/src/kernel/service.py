@@ -223,6 +223,9 @@ class KernelService(BaseService):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         # JetStream consumer lag monitor (M2.1, issue #224).
         self._lag_monitor_task = asyncio.create_task(self.event_bus.run_lag_monitor())
+        # Dead-letter monitor (issue #246): observe and alert on poisoned messages
+        # instead of letting them accumulate silently on dlq.<subject>.
+        await self.event_bus.start_dlq_monitor()
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""

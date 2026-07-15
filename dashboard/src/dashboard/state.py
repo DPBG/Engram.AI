@@ -22,6 +22,7 @@ MAX_VIDEO_SESSIONS = 100
 MAX_INSIGHTS = 100
 MAX_DENY_ESCALATIONS = 50
 MAX_PROBE_RESULTS = 200
+MAX_DLQ_MESSAGES = 200
 
 
 class ConnectionManager:
@@ -95,6 +96,11 @@ class DashboardState:
         self.concept_probe_results: list[dict] = []
         self.bus_metrics_by_service: dict[str, dict] = {}
 
+        # Dead-letter queue visibility (issue #246) — dlq.<subject> was
+        # published to but nothing observed it; this tracks what arrives.
+        self.dlq_messages: deque = deque(maxlen=MAX_DLQ_MESSAGES)
+        self.dlq_counts_by_subject: dict[str, int] = {}
+
     def bus_metrics_list(self, *, include_dashboard: dict | None = None) -> list[dict]:
         """Sorted per-service EventBus metric snapshots for the UI."""
         merged = dict(self.bus_metrics_by_service)
@@ -114,6 +120,21 @@ class DashboardState:
         )
         if len(self.chat_history) > MAX_CHAT_HISTORY:
             self.chat_history[:] = self.chat_history[-MAX_CHAT_HISTORY:]
+
+    # ── dead-letter queue ─────────────────────────────────────────────────
+    def record_dlq_message(self, data: dict) -> None:
+        """Store a dead-lettered message and bump its per-subject count."""
+        self.dlq_messages.append(data)
+        subject = data.get("original_subject") or "unknown"
+        self.dlq_counts_by_subject[subject] = self.dlq_counts_by_subject.get(subject, 0) + 1
+
+    def dlq_summary(self) -> dict:
+        """Counts-by-subject plus the most recent dead letters, for the panel/API."""
+        return {
+            "total": sum(self.dlq_counts_by_subject.values()),
+            "by_subject": dict(self.dlq_counts_by_subject),
+            "recent": list(self.dlq_messages)[-50:],
+        }
 
     # ── concept probe results ─────────────────────────────────────────────
     def add_probe_result(self, data: dict) -> None:

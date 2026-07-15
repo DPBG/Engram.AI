@@ -109,6 +109,19 @@ def test_system_router_health_and_endpoints():
     assert client.get("/dashboard").json() == {"status": "ok"}
 
 
+def test_system_router_dlq_endpoint():
+    ctx, _, _, _ = _ctx()
+    client = _client(build_system_router(ctx, static_dir="/nonexistent"))
+
+    assert client.get("/api/dlq").json()["total"] == 0
+
+    ctx.state.record_dlq_message({"original_subject": "proposal.new", "reason": "boom"})
+    body = client.get("/api/dlq").json()
+    assert body["total"] == 1
+    assert body["by_subject"] == {"proposal.new": 1}
+    assert "timestamp" in body
+
+
 # ── introspection router ───────────────────────────────────────────────────
 
 
