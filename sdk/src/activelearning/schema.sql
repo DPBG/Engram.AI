@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS kernel_decisions (
     flags TEXT,                           -- JSON array of risk flags
     norm_violations TEXT,                 -- JSON array of violated norms
     body_profile TEXT,                    -- active body profile name
+    latency_ms REAL,                      -- end-to-end decision latency in milliseconds (added v2)
     issued_at INTEGER NOT NULL,
     expires_at INTEGER,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
