@@ -354,7 +354,7 @@ class KernelService(BaseService):
         profile_name = data.get("profile_name", "")
         if not profile_name:
             await self.event_bus.publish(
-                "policy.profile.status",
+                Subjects.POLICY_PROFILE_STATUS,
                 {
                     "status": "error",
                     "reason": "Missing profile_name",
@@ -382,7 +382,7 @@ class KernelService(BaseService):
 
             self.logger.info(f"Runtime profile switch: {profile.name}")
             await self.event_bus.publish(
-                "policy.profile.status",
+                Subjects.POLICY_PROFILE_STATUS,
                 {
                     "status": "loaded",
                     "profile": profile.name,
@@ -397,7 +397,7 @@ class KernelService(BaseService):
         except (FileNotFoundError, ValueError, ImportError) as e:
             self.logger.error(f"Failed to load profile '{profile_name}': {e}")
             await self.event_bus.publish(
-                "policy.profile.status",
+                Subjects.POLICY_PROFILE_STATUS,
                 {
                     "status": "error",
                     "reason": str(e),
@@ -415,7 +415,7 @@ class KernelService(BaseService):
         snap = self._rollback.rollback()
         if snap is None:
             await self.event_bus.publish(
-                "policy.rollback.status",
+                Subjects.POLICY_ROLLBACK_STATUS,
                 {
                     "status": "error",
                     "reason": "No rollback history available",
@@ -431,7 +431,7 @@ class KernelService(BaseService):
                 f"Policy rollback to '{snap.profile_name}' " f"(snapshot from {snap.reason})"
             )
             await self.event_bus.publish(
-                "policy.rollback.status",
+                Subjects.POLICY_ROLLBACK_STATUS,
                 {
                     "status": "rolled_back",
                     "profile": snap.profile_name,
@@ -441,7 +441,7 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"Rollback failed: {e}")
             await self.event_bus.publish(
-                "policy.rollback.status",
+                Subjects.POLICY_ROLLBACK_STATUS,
                 {
                     "status": "error",
                     "reason": str(e),
@@ -458,7 +458,7 @@ class KernelService(BaseService):
         if not valid:
             self.logger.warning(f"Policy update rejected: {reason}")
             await self.event_bus.publish(
-                "policy.update.status",
+                Subjects.POLICY_UPDATE_STATUS,
                 {
                     "status": "rejected",
                     "reason": reason,
@@ -501,7 +501,7 @@ class KernelService(BaseService):
 
         if valid:
             await self.event_bus.publish(
-                "cognitive.response.validated",
+                Subjects.COGNITIVE_RESPONSE_VALIDATED,
                 {
                     "trace_id": trace_id,
                     "response_text": response_text,
@@ -513,7 +513,7 @@ class KernelService(BaseService):
         else:
             self.logger.warning(f"Cognitive response rejected (trace={trace_id}): {reason}")
             await self.event_bus.publish(
-                "cognitive.response.rejected",
+                Subjects.COGNITIVE_RESPONSE_REJECTED,
                 {
                     "trace_id": trace_id,
                     "reason": reason,
@@ -530,7 +530,7 @@ class KernelService(BaseService):
         """
         if self._evaluator._body_profile is None:
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "error",
                     "reason": "No body profile loaded — cannot apply restrictions",
@@ -548,7 +548,7 @@ class KernelService(BaseService):
             self._evaluator.set_body_profile(restricted)
             self.logger.info("Applied runtime restrictions to body profile")
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "applied",
                     "profile": restricted.name,
@@ -563,7 +563,7 @@ class KernelService(BaseService):
         except ValueError as e:
             self.logger.warning(f"Runtime restriction rejected: {e}")
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "rejected",
                     "reason": str(e),
@@ -573,7 +573,7 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"Error applying restrictions: {e}")
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "error",
                     "reason": str(e),

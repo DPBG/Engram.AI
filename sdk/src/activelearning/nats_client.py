@@ -65,12 +65,35 @@ logger = logging.getLogger(__name__)
 
 # JetStream stream that guarantees delivery for every safety-critical subject.
 # Proposals and decisions must never be fire-and-forget.
+#
+# Single source of truth (issue #252): _ensure_safety_stream() (which subjects
+# JetStream persists) and _is_safety_critical() (which publish() calls route
+# through JetStream) both derive from these two tuples, so the two can never
+# drift apart the way a hand-maintained if/else in _is_safety_critical() could.
+#
+# This is also the Kernel-privileged publisher set from ADR 0001 §3 ("Only the
+# kernel user may publish" decision.>, code.decision.>, policy.*, and
+# cognitive.response.validated) — every subject only the Kernel may author is
+# safety-critical enough to need guaranteed, durable delivery. Losing
+# `policy.restrict` in transit, for example, would mean a consumer that is
+# mid-reconnect when SAFE_HALT fires silently never receives the
+# motor-zeroing restriction, with no redelivery.
+# sdk/tests/test_safety_critical_subjects.py fails CI if a subject documented
+# as Kernel-privileged in the ADR isn't covered here.
 SAFETY_STREAM_NAME = "SAFETY_CRITICAL"
-_SAFETY_STREAM_SUBJECTS: list[str] = [
+_SAFETY_CRITICAL_EXACT: tuple[str, ...] = (
     Subjects.PROPOSAL_NEW,
     Subjects.CODE_PROPOSAL,
-    f"{Subjects.DECISION_PREFIX}>",
-    f"{Subjects.CODE_DECISION_PREFIX}>",
+)
+_SAFETY_CRITICAL_PREFIXES: tuple[str, ...] = (
+    Subjects.DECISION_PREFIX,  # "decision."
+    Subjects.CODE_DECISION_PREFIX,  # "code.decision."
+    "policy.",  # policy.restrict(.request), .rollback, .update, .load_profile, *.status
+    "cognitive.response.",  # cognitive.response.validate(d), .rejected
+)
+_SAFETY_STREAM_SUBJECTS: list[str] = [
+    *_SAFETY_CRITICAL_EXACT,
+    *(f"{prefix}>" for prefix in _SAFETY_CRITICAL_PREFIXES),
 ]
 # Auto-delete idle waiter consumers after this many seconds of inactivity.
 _CONSUMER_INACTIVE_THRESHOLD_S: float = 60.0
@@ -357,14 +380,16 @@ class EventBus:
 
     @staticmethod
     def _is_safety_critical(subject: str) -> bool:
-        """Return True when this subject must use JetStream persistence."""
-        if subject in (Subjects.PROPOSAL_NEW, Subjects.CODE_PROPOSAL):
+        """Return True when this subject must use JetStream persistence.
+
+        Derived from _SAFETY_CRITICAL_EXACT / _SAFETY_CRITICAL_PREFIXES — the
+        same two tuples _ensure_safety_stream() uses to configure the stream's
+        subjects — so this check and what the stream actually persists can
+        never diverge. See the module-level comment above them.
+        """
+        if subject in _SAFETY_CRITICAL_EXACT:
             return True
-        if subject.startswith(Subjects.DECISION_PREFIX) or subject.startswith(
-            Subjects.CODE_DECISION_PREFIX,
-        ):
-            return True
-        return False
+        return subject.startswith(_SAFETY_CRITICAL_PREFIXES)
 
     @staticmethod
     def _is_metrics_subject(subject: str) -> bool:
