@@ -155,6 +155,25 @@ def verify_decision(payload: dict[str, Any], key: str | None = None) -> bool:
     return False
 
 
+def accept_kernel_decision(payload: dict[str, Any], *, now: int | None = None) -> bool:
+    """Return ``True`` only for an authentic, non-expired Kernel decision.
+
+    Combines :func:`verify_decision` with the temporal check documented in
+    issue #190: a captured, still-validly-signed stale ``ALLOW`` must not be
+    replayed past its ``expires_at``. Decisions with no ``expires_at`` never
+    expire (matching ``KernelDecision.is_expired()``).
+    """
+    if not verify_decision(payload):
+        return False
+    expires_at = payload.get("expires_at")
+    if expires_at is None:
+        return True
+    from activelearning.core import current_timestamp
+
+    reference = current_timestamp() if now is None else now
+    return reference <= expires_at
+
+
 # ── Operator-action signing (SAFE_HALT resume and similar privileged commands) ─
 #
 # Operator actions (``safety.resume``) require a separate key so that

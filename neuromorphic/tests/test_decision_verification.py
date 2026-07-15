@@ -24,8 +24,8 @@ if _SDK_SRC not in sys.path:
 
 from activelearning.signing import (  # noqa: E402
     DECISION_KEY_ENV,
+    accept_kernel_decision,
     sign_decision,
-    verify_decision,
 )
 
 
@@ -45,9 +45,9 @@ async def _handle_kernel_decision(svc: _DecisionGateStub, data: dict[str, Any]) 
         return
     if fut.done():
         return
-    if not verify_decision(data):
+    if not accept_kernel_decision(data):
         svc.logger.error(
-            "Rejected unverified decision for %s — ignoring (possible forgery)",
+            "Rejected decision for %s — ignoring (forgery or expired replay)",
             trace_id,
         )
         return
@@ -95,3 +95,28 @@ async def test_handle_kernel_decision_accepts_signed_decision(monkeypatch):
 
     assert fut.done()
     assert fut.result()["type"] == "ALLOW"
+
+
+@pytest.mark.asyncio
+async def test_handle_kernel_decision_rejects_expired_signed_decision(monkeypatch):
+    key = "neuro-test-key-expired"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    from activelearning.core import current_timestamp
+
+    svc = _DecisionGateStub()
+    fut = asyncio.get_running_loop().create_future()
+    svc._pending_decisions["t-expired"] = fut
+
+    stale = sign_decision(
+        {
+            "trace_id": "t-expired",
+            "type": "ALLOW",
+            "reason": "stale replay",
+            "risk_score": 0.0,
+            "expires_at": current_timestamp() - 1000,
+        },
+        key,
+    )
+    await _handle_kernel_decision(svc, stale)
+
+    assert not fut.done()
