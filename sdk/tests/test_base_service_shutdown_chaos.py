@@ -146,9 +146,9 @@ def test_killed_mid_processing_message_is_redelivered_not_lost(
     # Wait for the handler to actually start (proves we're killing it DURING
     # processing, not before delivery even happens).
     started = marker_dir / f"started-{trace_id}"
-    assert _wait_until(lambda: started.exists(), timeout=10.0), (
-        "handler never started processing the message"
-    )
+    assert _wait_until(
+        lambda: started.exists(), timeout=10.0
+    ), "handler never started processing the message"
 
     # Freeze before killing: a stopped process can never reach the
     # completed-marker write or the ack, deterministically "dies
