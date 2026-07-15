@@ -127,9 +127,19 @@ async def _watchdog_blind_while_heartbeats_continue(nats_url: str):
 
         await asyncio.wait_for(halt_seen.wait(), timeout=_SAFE_WAIT)
 
-        # Give the run loop a tick to clear _halt_after_blind after publish.
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and watchdog._halt_after_blind:
+        # Two halts legitimately fire here, in order:
+        #   1. the ordinary heartbeat-timeout halt — published while blind;
+        #      nats-py buffers it during reconnect and flushes it the moment
+        #      the connection is restored, so it reaches the observer first;
+        #   2. the post-blind mandatory halt ("NATS connection lost") that
+        #      notify_transport_up() schedules once reconnect reveals the
+        #      blind period exceeded timeout_s.
+        # Wait for the mandate (2) to land at the observer, not just the
+        # first halt — it's the behavior this chaos test exists to verify.
+        deadline = time.monotonic() + _SAFE_WAIT
+        while time.monotonic() < deadline and not any(
+            "NATS connection lost" in p.get("reason", "") for p in halt_payloads
+        ):
             await asyncio.sleep(_CHECK)
 
         return halt_payloads, watchdog._halt_count
@@ -155,6 +165,16 @@ def test_watchdog_nats_disconnect_fails_toward_safe_halt(nats_server: str) -> No
 
     assert halt_count >= 1, "watchdog never attempted SAFE_HALT — silent inaction"
     assert halt_payloads, "safety.halt never delivered after watchdog reconnect"
-    payload = halt_payloads[0]
-    assert payload["operator_id"] == "system:watchdog"
-    assert "NATS connection lost" in payload["reason"] or "fail-safe" in payload["reason"]
+
+    # Every halt must come from the watchdog's fail-safe path.
+    assert all(p["operator_id"] == "system:watchdog" for p in halt_payloads)
+    reasons = [p["reason"] for p in halt_payloads]
+    assert all("kernel-loss-watchdog" in r for r in reasons)
+
+    # The plain heartbeat-timeout halt may arrive first (buffered during the
+    # blind period, flushed on reconnect) — that's also fail-safe. But the
+    # post-blind mandate must fire too, proving resumed heartbeats after
+    # reconnect cannot cancel it.
+    assert any(
+        "NATS connection lost" in r for r in reasons
+    ), f"post-blind mandatory halt never fired; reasons seen: {reasons}"
