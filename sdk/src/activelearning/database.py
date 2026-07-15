@@ -134,7 +134,6 @@ class Database:
 
         for statements in _MIGRATIONS[version:]:
             for statement in statements:
-                await conn.execute(statement)
                 try:
                     await conn.execute(statement)
                 except sqlite3.OperationalError as exc:
