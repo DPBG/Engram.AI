@@ -20,6 +20,10 @@ Three sensory-input regimes are exercised (+ a fourth for timing comparison):
   Regime D — Delayed rich: identical to A except STDP decline arrives 40 steps
               later → adolescent entered later than A, proving timing tracks
               experience rather than step count.
+
+A deterministic noisy-sensor profile replays the same A-D regimes with bounded
+bias, drift, jitter, and concept-vector noise derived from the M5 sim-to-real
+sensor-noise risks.
 """
 
 from __future__ import annotations
@@ -114,6 +118,43 @@ class InputRegime:
         return self._stdp(step)
 
 
+class SensorNoiseProfile:
+    """Deterministic sensor-noise model for developmental regression tests."""
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        concept_noise_std: float = 0.0,
+        variance_bias: float = 0.0,
+        variance_jitter: float = 0.0,
+        variance_drift_per_step: float = 0.0,
+        seed: int = 0,
+    ) -> None:
+        self.name = name
+        self.concept_noise_std = concept_noise_std
+        self.variance_bias = variance_bias
+        self.variance_jitter = variance_jitter
+        self.variance_drift_per_step = variance_drift_per_step
+        self.seed = seed
+
+    def perturb_concepts(self, concepts: list[np.ndarray]) -> list[np.ndarray]:
+        if self.concept_noise_std <= 0:
+            return concepts
+
+        rng = np.random.default_rng(self.seed)
+        noisy_concepts = []
+        for concept in concepts:
+            noise = rng.normal(0.0, self.concept_noise_std, size=concept.shape).astype(np.float32)
+            noisy_concepts.append(np.clip(concept + noise, 0.0, None).astype(np.float32))
+        return noisy_concepts
+
+    def sensory_variance(self, base_variance: float, step: int) -> float:
+        jitter = self.variance_jitter * np.sin((step + self.seed) * 0.37)
+        drift = self.variance_drift_per_step * step
+        return max(0.0, float(base_variance + self.variance_bias + drift + jitter))
+
+
 # ---------------------------------------------------------------------------
 # Regime definitions
 # ---------------------------------------------------------------------------
@@ -147,6 +188,17 @@ REGIME_D = InputRegime(
     stdp_fn=lambda s: (0.1, 1.0) if s >= 140 else (0.9, 1.0),
 )
 
+CLEAN_SENSOR_INPUT = SensorNoiseProfile(name="clean")
+
+M5_REALISTIC_SENSOR_NOISE = SensorNoiseProfile(
+    name="m5_bias_drift_jitter",
+    concept_noise_std=0.01,
+    variance_bias=0.015,
+    variance_jitter=0.008,
+    variance_drift_per_step=0.00004,
+    seed=20260714,
+)
+
 
 # ---------------------------------------------------------------------------
 # Regime runner
@@ -158,13 +210,14 @@ def run_regime(
     regime: InputRegime,
     *,
     n_steps: int = 300,
+    sensor_noise: SensorNoiseProfile = CLEAN_SENSOR_INPUT,
 ) -> int | None:
     """Step nm through n_steps under the given regime.
 
     Returns the step at which adolescent was first entered, or None if it
     never happened within n_steps.
     """
-    concepts = _make_distinct_concepts()
+    concepts = sensor_noise.perturb_concepts(_make_distinct_concepts())
     entry_step: int | None = None
 
     for step in range(n_steps):
@@ -174,7 +227,9 @@ def run_regime(
 
         current, peak = regime.stdp(step)
         nm.update_external_signals(
-            sensory_rate_variance=regime.sensory_variance(step),
+            sensory_rate_variance=sensor_noise.sensory_variance(
+                regime.sensory_variance(step), step
+            ),
             feature_stdp_current=current,
             feature_stdp_peak=peak,
         )
@@ -436,3 +491,27 @@ class TestInvariant2Regression:
         assert (
             entry_a != entry_d
         ), "Invariant 2 violated: entry timing must vary with experience, not be fixed"
+
+    def test_regimes_a_to_d_hold_under_m5_sensor_noise(self):
+        """Regression-safety check for issues #295 and #326.
+
+        The noisy profile models the M5 sim-to-real risks called out in
+        docs/SIM-TO-REAL.md: sensor bias, drift, jitter, and noisy concept input.
+        The original A-D expectations must still hold when this profile is active.
+        """
+        cfg = _make_fast_config()
+        nm_a = NeuromodulationSystem(cfg)
+        nm_b = NeuromodulationSystem(cfg)
+        nm_c = NeuromodulationSystem(cfg)
+        nm_d = NeuromodulationSystem(cfg)
+
+        entry_a = run_regime(nm_a, REGIME_A, sensor_noise=M5_REALISTIC_SENSOR_NOISE)
+        entry_b = run_regime(nm_b, REGIME_B, sensor_noise=M5_REALISTIC_SENSOR_NOISE)
+        entry_c = run_regime(nm_c, REGIME_C, sensor_noise=M5_REALISTIC_SENSOR_NOISE)
+        entry_d = run_regime(nm_d, REGIME_D, sensor_noise=M5_REALISTIC_SENSOR_NOISE)
+
+        assert entry_a is not None, "Noisy rich experience must still enter adolescent"
+        assert entry_b is None, "Noisy degenerate input must still skip adolescent"
+        assert entry_c is None, "Noisy partial experience must still be blocked"
+        assert entry_d is not None, "Noisy delayed-rich experience must still enter adolescent"
+        assert entry_d > entry_a, "Noisy delayed-rich timing must remain later than rich timing"
