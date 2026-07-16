@@ -20,6 +20,183 @@ from activelearning import current_timestamp, generate_trace_id
 logger = logging.getLogger(__name__)
 
 
+def _as_dict(data: Any) -> dict | None:
+    """Return data when it is a dict; otherwise None."""
+    return data if isinstance(data, dict) else None
+
+
+def _extract_position(payload: dict) -> dict | None:
+    """Pull a 2D/3D position from common observation key shapes."""
+    if "position" in payload and isinstance(payload["position"], dict):
+        pos = payload["position"]
+        if "x" in pos and "y" in pos:
+            out = {"x": float(pos["x"]), "y": float(pos["y"])}
+            if "z" in pos:
+                out["z"] = float(pos["z"])
+            return out
+    if "x" in payload and "y" in payload:
+        try:
+            out = {"x": float(payload["x"]), "y": float(payload["y"])}
+            if "z" in payload:
+                out["z"] = float(payload["z"])
+            return out
+        except (TypeError, ValueError):
+            return None
+    bbox = payload.get("bbox")
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        try:
+            x1, y1, x2, y2 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+            return {"x": (x1 + x2) / 2.0, "y": (y1 + y2) / 2.0}
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _extract_colors(payload: dict) -> list[str]:
+    """Collect color labels from a camera observation payload."""
+    colors: list[str] = []
+    if isinstance(payload.get("color"), str) and payload["color"].strip():
+        colors.append(payload["color"].strip().lower())
+    raw_colors = payload.get("colors")
+    if isinstance(raw_colors, list):
+        for item in raw_colors:
+            if isinstance(item, str) and item.strip():
+                colors.append(item.strip().lower())
+    objects = payload.get("objects")
+    if isinstance(objects, list):
+        for obj in objects:
+            if isinstance(obj, dict) and isinstance(obj.get("color"), str) and obj["color"].strip():
+                colors.append(obj["color"].strip().lower())
+    # Preserve order, drop duplicates
+    seen: set[str] = set()
+    unique: list[str] = []
+    for color in colors:
+        if color not in seen:
+            seen.add(color)
+            unique.append(color)
+    return unique
+
+
+def _extract_object_labels(payload: dict) -> list[str]:
+    """Collect object / label names from a camera observation payload."""
+    labels: list[str] = []
+    for key in ("label", "object", "name"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            labels.append(value.strip().lower())
+    objects = payload.get("objects")
+    if isinstance(objects, list):
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            for key in ("label", "name", "class"):
+                value = obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    labels.append(value.strip().lower())
+                    break
+    seen: set[str] = set()
+    unique: list[str] = []
+    for label in labels:
+        if label not in seen:
+            seen.add(label)
+            unique.append(label)
+    return unique
+
+
+def extract_visual_features(camera_obs: list[dict]) -> dict:
+    """
+    Heuristically extract positions, colors, labels, and a position trajectory
+    from camera observation payloads. Non-dict payloads are skipped.
+    """
+    positions: list[dict] = []
+    colors: list[str] = []
+    labels: list[str] = []
+    trajectory: list[dict] = []
+
+    for obs in camera_obs:
+        payload = _as_dict(obs.get("data"))
+        if payload is None:
+            continue
+        position = _extract_position(payload)
+        if position is not None:
+            positions.append(position)
+            trajectory.append(
+                {
+                    "timestamp": obs.get("timestamp"),
+                    "x": position["x"],
+                    "y": position["y"],
+                    **({"z": position["z"]} if "z" in position else {}),
+                }
+            )
+        colors.extend(_extract_colors(payload))
+        labels.extend(_extract_object_labels(payload))
+
+    # Deduplicate colors/labels while preserving order
+    def _unique(items: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for item in items:
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
+        return out
+
+    return {
+        "observation_count": len(camera_obs),
+        "positions": positions,
+        "colors": _unique(colors),
+        "objects": _unique(labels),
+        "trajectory": trajectory[:100],
+    }
+
+
+def extract_audio_features(audio_obs: list[dict]) -> dict:
+    """
+    Heuristically extract voice commands / transcripts and energy patterns
+    from microphone observation payloads. Non-dict payloads are skipped.
+    """
+    commands: list[str] = []
+    energy_samples: list[float] = []
+
+    for obs in audio_obs:
+        payload = _as_dict(obs.get("data"))
+        if payload is None:
+            continue
+        for key in ("transcript", "command", "text", "phrase"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                commands.append(value.strip())
+                break
+        for key in ("energy", "rms", "amplitude"):
+            value = payload.get(key)
+            if isinstance(value, (int, float)):
+                energy_samples.append(float(value))
+                break
+
+    unique_commands: list[str] = []
+    seen: set[str] = set()
+    for cmd in commands:
+        key = cmd.lower()
+        if key not in seen:
+            seen.add(key)
+            unique_commands.append(cmd)
+
+    energy_summary: dict[str, float] | None = None
+    if energy_samples:
+        energy_summary = {
+            "min": min(energy_samples),
+            "max": max(energy_samples),
+            "mean": round(sum(energy_samples) / len(energy_samples), 6),
+            "sample_count": float(len(energy_samples)),
+        }
+
+    return {
+        "observation_count": len(audio_obs),
+        "commands": unique_commands,
+        "energy": energy_summary,
+    }
+
+
 class LearningPhase(Enum):
     """Phases of the demonstration learning pipeline."""
 
@@ -213,12 +390,19 @@ class LearningController:
 
         # Extract task parameters
         if camera_obs:
-            task_data["parameters"]["visual_features"] = len(camera_obs)
-            # TODO: Extract object positions, colors, trajectories from camera
+            visual = extract_visual_features(camera_obs)
+            task_data["parameters"]["visual_features"] = visual["observation_count"]
+            task_data["parameters"]["positions"] = visual["positions"]
+            task_data["parameters"]["colors"] = visual["colors"]
+            task_data["parameters"]["objects"] = visual["objects"]
+            task_data["parameters"]["visual_trajectory"] = visual["trajectory"]
 
         if audio_obs:
-            task_data["parameters"]["audio_features"] = len(audio_obs)
-            # TODO: Extract voice commands, sound patterns
+            audio = extract_audio_features(audio_obs)
+            task_data["parameters"]["audio_features"] = audio["observation_count"]
+            task_data["parameters"]["voice_commands"] = audio["commands"]
+            if audio["energy"] is not None:
+                task_data["parameters"]["audio_energy"] = audio["energy"]
 
         # Build trajectory (time-series of observations)
         task_data["trajectory"] = [
