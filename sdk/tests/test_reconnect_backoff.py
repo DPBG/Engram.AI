@@ -153,8 +153,7 @@ async def test_multi_service_reconnects_are_not_lockstep(monkeypatch):
             await asyncio.sleep(0.05)
         else:
             pytest.fail(
-                f"only {len(reconnect_times)}/{len(buses)} clients reconnected "
-                f"within timeout"
+                f"only {len(reconnect_times)}/{len(buses)} clients reconnected " f"within timeout"
             )
 
         spread = max(reconnect_times) - min(reconnect_times)
