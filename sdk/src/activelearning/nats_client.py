@@ -241,8 +241,7 @@ class EventBus:
             )
             return
 
-        reconnect_wait_s = jittered_reconnect_wait()
-        self._reconnect_time_wait_s = reconnect_wait_s
+        self._reconnect_time_wait_s = jittered_reconnect_wait()
 
         connect_kwargs: dict[str, Any] = {
             "name": self.name,
@@ -250,7 +249,7 @@ class EventBus:
             "disconnected_cb": self._disconnected_callback,
             "reconnected_cb": self._reconnected_callback,
             "max_reconnect_attempts": -1,
-            "reconnect_time_wait": reconnect_wait_s,
+            "reconnect_time_wait": self._reconnect_time_wait_s,
         }
 
         creds_mode = "none"
@@ -284,7 +283,7 @@ class EventBus:
                 nats_url=self.nats_url,
                 creds_mode=creds_mode,
                 creds_path=self.nats_creds if creds_mode == "file" else None,
-                reconnect_time_wait_s=reconnect_wait_s,
+                reconnect_time_wait_s=self._reconnect_time_wait_s,
             )
 
         self._nc = await nats.connect(self.nats_url, **connect_kwargs)
