@@ -287,6 +287,9 @@ All components communicate through NATS subjects:
 | `approval.response.{id}` | Dashboard | Requester | `ApprovalResponse` |
 | `system.health` | All | Monitor | `HealthStatus` |
 
+Sustained-publish ceilings and bottlenecks (core vs JetStream): see
+[EVENTBUS-LOAD-TEST.md](EVENTBUS-LOAD-TEST.md).
+
 #### Motor Outcome Payload (`motor.outcome.{channel}`)
 
 Closes the sensorimotor feedback loop. Published by actuators, sensors (IMU, camera, joints), simulators, or human teachers after a motor command executes.
