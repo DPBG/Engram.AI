@@ -16,6 +16,7 @@ from neuromorphic.benchmarks import (
     _confidence_interval,
     _flatten_numeric,
     _to_native,
+    audit_pattern_diversity,
     generate_test_patterns,
 )
 from neuromorphic.config import NeuromorphicConfig
@@ -61,6 +62,64 @@ class TestGeneratePatterns:
         a = generate_test_patterns(3, np.random.default_rng(42))
         b = generate_test_patterns(3, np.random.default_rng(42))
         assert a[0]["visual"] == b[0]["visual"]
+
+    def test_no_exact_duplicates_beyond_64_patterns(self):
+        """issue #327: the prior generator's (i*7)%64/(i*13)%64 position formula
+        made pattern[i] == pattern[i+64] exactly — any benchmark requesting
+        more than 64 patterns silently trained on duplicates."""
+        pats = generate_test_patterns(80, np.random.default_rng(42))
+        visuals = {tuple(p["visual"]) for p in pats}
+        assert len(visuals) == 80
+
+    def test_visual_patterns_are_not_a_single_shape_class(self):
+        """issue #327: the prior generator used one fixed sigma, so every
+        pattern was a translated copy of the same blob shape."""
+        pats = generate_test_patterns(9, np.random.default_rng(1))
+        vis = np.array([p["visual"] for p in pats])
+
+        def radius(v):
+            img = v.reshape(64, 64)
+            total = img.sum()
+            ys, xs = np.mgrid[0:64, 0:64]
+            cx, cy = (xs * img).sum() / total, (ys * img).sum() / total
+            return np.sqrt((((xs - cx) ** 2 + (ys - cy) ** 2) * img).sum() / total)
+
+        radii = [radius(v) for v in vis]
+        assert np.std(radii) > 0.5  # genuine size variation, not one fixed blob
+
+    def test_auditory_patterns_are_distinguishable(self):
+        """issue #327: 12 shared-noise dims used to dominate similarity
+        regardless of which single dim was "hot" (~0.9 mean cosine sim)."""
+        diversity = audit_pattern_diversity(generate_test_patterns(20, np.random.default_rng(7)))
+        assert diversity["mean_auditory_cosine_sim"] < 0.6
+
+
+class TestAuditPatternDiversity:
+    def test_empty_patterns(self):
+        result = audit_pattern_diversity([])
+        assert result["n_patterns"] == 0
+        assert result["unique_visual"] == 0
+        assert result["unique_auditory"] == 0
+
+    def test_single_pattern_similarity_is_zero(self):
+        pats = generate_test_patterns(1, np.random.default_rng(3))
+        result = audit_pattern_diversity(pats)
+        assert result["n_patterns"] == 1
+        assert result["mean_visual_cosine_sim"] == 0.0
+        assert result["mean_auditory_cosine_sim"] == 0.0
+
+    def test_identical_patterns_have_similarity_one(self):
+        pat = generate_test_patterns(1, np.random.default_rng(3))[0]
+        result = audit_pattern_diversity([pat, dict(pat)])
+        assert result["unique_visual"] == 1
+        assert result["mean_visual_cosine_sim"] == pytest.approx(1.0, abs=1e-6)
+
+    def test_reports_unique_counts_matching_pattern_count_today(self):
+        pats = generate_test_patterns(80, np.random.default_rng(42))
+        result = audit_pattern_diversity(pats)
+        assert result["n_patterns"] == 80
+        assert result["unique_visual"] == 80
+        assert result["unique_auditory"] == 80
 
 
 class TestToNative:
