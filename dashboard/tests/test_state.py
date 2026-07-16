@@ -109,3 +109,31 @@ def test_record_video_session_prunes_oldest_finished_when_full():
     assert len(state.video_sessions) == MAX_VIDEO_SESSIONS
     assert "new" in state.video_sessions
     assert "done0" not in state.video_sessions  # oldest finished pruned
+
+
+def test_record_dlq_message_counts_by_subject():
+    state = DashboardState()
+    state.record_dlq_message({"original_subject": "proposal.new", "reason": "boom"})
+    state.record_dlq_message({"original_subject": "proposal.new", "reason": "boom2"})
+    state.record_dlq_message({"original_subject": "code.proposal", "reason": "bad payload"})
+
+    summary = state.dlq_summary()
+    assert summary["total"] == 3
+    assert summary["by_subject"] == {"proposal.new": 2, "code.proposal": 1}
+    assert len(summary["recent"]) == 3
+
+
+def test_record_dlq_message_missing_subject_falls_back_to_unknown():
+    state = DashboardState()
+    state.record_dlq_message({"reason": "boom"})
+    assert state.dlq_summary()["by_subject"] == {"unknown": 1}
+
+
+def test_dlq_summary_recent_capped_at_50():
+    state = DashboardState()
+    for i in range(60):
+        state.record_dlq_message({"original_subject": "proposal.new", "reason": str(i)})
+    summary = state.dlq_summary()
+    assert summary["total"] == 60
+    assert len(summary["recent"]) == 50
+    assert summary["recent"][-1]["reason"] == "59"

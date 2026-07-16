@@ -45,6 +45,7 @@ from activelearning.consumer_lag import (
     should_monitor_consumer,
 )
 from activelearning.core import current_timestamp
+from activelearning.dlq_monitor import emit_dlq_alert, parse_dlq_envelope
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -64,12 +65,35 @@ logger = logging.getLogger(__name__)
 
 # JetStream stream that guarantees delivery for every safety-critical subject.
 # Proposals and decisions must never be fire-and-forget.
+#
+# Single source of truth (issue #252): _ensure_safety_stream() (which subjects
+# JetStream persists) and _is_safety_critical() (which publish() calls route
+# through JetStream) both derive from these two tuples, so the two can never
+# drift apart the way a hand-maintained if/else in _is_safety_critical() could.
+#
+# This is also the Kernel-privileged publisher set from ADR 0001 §3 ("Only the
+# kernel user may publish" decision.>, code.decision.>, policy.*, and
+# cognitive.response.validated) — every subject only the Kernel may author is
+# safety-critical enough to need guaranteed, durable delivery. Losing
+# `policy.restrict` in transit, for example, would mean a consumer that is
+# mid-reconnect when SAFE_HALT fires silently never receives the
+# motor-zeroing restriction, with no redelivery.
+# sdk/tests/test_safety_critical_subjects.py fails CI if a subject documented
+# as Kernel-privileged in the ADR isn't covered here.
 SAFETY_STREAM_NAME = "SAFETY_CRITICAL"
-_SAFETY_STREAM_SUBJECTS: list[str] = [
+_SAFETY_CRITICAL_EXACT: tuple[str, ...] = (
     Subjects.PROPOSAL_NEW,
     Subjects.CODE_PROPOSAL,
-    f"{Subjects.DECISION_PREFIX}>",
-    f"{Subjects.CODE_DECISION_PREFIX}>",
+)
+_SAFETY_CRITICAL_PREFIXES: tuple[str, ...] = (
+    Subjects.DECISION_PREFIX,  # "decision."
+    Subjects.CODE_DECISION_PREFIX,  # "code.decision."
+    "policy.",  # policy.restrict(.request), .rollback, .update, .load_profile, *.status
+    "cognitive.response.",  # cognitive.response.validate(d), .rejected
+)
+_SAFETY_STREAM_SUBJECTS: list[str] = [
+    *_SAFETY_CRITICAL_EXACT,
+    *(f"{prefix}>" for prefix in _SAFETY_CRITICAL_PREFIXES),
 ]
 # Auto-delete idle waiter consumers after this many seconds of inactivity.
 _CONSUMER_INACTIVE_THRESHOLD_S: float = 60.0
@@ -381,16 +405,29 @@ class EventBus:
             except Exception as e:
                 logger.warning("JetStream lag monitor error: %s", e)
 
+    async def _handle_dlq_message(self, data: dict[str, Any]) -> None:
+        """Alert on a dead-lettered message (issue #246): observe, never re-drop."""
+        original_subject = str(data.get("original_subject", "unknown"))
+        record = parse_dlq_envelope(poison_subject(original_subject), data)
+        emit_dlq_alert(record, monitor=self.name)
+
+    async def start_dlq_monitor(self) -> None:
+        """Subscribe to the dead-letter wildcard so poisoned messages are observed
+        and alerted on (issue #246) instead of accumulating silently forever."""
+        await self.subscribe(Subjects.DLQ_WILDCARD, self._handle_dlq_message)
+
     @staticmethod
     def _is_safety_critical(subject: str) -> bool:
-        """Return True when this subject must use JetStream persistence."""
-        if subject in (Subjects.PROPOSAL_NEW, Subjects.CODE_PROPOSAL):
+        """Return True when this subject must use JetStream persistence.
+
+        Derived from _SAFETY_CRITICAL_EXACT / _SAFETY_CRITICAL_PREFIXES — the
+        same two tuples _ensure_safety_stream() uses to configure the stream's
+        subjects — so this check and what the stream actually persists can
+        never diverge. See the module-level comment above them.
+        """
+        if subject in _SAFETY_CRITICAL_EXACT:
             return True
-        if subject.startswith(Subjects.DECISION_PREFIX) or subject.startswith(
-            Subjects.CODE_DECISION_PREFIX,
-        ):
-            return True
-        return False
+        return subject.startswith(_SAFETY_CRITICAL_PREFIXES)
 
     @staticmethod
     def _is_metrics_subject(subject: str) -> bool:
@@ -1024,6 +1061,29 @@ async def get_event_bus() -> EventBus:
         _global_bus = EventBus()
         await _global_bus.connect()
     return _global_bus
+
+
+async def close_event_bus() -> None:
+    """Close and reset the global EventBus singleton, if open (issue #248).
+
+    Mirrors ``activelearning.database.close_database()``. Nothing in the
+    production runtime calls this — a real service's process exit reclaims
+    the connection. But ``EventBus.__init__`` creates an ``asyncio.Event``
+    bound to whatever event loop is running at construction time, and
+    pytest-asyncio gives each test function its own loop, so a test that
+    exercises ``get_event_bus()`` (or the module-level ``publish()``/
+    ``subscribe()`` convenience functions above, which route through it) and
+    never closes it leaves a connected ``EventBus`` — with a ``_connected``
+    Event tied to a now-dead loop — sitting in this module's global for every
+    subsequent test in the same pytest process to inherit, regardless of
+    collection order. That surfaces as "attached to a different loop" errors
+    that only reproduce in a particular test order. Tests that exercise the
+    real singleton must call this in teardown.
+    """
+    global _global_bus
+    if _global_bus is not None:
+        await _global_bus.close()
+        _global_bus = None
 
 
 async def publish(subject: str, data: Any) -> None:

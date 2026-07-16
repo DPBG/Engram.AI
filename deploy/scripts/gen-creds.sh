@@ -89,7 +89,7 @@ declare -A SVC_PUB SVC_SUB
 # cognitive.response.validated (ADR 0001 §3); everything else here is a
 # broadcast notification or a request (beliefs.query.request) it issues.
 SVC_PUB[kernel]="decision.>,code.decision.>,policy.restrict,policy.restrict.status,policy.rollback.status,policy.update.status,policy.profile.status,cognitive.response.validated,cognitive.response.rejected,cognitive.execute,speech.execute,planner.mode,safety.halt.status,safety.deny_escalation,kernel.heartbeat,kernel.decision_rates,beliefs.query.request,_INBOX.>"
-SVC_SUB[kernel]="proposal.new,code.proposal,kernel.status,policy.load_profile,policy.restrict.request,policy.rollback,policy.update,cognitive.response.validate,safety.halt,safety.resume,_INBOX.>"
+SVC_SUB[kernel]="proposal.new,code.proposal,kernel.status,policy.load_profile,policy.restrict.request,policy.rollback,policy.update,cognitive.response.validate,safety.halt,safety.resume,dlq.>,_INBOX.>"
 
 # safety-supervisor — request-reply risk analysis; safety.analysis.*.<trace>
 # is a real fallback publish path (safety_supervisor/service.py) used when

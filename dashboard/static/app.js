@@ -16,7 +16,6 @@ class ActiveLearningAI {
         this.gwPendingSensors = new Set(); // sensor_ids with pending commands
         this.videoSessions = {}; // session_id -> status
         this.videoQueueState = null; // { queue, active, completed, queue_length }
-        this.approvalTimers = {}; // trace_id -> timeoutId
         this.approvalsSent = new Set(); // trace_ids already responded to
         this.isHalted = false;
 
@@ -142,6 +141,7 @@ class ActiveLearningAI {
                 if (msg.data.halt_state) this.updateHaltUI(msg.data.halt_state);
                 if (msg.data.kernel_decision_rates) this.renderKernelDecisionRates(msg.data.kernel_decision_rates);
                 if (msg.data.bus_metrics) this.renderBusMetrics(msg.data.bus_metrics);
+                if (msg.data.dlq) this.renderDlq(msg.data.dlq);
                 break;
             case 'safe_halt_status':
                 this.updateHaltUI(msg.data);
@@ -159,6 +159,9 @@ class ActiveLearningAI {
                 break;
             case 'bus_metrics_update':
                 this.renderBusMetrics(msg.data);
+                break;
+            case 'dlq_update':
+                this.renderDlq(msg.data);
                 break;
             case 'message':
                 this.appendNATSMessage(msg.data);
@@ -917,6 +920,31 @@ class ActiveLearningAI {
         }).join('');
     }
 
+    renderDlq(dlq) {
+        const totalEl = document.getElementById('dlq-total');
+        if (totalEl) totalEl.textContent = (dlq && dlq.total) || 0;
+        const el = document.getElementById('dlq-list');
+        if (!el) return;
+        const bySubject = (dlq && dlq.by_subject) || {};
+        const subjects = Object.keys(bySubject);
+        if (!subjects.length) {
+            el.innerHTML = '<div class="sys-loading">No dead letters observed</div>';
+            return;
+        }
+        subjects.sort((a, b) => bySubject[b] - bySubject[a]);
+        const recentBySubject = {};
+        ((dlq && dlq.recent) || []).forEach(r => { recentBySubject[r.original_subject] = r; });
+        el.innerHTML = subjects.map(subject => {
+            const last = recentBySubject[subject];
+            return `
+            <div class="dlq-item">
+                <div class="dlq-subject">${this.esc(subject)}</div>
+                <div class="dlq-row"><span>Count</span><span class="val">${bySubject[subject]}</span></div>
+                ${last ? `<div class="dlq-row"><span>Reason</span><span class="val">${this.esc(String(last.reason || '?'))}</span></div>` : ''}
+            </div>`;
+        }).join('');
+    }
+
     // ─── Top Stats ───────────────────────────────────────────────────
 
     updateTopStats(data) {
@@ -1002,8 +1030,8 @@ class ActiveLearningAI {
     showApprovalRequest(data) {
         const traceId = data.trace_id || '?';
 
-        // Deduplicate — skip if already showing this approval
-        if (this.approvalsSent.has(traceId) || this.approvalTimers[traceId]) {
+        // Deduplicate — skip if we already answered this approval
+        if (this.approvalsSent.has(traceId)) {
             return;
         }
 
@@ -1077,24 +1105,15 @@ class ActiveLearningAI {
         container.appendChild(div);
         container.scrollTop = container.scrollHeight;
 
-        // Auto-expire after 30 seconds (fail-open: allow by default)
-        this.approvalTimers[traceId] = setTimeout(() => {
-            if (!this.approvalsSent.has(traceId)) {
-                this.sendApprovalResponse(traceId, channel, true);
-            }
-        }, 30000);
+        // Do not auto-ALLOW unanswered prompts. DEFER is fail-closed: if the
+        // operator never answers (or NATS is partitioned), Meta-Programmer's
+        // DEFER_TTL_MS sweep treats the review as DENY. See docs/META-PROGRAMMER.md.
     }
 
     sendApprovalResponse(traceId, channel, approved) {
-        // Prevent double-send (race between user click and auto-expire timer)
+        // Prevent double-send
         if (this.approvalsSent.has(traceId)) return;
         this.approvalsSent.add(traceId);
-
-        // Clear auto-expire timer
-        if (this.approvalTimers[traceId]) {
-            clearTimeout(this.approvalTimers[traceId]);
-            delete this.approvalTimers[traceId];
-        }
 
         // Update UI
         const actions = document.getElementById(`approval-actions-${traceId}`);

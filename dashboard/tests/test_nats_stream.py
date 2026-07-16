@@ -223,3 +223,27 @@ def test_eventbus_metrics_subject_skipped_by_wildcard_handler():
     asyncio.run(mgr._handle_msg(_FakeMsg("eventbus.metrics.kernel", {"service": "kernel"})))
     assert len(state.message_buffer) == 0
     assert ws.sent == []
+
+
+def test_handle_dlq_message_stores_and_broadcasts():
+    mgr, state, ws = _manager()
+    payload = {
+        "original_subject": "proposal.new",
+        "reason": "max_deliver_exhausted(5): always fails",
+        "num_delivered": 5,
+        "payload": "{}",
+    }
+    asyncio.run(mgr._handle_dlq_message(_FakeMsg("dlq.proposal.new", payload)))
+
+    summary = state.dlq_summary()
+    assert summary["total"] == 1
+    assert summary["by_subject"] == {"proposal.new": 1}
+    assert ws.sent[-1]["type"] == "dlq_update"
+    assert ws.sent[-1]["data"]["total"] == 1
+
+
+def test_dlq_subject_skipped_by_wildcard_handler():
+    mgr, state, ws = _manager()
+    asyncio.run(mgr._handle_msg(_FakeMsg("dlq.proposal.new", {"original_subject": "proposal.new"})))
+    assert len(state.message_buffer) == 0
+    assert ws.sent == []

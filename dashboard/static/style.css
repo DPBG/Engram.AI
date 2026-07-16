@@ -652,6 +652,20 @@ html, body {
 .bus-name { font-weight: 600; color: var(--green, #6fcf97); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bus-row { display: flex; justify-content: space-between; color: var(--text-2); }
 .bus-row .val { color: var(--text-1); font-weight: 500; }
+.dlq-total {
+    font-size: 10px; font-weight: 700; color: var(--red);
+    background: rgba(244,68,68,0.12); border: 1px solid rgba(244,68,68,0.3);
+    border-radius: 8px; padding: 1px 7px; margin-left: 4px;
+}
+.dlq-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+.dlq-item {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 7px; background: var(--bg-3); border-radius: var(--radius-sm); font-size: 10px;
+    border-left: 2px solid var(--red);
+}
+.dlq-subject { font-weight: 600; color: var(--red); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dlq-row { display: flex; justify-content: space-between; color: var(--text-2); }
+.dlq-row .val { color: var(--text-1); font-weight: 500; }
 .ctn-item {
     display: flex; flex-direction: column; gap: 2px;
     padding: 6px 7px; background: var(--bg-3); border-radius: var(--radius-sm); font-size: 10px;

@@ -84,6 +84,20 @@ def unavailable_risk_analysis(trace_id: str = "") -> RiskAnalysis:
     )
 
 
+_UNAVAILABLE_BELIEFS_NORM_ID = "BELIEFS_UNAVAILABLE"
+
+
+def unavailable_belief_norm_violations(reason: str = "") -> list[dict[str, Any]]:
+    """Return fail-closed norm violations when Beliefs service cannot run."""
+    return [
+        {
+            "norm_id": _UNAVAILABLE_BELIEFS_NORM_ID,
+            "content": reason or "Beliefs service unavailable",
+            "risk_boost": 1.0,
+        }
+    ]
+
+
 class KernelEvaluator:
     """
     The Moral Kernel evaluator.

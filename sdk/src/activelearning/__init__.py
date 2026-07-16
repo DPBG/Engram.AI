@@ -21,7 +21,7 @@ from activelearning.core import (
     current_timestamp,
     generate_trace_id,
 )
-from activelearning.database import Database, get_database
+from activelearning.database import Database, close_database, get_database
 from activelearning.embeddings import (
     EmbeddingService,
     embed_batch,
@@ -44,6 +44,7 @@ from activelearning.nats_client import (
     RECONNECT_WAIT_TIMEOUT_S,
     EventBus,
     get_event_bus,
+    close_event_bus
 )
 from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuator, register_sensor
 from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
@@ -85,6 +86,7 @@ __all__ = [
     # NATS client
     "EventBus",
     "get_event_bus",
+    "close_event_bus",
     # EventBus timeout policy (issue #233)
     "DEFAULT_REQUEST_TIMEOUT_S",
     "DEFAULT_DECISION_TIMEOUT_S",
@@ -93,6 +95,7 @@ __all__ = [
     # Database
     "Database",
     "get_database",
+    "close_database",
     # Embeddings
     "EmbeddingService",
     "get_embedding_service",

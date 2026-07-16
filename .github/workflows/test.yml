@@ -182,20 +182,22 @@ jobs:
         # job to its 15-minute timeout.
         run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio --with pytest-timeout python -m pytest sdk/tests/red_team/ -o addopts="" -v
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
+      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + Launcher tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src:external-api/src
+          PYTHONPATH: .:kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src:external-api/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
         # Coordinator gate + dashboard auth tests load their module under test
         # directly (pure stdlib), so they need no extra service deps.
         # external-api tests inject fake clients; anthropic/openai are not imported.
+        # launcher/tests covers the kernel-loss watchdog (E1.9.3) including the
+        # M2.40 chaos test that needs nats-server (installed above).
         # --import-mode=importlib: these dirs have no tests/__init__.py, so
         # pytest's default import mode collides when two services happen to
         # share a test file basename (e.g. kernel/tests/test_service.py vs
         # cache/tests/test_service.py) — importlib mode keys each module by
         # its full file path instead, so same-named files never collide.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests external-api/tests -o addopts="" --import-mode=importlib -v
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests external-api/tests launcher/tests -o addopts="" --import-mode=importlib -v
       - name: Run Kernel + Meta-Programmer + Coordinator + Cache + Dashboard + Beliefs safety tests
         env:
           PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:cache/src:dashboard/src:beliefs/src
