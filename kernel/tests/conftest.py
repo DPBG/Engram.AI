@@ -9,8 +9,26 @@ import time
 from pathlib import Path
 
 import pytest
+from activelearning.database import close_database
+from activelearning.nats_client import close_event_bus
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+async def _reset_global_singletons():
+    """Guarantee _db/_global_bus never leak between tests (issue #248).
+
+    kernel/tests is the one place in the repo that drives a real
+    BaseService.start() (KernelService in test_governance_smoke.py), which
+    opens the real get_database() singleton. A left-open singleton hangs
+    interpreter shutdown (non-daemon aiosqlite thread) or leaks state into
+    whatever kernel test runs next, so reset unconditionally after every test
+    rather than relying on each test to remember — mirrors sdk/tests/conftest.py.
+    """
+    yield
+    await close_database()
+    await close_event_bus()
 
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:

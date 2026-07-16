@@ -1016,6 +1016,25 @@ async def get_event_bus() -> EventBus:
     return _global_bus
 
 
+async def close_event_bus() -> None:
+    """Close and reset the global EventBus singleton, if open (issue #248).
+
+    Mirrors ``database.close_database()``. ``EventBus.__init__`` creates an
+    ``asyncio.Event`` bound to whatever event loop is running at construction
+    time; pytest-asyncio gives each test function its own loop, so a singleton
+    left open from one test holds a ``_connected`` Event tied to a loop that no
+    longer exists by the time a later test calls ``get_event_bus()`` and reuses
+    it — surfacing as "attached to a different loop" errors that only
+    reproduce in a particular test order. Call this in teardown after any test
+    that exercises the real ``get_event_bus()``/``publish()``/``subscribe()``
+    singleton path.
+    """
+    global _global_bus
+    if _global_bus is not None:
+        await _global_bus.close()
+        _global_bus = None
+
+
 async def publish(subject: str, data: Any) -> None:
     """Convenience function to publish via global bus."""
     bus = await get_event_bus()
