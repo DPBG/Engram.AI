@@ -1021,13 +1021,17 @@ async def close_event_bus() -> None:
 
     Mirrors ``activelearning.database.close_database()``. Nothing in the
     production runtime calls this — a real service's process exit reclaims
-    the connection. But a test that exercises ``get_event_bus()`` (or the
-    module-level ``publish()``/``subscribe()`` convenience functions above,
-    which route through it) and never closes it leaves a connected
-    ``EventBus`` sitting in this module's global for every subsequent test in
-    the same pytest process to inherit — regardless of collection order, and
-    potentially pointed at a broker a later test has already torn down. Tests
-    that exercise the real singleton must call this in teardown.
+    the connection. But ``EventBus.__init__`` creates an ``asyncio.Event``
+    bound to whatever event loop is running at construction time, and
+    pytest-asyncio gives each test function its own loop, so a test that
+    exercises ``get_event_bus()`` (or the module-level ``publish()``/
+    ``subscribe()`` convenience functions above, which route through it) and
+    never closes it leaves a connected ``EventBus`` — with a ``_connected``
+    Event tied to a now-dead loop — sitting in this module's global for every
+    subsequent test in the same pytest process to inherit, regardless of
+    collection order. That surfaces as "attached to a different loop" errors
+    that only reproduce in a particular test order. Tests that exercise the
+    real singleton must call this in teardown.
     """
     global _global_bus
     if _global_bus is not None:
