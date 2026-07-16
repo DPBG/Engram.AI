@@ -17,6 +17,7 @@ SensorManager = sm.SensorManager
 SensorType = sm.SensorType
 _looks_like_imu_reading = sm._looks_like_imu_reading
 _looks_like_nmea_sentence = sm._looks_like_nmea_sentence
+_looks_like_lidar_reading = sm._looks_like_lidar_reading
 
 
 def _run(coro):
@@ -200,3 +201,69 @@ def test_probe_gps_port_sync_skips_banner_before_valid_nmea():
     ]
     with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
         assert SensorManager._probe_gps_port_sync("/dev/ttyUSB1") is True
+
+
+def test_looks_like_lidar_reading_accepts_ranges_list():
+    assert _looks_like_lidar_reading({"ranges": [1.2, 1.3, 1.1]}) is True
+
+
+def test_looks_like_lidar_reading_accepts_angle_distance():
+    assert _looks_like_lidar_reading({"angle": 45.0, "distance_mm": 1200}) is True
+
+
+def test_looks_like_lidar_reading_rejects_non_lidar():
+    assert _looks_like_lidar_reading({"distance_cm": 40}) is False
+    assert _looks_like_lidar_reading({"ax": 0.1, "ay": 0.0, "az": 9.8}) is False
+    assert _looks_like_lidar_reading({"ranges": []}) is False
+
+
+@patch.object(SensorManager, "_probe_lidar_port_sync", return_value=True)
+def test_detect_lidar_registers_serial_device(_mock_probe):
+    manager = SensorManager()
+    with patch.dict(sys.modules, _fake_serial_modules(ports=["/dev/ttyUSB3"])):
+        assert _run(manager._detect_lidar()) is True
+    sensors = manager.get_available_sensors(SensorType.LIDAR)
+    assert len(sensors) == 1
+    assert sensors[0].sensor_id == "lidar_ttyUSB3"
+    assert "scan" in sensors[0].capabilities
+
+
+@patch.object(SensorManager, "_probe_lidar_port_sync", return_value=False)
+def test_detect_lidar_returns_false_when_no_compatible_ports(_mock_probe):
+    manager = SensorManager()
+    with patch.dict(sys.modules, _fake_serial_modules(ports=["/dev/ttyUSB3"])):
+        assert _run(manager._detect_lidar()) is False
+    assert manager.get_available_sensors(SensorType.LIDAR) == []
+
+
+def test_detect_lidar_skips_when_pyserial_missing():
+    manager = SensorManager()
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _import(name, *args, **kwargs):
+        if name == "serial":
+            raise ImportError("no pyserial")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_import):
+        assert _run(manager._detect_lidar()) is False
+
+
+def test_probe_lidar_port_sync_parses_json_line():
+    fake_serial = MagicMock()
+    fake_serial.readline.return_value = b'{"angle": 10.0, "distance": 2.5}\n'
+    with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
+        assert SensorManager._probe_lidar_port_sync("/dev/ttyUSB3") is True
+    fake_serial.close.assert_called_once()
+
+
+def test_probe_lidar_port_sync_skips_banner_before_valid_json():
+    fake_serial = MagicMock()
+    fake_serial.readline.side_effect = [
+        b"RPLIDAR A1 ready\n",
+        b'{"points": [{"angle": 0, "distance": 1.0}]}\n',
+    ]
+    with patch.dict(sys.modules, _fake_serial_modules(serial_instance=fake_serial)):
+        assert SensorManager._probe_lidar_port_sync("/dev/ttyUSB3") is True

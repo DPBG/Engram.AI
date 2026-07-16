@@ -46,6 +46,44 @@ def _looks_like_imu_reading(raw: dict) -> bool:
     )
 
 
+def _looks_like_lidar_reading(raw: dict) -> bool:
+    """Return True when a parsed JSON dict looks like a LIDAR scan sample."""
+    if not isinstance(raw, dict):
+        return False
+
+    # Full scan payloads
+    for key in ("ranges", "points", "scan", "lidar"):
+        value = raw.get(key)
+        if isinstance(value, list) and len(value) > 0:
+            return True
+        if key == "lidar" and isinstance(value, (int, float)) and not isinstance(value, bool):
+            return True
+
+    # Single-beam sample: angle + distance (common for serial LIDAR adapters)
+    keys = {k.lower() for k in raw}
+    has_angle = "angle" in keys or "theta" in keys or "azimuth" in keys
+    has_distance = any(
+        k in keys
+        for k in ("distance", "distance_cm", "distance_mm", "range", "range_cm", "range_mm")
+    )
+    if has_angle and has_distance:
+        for key, value in raw.items():
+            if key.lower() in {
+                "distance",
+                "distance_cm",
+                "distance_mm",
+                "range",
+                "range_cm",
+                "range_mm",
+            }:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    return False
+                if value < 0:
+                    return False
+                return True
+    return False
+
+
 class SensorType(Enum):
     """Types of sensors."""
 
@@ -129,6 +167,11 @@ class SensorManager:
         detected = await self._detect_gps()
         if detected:
             logger.info("✓ GPS detected")
+
+        # Try to detect LIDAR
+        detected = await self._detect_lidar()
+        if detected:
+            logger.info("✓ LIDAR detected")
 
         logger.info(f"Total sensors detected: {len(self._sensors)}")
 
@@ -250,6 +293,60 @@ class SensorManager:
                     if not line:
                         continue
                     if _looks_like_nmea_sentence(line):
+                        return True
+            finally:
+                ser.close()
+        except Exception:
+            return False
+        return False
+
+    async def _detect_lidar(self) -> bool:
+        """Detect USB serial LIDAR scanners emitting JSON scan samples."""
+        try:
+            import serial  # noqa: F401 — optional dependency
+            from serial.tools import list_ports
+        except ImportError:
+            logger.debug("pyserial not available; skipping LIDAR detection")
+            return False
+
+        loop = asyncio.get_running_loop()
+        detected_any = False
+        try:
+            for port_info in list_ports.comports():
+                port = port_info.device
+                if not await loop.run_in_executor(None, self._probe_lidar_port_sync, port):
+                    continue
+                port_name = port.rsplit("/", 1)[-1]
+                sensor_id = f"lidar_{port_name}"
+                self._sensors[sensor_id] = SensorInfo(
+                    sensor_id=sensor_id,
+                    sensor_type=SensorType.LIDAR,
+                    priority=self.SENSOR_PRIORITIES[SensorType.LIDAR],
+                    capabilities=["scan", "range", "serial"],
+                )
+                detected_any = True
+        except Exception as e:
+            logger.debug(f"LIDAR detection failed: {e}")
+
+        return detected_any
+
+    @staticmethod
+    def _probe_lidar_port_sync(port: str, baud_rate: int = 115200) -> bool:
+        """Open a serial port and look for one valid LIDAR JSON line."""
+        try:
+            import serial
+
+            ser = serial.Serial(port, baud_rate, timeout=0.5)
+            try:
+                for _ in range(5):
+                    line = ser.readline().decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if _looks_like_lidar_reading(data):
                         return True
             finally:
                 ser.close()
