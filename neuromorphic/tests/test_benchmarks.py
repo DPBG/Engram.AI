@@ -3,6 +3,8 @@
 Verifies all 6 benchmarks produce valid results on a small network.
 """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -415,3 +417,172 @@ class TestConceptSeparabilityBenchmark:
         text = suite.summary(results)
         assert "Concept Separability" in text
         assert "Silhouette score" in text
+
+
+# ---------------------------------------------------------------------------
+# Issue #329: Benchmark flakiness audit across all test classes
+# ---------------------------------------------------------------------------
+def _make_small_network() -> NeuromorphicNetwork:
+    cfg = NeuromorphicConfig.from_env()
+    cfg.populations.brainstem = 50
+    cfg.populations.reflex_arc = 30
+    cfg.populations.sensory_cortex = 200
+    cfg.populations.motor_cortex = 100
+    cfg.populations.cerebellum = 50
+    cfg.populations.association_cortex = 150
+    cfg.populations.predictive_layer = 80
+    cfg.populations.working_memory = 40
+    cfg.populations.feature_layer = 0
+    cfg.populations.concept_layer = 0
+    cfg.populations.meta_controller = 0
+    return NeuromorphicNetwork(cfg)
+
+
+class TestBenchmarkFlakiness:
+    """Audit that every benchmark class produces stable, valid output across seeds.
+
+    Each test runs its benchmark class with 3 distinct seeds and asserts that:
+    - metrics stay within their documented valid range every time
+    - no NaN or Inf values appear in any run
+    - pure-logic helpers (generate_test_patterns, _flatten_numeric, etc.) are
+      deterministic regardless of call order
+
+    A class that fails any of these checks on 3 seeds is by definition flaky and
+    must be fixed before being used for statistical inference.
+    """
+
+    _SEEDS = [42, 123, 777]
+
+    # --- TestGeneratePatterns domain ---
+
+    def test_generate_patterns_deterministic_across_seeds(self):
+        for seed in self._SEEDS:
+            a = generate_test_patterns(3, np.random.default_rng(seed))
+            b = generate_test_patterns(3, np.random.default_rng(seed))
+            assert a == b, f"non-deterministic output for seed={seed}"
+
+    # --- TestToNative domain ---
+
+    def test_to_native_idempotent(self):
+        d = {"a": np.int64(5), "b": np.float32(3.14), "c": np.array([1, 2])}
+        for _ in range(5):
+            r = _to_native(d)
+            assert isinstance(r["a"], int)
+            assert isinstance(r["b"], float)
+            assert isinstance(r["c"], list)
+
+    # --- TestCrossModalRecall domain ---
+
+    def test_cross_modal_recall_range_stable(self):
+        for seed in self._SEEDS:
+            net = _make_small_network()
+            patterns = generate_test_patterns(3, np.random.default_rng(seed))
+            result = CrossModalRecallBenchmark(net).run(
+                patterns, training_reps=2, steps_per_pattern=4
+            )
+            assert 0.0 <= result["visual_to_auditory_recall"] <= 1.0, f"seed={seed}"
+            assert 0.0 <= result["auditory_to_visual_recall"] <= 1.0, f"seed={seed}"
+            assert math.isfinite(result["binding_strength_delta"]), f"seed={seed}"
+
+    # --- TestNoveltyDetection domain ---
+
+    def test_novelty_detection_range_stable(self):
+        for seed in self._SEEDS:
+            net = _make_small_network()
+            patterns = generate_test_patterns(3, np.random.default_rng(seed))
+            novel = generate_test_patterns(1, np.random.default_rng(seed + 999))[0]
+            result = NoveltyDetectionBenchmark(net).run(
+                patterns[0], novel, familiarization_reps=2, steps_per_rep=4, test_steps=3
+            )
+            assert result["familiar_pred_error"] >= 0.0, f"seed={seed}"
+            assert result["novel_pred_error"] >= 0.0, f"seed={seed}"
+            assert math.isfinite(result["discrimination_ratio"]), f"seed={seed}"
+
+    # --- TestAssociationStrength domain ---
+
+    def test_association_strength_range_stable(self):
+        for seed in self._SEEDS:
+            net = _make_small_network()
+            patterns = generate_test_patterns(3, np.random.default_rng(seed))
+            result = AssociationStrengthBenchmark(net).run(
+                patterns, training_reps=2, steps_per_pattern=4
+            )
+            for wc in result["weight_changes"].values():
+                assert math.isfinite(wc["delta_mean"]), f"seed={seed}"
+            assert result["concept_count"] >= 0, f"seed={seed}"
+
+    # --- TestEnergyEfficiency domain ---
+
+    def test_energy_efficiency_range_stable(self):
+        for seed in self._SEEDS:
+            net = _make_small_network()
+            patterns = generate_test_patterns(3, np.random.default_rng(seed))
+            result = EnergyEfficiencyBenchmark(net).run(patterns, steps_per_pattern=4)
+            assert result["global_firing_rate"] >= 0.0, f"seed={seed}"
+            for rate in result["region_firing_rates"].values():
+                assert rate >= 0.0, f"seed={seed}"
+            assert math.isfinite(result["approx_energy_units"]), f"seed={seed}"
+
+    # --- TestBenchmarkSuite + TestCrossModalBindingAccuracyInSuite domain ---
+
+    def test_suite_run_all_keys_and_ranges_stable(self):
+        for seed in self._SEEDS:
+            net = _make_small_network()
+            results = BenchmarkSuite(net).run_all(
+                n_patterns=2, training_reps=1, steps_per_pattern=4, seed=seed
+            )
+            for key in (
+                "cross_modal_recall",
+                "novelty_detection",
+                "association_strength",
+                "energy_efficiency",
+                "concept_separability",
+                "cross_modal_binding_accuracy",
+            ):
+                assert key in results, f"missing key {key!r} for seed={seed}"
+            assert results["elapsed_s"] > 0, f"seed={seed}"
+            ba = results["cross_modal_binding_accuracy"]
+            assert 0.0 <= ba["precision"] <= 1.0, f"precision out of range for seed={seed}"
+            assert 0.0 <= ba["recall"] <= 1.0, f"recall out of range for seed={seed}"
+            assert 0.0 <= ba["f1"] <= 1.0, f"f1 out of range for seed={seed}"
+
+    # --- TestFlattenNumeric domain ---
+
+    def test_flatten_numeric_deterministic(self):
+        d = {"a": 1, "b": {"c": 2.5, "d": {"e": 3}}}
+        expected = {"a": 1.0, "b.c": 2.5, "b.d.e": 3.0}
+        for _ in range(5):
+            assert _flatten_numeric(d) == expected
+
+    # --- TestConfidenceInterval domain ---
+
+    def test_confidence_interval_deterministic(self):
+        values = [1.0, 2.0, 3.0, 4.0, 5.0]
+        first_mean, first_hw = _confidence_interval(values)
+        for _ in range(5):
+            mean, hw = _confidence_interval(values)
+            assert mean == first_mean
+            assert hw == first_hw
+
+    # --- TestMultiSeed domain ---
+
+    def test_multi_seed_aggregate_no_nan(self):
+        net = _make_small_network()
+        results = BenchmarkSuite(net).run_multi_seed(
+            n_seeds=3, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        for name, stat in results["aggregate"].items():
+            assert math.isfinite(stat["mean"]), f"NaN mean for metric {name!r}"
+            assert math.isfinite(stat["std"]), f"NaN std for metric {name!r}"
+
+    # --- No NaN/Inf in any run (covers all 6 benchmarks together) ---
+
+    def test_no_nan_or_inf_across_seeds(self):
+        for seed in self._SEEDS:
+            net = _make_small_network()
+            results = BenchmarkSuite(net).run_all(
+                n_patterns=2, training_reps=1, steps_per_pattern=4, seed=seed
+            )
+            flat = _flatten_numeric(results)
+            bad = {k: v for k, v in flat.items() if not math.isfinite(v)}
+            assert not bad, f"seed={seed}: non-finite metrics found: {bad}"
