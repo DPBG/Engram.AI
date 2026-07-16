@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-import socket
-import subprocess
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from pathlib import Path
@@ -16,12 +14,7 @@ from urllib.parse import urlparse
 import pytest
 
 from activelearning.nats_client import EventBus
-
-
-def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(timeout)
-        return sock.connect_ex((host, port)) == 0
+from activelearning.testing.nats_server import port_open, run_nats_server
 
 
 async def _can_connect(nats_url: str) -> bool:
@@ -38,12 +31,6 @@ async def _can_connect(nats_url: str) -> bool:
         return False
 
 
-def _free_port(host: str = "127.0.0.1") -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind((host, 0))
-        return sock.getsockname()[1]
-
-
 @pytest.fixture(scope="session")
 def nats_url() -> Generator[str, None, None]:
     """Broker URL for integration tests.
@@ -57,7 +44,7 @@ def nats_url() -> Generator[str, None, None]:
         parsed = urlparse(explicit)
         host = parsed.hostname or "127.0.0.1"
         port = parsed.port or 4222
-        if not _port_open(host, port):
+        if not port_open(host, port):
             pytest.skip(f"NATS_URL set but broker not reachable at {explicit}")
         yield explicit
         return
@@ -67,35 +54,14 @@ def nats_url() -> Generator[str, None, None]:
         pytest.skip("NATS server not available and nats-server not on PATH")
         return
 
-    host = "127.0.0.1"
-    port = _free_port(host)
-    url = f"nats://{host}:{port}"
-
     data_dir = Path("/tmp") / f"engram-nats-test-{uuid.uuid4().hex}"
     data_dir.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.Popen(
-        [binary, "-js", "-p", str(port), "-m", "8222", "-sd", str(data_dir)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
     try:
-        for _ in range(50):
-            if _port_open(host, port):
-                break
-            if proc.poll() is not None:
-                pytest.skip("Failed to start embedded nats-server")
-            import time
-
-            time.sleep(0.1)
-        else:
-            pytest.skip("Timed out waiting for embedded nats-server")
-        yield url
+        with run_nats_server(data_dir) as server:
+            yield server.url
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
         shutil.rmtree(data_dir, ignore_errors=True)
 
 

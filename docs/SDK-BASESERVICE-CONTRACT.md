@@ -391,6 +391,11 @@ maps to a guarantee in this document. Tick all boxes before opening the migratio
 - [ ] `test_validation_drops_bad_messages` — verifies invalid payloads do not reach handlers.
 - [ ] `test_decision_wait_timeout_fails_closed` — verifies the service denies / halts on timeout.
 
+For real-broker coverage, use `activelearning.testing.nats_server` rather than
+starting `nats-server` inline. That shared harness is the cross-milestone
+contract between M1 Phase 2 governance smoke tests and M2 Phase 2
+NATS-reliability/reconnect tests (issue #264).
+
 ---
 
 ## 7. Regression Test Template
