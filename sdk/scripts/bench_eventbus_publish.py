@@ -193,7 +193,14 @@ def _percentile(sorted_vals: list[float], p: float) -> float:
 
 def summarize_latencies_ms(samples_ms: list[float]) -> dict[str, float | int]:
     if not samples_ms:
-        return {"count": 0, "p50_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0, "max_ms": 0.0, "mean_ms": 0.0}
+        return {
+            "count": 0,
+            "p50_ms": 0.0,
+            "p95_ms": 0.0,
+            "p99_ms": 0.0,
+            "max_ms": 0.0,
+            "mean_ms": 0.0,
+        }
     ordered = sorted(samples_ms)
     return {
         "count": len(ordered),
@@ -522,9 +529,7 @@ def infer_bottleneck(results: list[ScenarioResult]) -> dict[str, Any]:
             "JSON serialize + EventBus plumbing."
         )
         core_bottleneck = (
-            "client_serialization_and_eventbus"
-            if sdk_overhead_pct >= 25
-            else "nats_py_or_broker"
+            "client_serialization_and_eventbus" if sdk_overhead_pct >= 25 else "nats_py_or_broker"
         )
         primary = core_bottleneck
 
@@ -687,8 +692,7 @@ def main() -> None:
                 )
                 if result.received is not None:
                     print(
-                        f"  received={result.received}  "
-                        f"delivery_ratio={result.delivery_ratio}"
+                        f"  received={result.received}  " f"delivery_ratio={result.delivery_ratio}"
                     )
         finally:
             broker.stop()
