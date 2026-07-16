@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import socket
 import subprocess
@@ -16,7 +17,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
-async def _reset_global_singletons():
+def _reset_global_singletons():
     """Guarantee _db/_global_bus never leak between tests (issue #248).
 
     kernel/tests is the one place in the repo that drives a real
@@ -25,8 +26,20 @@ async def _reset_global_singletons():
     interpreter shutdown (non-daemon aiosqlite thread) or leaks state into
     whatever kernel test runs next, so reset unconditionally after every test
     rather than relying on each test to remember — mirrors sdk/tests/conftest.py.
+
+    A plain sync fixture using asyncio.run(), not `async def` + pytest-asyncio:
+    CI runs kernel/tests in a shared job alongside other services' test dirs
+    with only `--with pytest` (no pytest-asyncio) — kernel's own test
+    functions are plain `def test_...()` that call asyncio.run() internally
+    for exactly this reason, so an async autouse fixture here breaks every
+    test in the directory with "requested an async fixture ... with no
+    plugin or hook that handled it."
     """
     yield
+    asyncio.run(_close_singletons())
+
+
+async def _close_singletons() -> None:
     await close_database()
     await close_event_bus()
 
