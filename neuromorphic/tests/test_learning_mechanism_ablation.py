@@ -16,7 +16,6 @@ The 6 mechanisms (CLAUDE.md Invariant 1):
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from neuromorphic.config import BCMConfig, EligibilityTraceConfig, RSTDPParams, STDPParams
 from neuromorphic.synapses import SynapseGroup
