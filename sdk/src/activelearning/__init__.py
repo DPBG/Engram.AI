@@ -43,8 +43,8 @@ from activelearning.nats_client import (
     DEFAULT_REQUEST_TIMEOUT_S,
     RECONNECT_WAIT_TIMEOUT_S,
     EventBus,
+    close_event_bus,
     get_event_bus,
-    close_event_bus
 )
 from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuator, register_sensor
 from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
