@@ -810,16 +810,6 @@ class KernelService(BaseService):
             )
             await self.event_bus.publish(
                 code_decision_subject(trace_id),
-                sign_decision(
-                    {
-                        "trace_id": decision.trace_id,
-                        "type": decision.type.value,
-                        "reason": decision.reason,
-                        "risk_score": decision.risk_score,
-                        "issued_at": decision.issued_at,
-                        "expires_at": decision.expires_at,
-                    }
-                ),
                 self._signed_code_decision(decision),
             )
 
