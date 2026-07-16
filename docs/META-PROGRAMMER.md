@@ -29,9 +29,10 @@ The **Meta-Programmer** is the system's self-evolution capability—an orchestra
 >   **Phase 1.1–1.2**, not an enforced property today.
 > - Only the first ~500 chars of generated code are pattern-scanned; full-artifact
 >   AST taint analysis is **Phase 1.5**.
-> - The multi-agent refactor pipeline, Stage-2 Test-Runner integration,
->   post-deploy auto-rollback, and the 24h approval-timeout-as-DENY are **not yet
->   built** (Phase 1.9 / 4.1).
+> - The multi-agent refactor pipeline and Stage-2 Test-Runner integration are
+>   **not yet built** (Phase 4.1). Post-deploy health-probe auto-rollback and
+>   **DEFER TTL → DENY** (fail-closed human-review expiry) are implemented
+>   (Phase 1.9 / E1.9.1–1.9.2); see [Human-in-the-Loop](#human-in-the-loop-dashboard).
 > - The Coordinator task-execution path does **not** currently route through the
 >   Kernel (Phase 1.6).
 >
@@ -317,6 +318,27 @@ When Kernel returns `DEFER`, the approval request is published to NATS and prese
 
 The Dashboard subscribes to `approval.request` and publishes `approval.response.{id}` when the human decides.
 
+### DEFER TTL expiry (fail-closed DENY)
+
+A `DEFER` is **provisional**, not an open-ended hold. If no valid human
+`approval.response` arrives before the review TTL, the proposal is treated as
+**DENY** (CLAUDE.md §3 fail-closed). Silence under a NATS partition between the
+Dashboard and the bus is therefore safe: nothing deploys.
+
+| Property | Value |
+|----------|-------|
+| Default TTL | `DEFER_TTL_MS` (default **300000** ms / 5 min); Kernel stamps matching `expires_at` on the decision |
+| Expiry authority | Meta-Programmer background sweep (`_sweep_expired_reviews`) + late-response reject in `ApprovalConsumer` |
+| On expiry | Stage → `rejected/`; publish `knowledge.gap.result.{trace_id}` with `success=False` and reason `DEFER expired — no human approval (fail-closed)` |
+| Late approval after TTL / after sweep | Ignored (idempotent); does **not** revive a rejected item |
+| NATS partition (Dashboard cannot publish `approval.response`) | No response arrives → sweep DENYs at TTL — same outcome as explicit human deny |
+| Operator UI | Must **not** auto-ALLOW unanswered prompts; unanswered reviews fail closed via the server-side TTL |
+
+This path does **not** require the Kernel to republish a DENY message. The
+Kernel already refused to ALLOW; the Meta-Programmer is the consumer that owns
+the staged `human_review/` item and must fail closed when the human channel is
+unreachable or silent.
+
 ---
 
 ## Staging Flow
@@ -347,6 +369,7 @@ The Dashboard subscribes to `approval.request` and publishes `approval.response.
 3. Kernel DEFER → `/staging/human_review/` → Dashboard approval
 4. Tests pass → `/staging/approved/`
 5. Deploy → `/data/plugins/` (live volume)
+6. Unanswered DEFER past `DEFER_TTL_MS` → `/staging/rejected/` (fail-closed DENY)
 
 ---
 
