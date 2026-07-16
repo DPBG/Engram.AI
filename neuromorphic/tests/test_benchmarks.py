@@ -9,8 +9,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-_NEURO_DIR = Path(__file__).resolve().parents[1]
-
 from neuromorphic.benchmarks import (
     AssociationStrengthBenchmark,
     BenchmarkSuite,
@@ -25,6 +23,8 @@ from neuromorphic.benchmarks import (
 )
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
+
+_NEURO_DIR = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
