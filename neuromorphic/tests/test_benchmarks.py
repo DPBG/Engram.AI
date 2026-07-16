@@ -18,9 +18,9 @@ from neuromorphic.benchmarks import (
     _confidence_interval,
     _flatten_numeric,
     _to_native,
+    audit_pattern_diversity,
     classify_quiet_regions,
     format_quiet_region_report,
-    audit_pattern_diversity,
     generate_test_patterns,
 )
 from neuromorphic.config import NeuromorphicConfig
