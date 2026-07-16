@@ -21,7 +21,7 @@ from activelearning.core import (
     current_timestamp,
     generate_trace_id,
 )
-from activelearning.database import Database, get_database
+from activelearning.database import Database, close_database, get_database
 from activelearning.embeddings import (
     EmbeddingService,
     embed_batch,
@@ -37,7 +37,7 @@ from activelearning.messages import (
     schema_for_subject,
     validate_payload,
 )
-from activelearning.nats_client import EventBus, get_event_bus
+from activelearning.nats_client import EventBus, close_event_bus, get_event_bus
 from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuator, register_sensor
 from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
 from activelearning.signing import (
@@ -78,9 +78,11 @@ __all__ = [
     # NATS client
     "EventBus",
     "get_event_bus",
+    "close_event_bus",
     # Database
     "Database",
     "get_database",
+    "close_database",
     # Embeddings
     "EmbeddingService",
     "get_embedding_service",

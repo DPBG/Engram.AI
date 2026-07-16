@@ -1016,6 +1016,25 @@ async def get_event_bus() -> EventBus:
     return _global_bus
 
 
+async def close_event_bus() -> None:
+    """Close and reset the global EventBus singleton, if open (issue #248).
+
+    Mirrors ``activelearning.database.close_database()``. Nothing in the
+    production runtime calls this — a real service's process exit reclaims
+    the connection. But a test that exercises ``get_event_bus()`` (or the
+    module-level ``publish()``/``subscribe()`` convenience functions above,
+    which route through it) and never closes it leaves a connected
+    ``EventBus`` sitting in this module's global for every subsequent test in
+    the same pytest process to inherit — regardless of collection order, and
+    potentially pointed at a broker a later test has already torn down. Tests
+    that exercise the real singleton must call this in teardown.
+    """
+    global _global_bus
+    if _global_bus is not None:
+        await _global_bus.close()
+        _global_bus = None
+
+
 async def publish(subject: str, data: Any) -> None:
     """Convenience function to publish via global bus."""
     bus = await get_event_bus()

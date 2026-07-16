@@ -54,23 +54,96 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Discrete blob widths (issue #327): the prior generator always used sigma=50,
+# so every pattern was the *same* Gaussian blob translated to a new position —
+# one shape class with n>64 producing exact duplicates (positions are (i*7)%64,
+# (i*13)%64, period 64). Cycling through several widths gives genuine
+# shape-class diversity in addition to position, not just translation.
+_VISUAL_SIGMAS: tuple[float, ...] = (25.0, 50.0, 90.0)
+
+
 def generate_test_patterns(n: int, rng: np.random.Generator) -> list[dict]:
-    """Visual gaussian blobs + MFCC-like auditory signatures."""
+    """Visual gaussian blobs (varying position + size) with auditory signatures
+    (varying which/how-many dims are elevated).
+
+    See issue #327: the previous version had a single fixed blob shape
+    (position-only diversity, exactly repeating every 64 patterns) and
+    auditory vectors whose 12 shared-noise dims dominated similarity
+    (~0.9 mean cosine similarity between any two patterns regardless of
+    which single dim was "hot"). Position is now drawn from ``rng`` instead
+    of a fixed-period formula, size cycles through _VISUAL_SIGMAS, and the
+    auditory signature elevates 1-3 dims instead of always exactly 1.
+    """
     y, x = np.mgrid[0:64, 0:64]
     patterns = []
     for i in range(n):
-        d2 = (x - (i * 7) % 64).astype(np.float32) ** 2 + (y - (i * 13) % 64).astype(
-            np.float32
-        ) ** 2
-        vis = np.exp(-d2 / 50.0, dtype=np.float32).flatten()
+        cx = int(rng.integers(0, 64))
+        cy = int(rng.integers(0, 64))
+        sigma = _VISUAL_SIGMAS[i % len(_VISUAL_SIGMAS)]
+        d2 = (x - cx).astype(np.float32) ** 2 + (y - cy).astype(np.float32) ** 2
+        vis = np.exp(-d2 / sigma, dtype=np.float32).flatten()
         vis /= vis.max() + 1e-8
-        aud = rng.normal(0.5, 0.1, size=13).astype(np.float32)
-        aud[i % 13] = 1.0
+
+        # Background at 0.5±0.1 (the old constant) made every pattern's 12
+        # shared-noise dims dominate the dot product, so any two patterns had
+        # ~0.9 mean cosine similarity regardless of which dim was "hot" —
+        # a lower, tighter background floor lets the elevated dims actually
+        # distinguish classes (measured ~0.9 -> ~0.44 mean pairwise similarity).
+        n_hot = 1 + (i % 3)  # 1, 2, or 3 elevated dims -> more distinguishable classes
+        hot_dims = {(i + k * 4) % 13 for k in range(n_hot)}
+        aud = rng.normal(0.15, 0.05, size=13).astype(np.float32)
+        for hd in hot_dims:
+            aud[hd] = 1.0
         np.clip(aud, 0.0, 1.0, out=aud)
+
         patterns.append(
             {"visual": vis.tolist(), "auditory": aud.tolist(), "label": f"pattern_{i:03d}"}
         )
     return patterns
+
+
+def audit_pattern_diversity(patterns: list[dict]) -> dict[str, float]:
+    """Quantify generate_test_patterns() diversity (issue #327).
+
+    Every benchmark in BenchmarkSuite shares one pattern generator, so a
+    narrow-diversity generator is a single point of failure all 6 metrics
+    inherit. This returns exact-duplicate counts and mean pairwise cosine
+    similarity per modality so a future regression (e.g. reverting to one
+    fixed blob shape) is visible as unique counts dropping below
+    len(patterns) or similarity climbing back toward 1.0, instead of silently
+    degrading every downstream benchmark's ability to distinguish patterns.
+    """
+    if not patterns:
+        return {
+            "n_patterns": 0,
+            "unique_visual": 0,
+            "unique_auditory": 0,
+            "mean_visual_cosine_sim": 0.0,
+            "mean_auditory_cosine_sim": 0.0,
+        }
+    vis = np.array([p["visual"] for p in patterns], dtype=np.float64)
+    aud = np.array([p["auditory"] for p in patterns], dtype=np.float64)
+
+    def _unique_count(arr: np.ndarray) -> int:
+        return len({tuple(np.round(row, 6)) for row in arr})
+
+    def _mean_pairwise_cosine(arr: np.ndarray) -> float:
+        n = len(arr)
+        if n < 2:
+            return 0.0
+        norms = np.linalg.norm(arr, axis=1) + 1e-9
+        normalized = arr / norms[:, None]
+        sim_matrix = normalized @ normalized.T
+        iu = np.triu_indices(n, k=1)
+        return float(np.mean(sim_matrix[iu]))
+
+    return {
+        "n_patterns": len(patterns),
+        "unique_visual": _unique_count(vis),
+        "unique_auditory": _unique_count(aud),
+        "mean_visual_cosine_sim": round(_mean_pairwise_cosine(vis), 4),
+        "mean_auditory_cosine_sim": round(_mean_pairwise_cosine(aud), 4),
+    }
 
 
 def _to_native(obj: Any) -> Any:

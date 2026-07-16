@@ -33,6 +33,7 @@ from kernel.evaluator import (
     KernelDecision,
     KernelEvaluator,
     RiskAnalysis,
+    unavailable_belief_norm_violations,
     unavailable_risk_analysis,
 )
 from kernel.policy import (
@@ -1023,19 +1024,31 @@ class KernelService(BaseService):
         """Query Beliefs service for norm violations relevant to this proposal.
 
         Returns a list of violated norms with risk_boost values.
-        Returns empty list if Beliefs service is unavailable.
+        Fail-closed when Beliefs is unavailable (mirrors Safety Supervisor path).
         """
+        trace_id = proposal.get("trace_id", "")
+
+        def _unavailable(reason: str) -> list[dict[str, Any]]:
+            self.logger.warning(
+                "Beliefs norms unavailable for %s: %s — failing closed",
+                trace_id,
+                reason,
+            )
+            return unavailable_belief_norm_violations(reason)
+
         try:
             response = await self.event_bus.request(
                 Subjects.BELIEFS_QUERY_REQUEST,
                 {"type": "norms", "threshold": 0.8},
                 timeout=2.0,
             )
-            # Check for error response (from EventBus error-reply handler)
             if response.get("type") == "error":
-                self.logger.warning(f"Beliefs service error: {response.get('error', 'unknown')}")
-                return []
-            norms = response.get("result", [])
+                return _unavailable(response.get("error", "unknown"))
+            if response.get("error"):
+                return _unavailable(str(response["error"]))
+            norms = response.get("result")
+            if norms is None:
+                return _unavailable("missing result")
             if not norms:
                 return []
 
@@ -1086,8 +1099,7 @@ class KernelService(BaseService):
 
             return violations
         except Exception as e:
-            self.logger.warning(f"Could not check belief norms (proceeding without): {e}")
-            return []
+            return _unavailable(str(e))
 
     async def _publish_and_log_decision(
         self,
