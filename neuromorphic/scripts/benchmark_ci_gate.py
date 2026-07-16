@@ -4,6 +4,14 @@ CI performance-regression gate for scripts/benchmark.py (issue #132).
 Runs a small fixed-size network benchmark and fails if step timing regresses
 beyond the committed baseline in benchmarks/ci_performance_baseline.json.
 
+Schema note (issue #325, see docs/benchmark-schema.md): this gate reads
+scripts/benchmark.py's own "speed"/"learning" keys, produced by that script
+directly (not read from disk) -- a different schema than
+BenchmarkSuite.run_all()'s 6-benchmark output documented there. The two
+producers' saved JSON share the neuromorphic/benchmarks/ directory with
+similarly-named files (benchmark_*.json vs benchmarks_*.json), but this gate
+never reads BenchmarkSuite's schema at all.
+
 Usage:
     cd neuromorphic && uv run python scripts/benchmark_ci_gate.py
     cd neuromorphic && uv run python scripts/benchmark_ci_gate.py --baseline benchmarks/ci_performance_baseline.json
