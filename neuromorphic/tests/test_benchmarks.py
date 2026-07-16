@@ -7,16 +7,20 @@ import numpy as np
 import pytest
 
 from neuromorphic.benchmarks import (
+    INTENTIONALLY_SPARSE_REGIONS,
     AssociationStrengthBenchmark,
     BenchmarkSuite,
     ConceptSeparabilityBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
     NoveltyDetectionBenchmark,
+    RegionQuietFlag,
     _confidence_interval,
     _flatten_numeric,
     _to_native,
     audit_pattern_diversity,
+    classify_quiet_regions,
+    format_quiet_region_report,
     generate_test_patterns,
 )
 from neuromorphic.config import NeuromorphicConfig
@@ -205,6 +209,109 @@ class TestEnergyEfficiency:
         for name, rate in result["region_firing_rates"].items():
             assert rate >= 0.0
 
+    def test_region_energy_units_matches_firing_rate_regions(self, small_network, patterns):
+        """region_energy_units (issue #331) covers exactly the regions region_firing_rates does."""
+        bench = EnergyEfficiencyBenchmark(small_network)
+        result = bench.run(patterns, steps_per_pattern=4)
+        assert "region_energy_units" in result
+        assert set(result["region_energy_units"]) == set(result["region_firing_rates"])
+
+    def test_region_energy_units_sum_to_approx_energy_units(self, small_network, patterns):
+        bench = EnergyEfficiencyBenchmark(small_network)
+        result = bench.run(patterns, steps_per_pattern=4)
+        assert sum(result["region_energy_units"].values()) == pytest.approx(
+            result["approx_energy_units"], rel=1e-3
+        )
+
+
+class TestClassifyQuietRegions:
+    def test_intentional_sparsity_flagged_for_known_kwta_regions(self):
+        result = {
+            "region_firing_rates": {"concept_layer": 0.02, "pattern_separator": 0.015},
+            "region_energy_units": {"concept_layer": 1.0, "pattern_separator": 0.5},
+        }
+        flags = classify_quiet_regions(result)
+        by_region = {f.region: f for f in flags}
+        assert by_region["concept_layer"].classification == "intentional_sparsity"
+        assert by_region["pattern_separator"].classification == "intentional_sparsity"
+        assert "k-WTA" in by_region["concept_layer"].note
+
+    def test_quiet_region_without_sparsity_rationale_flagged_undertrained(self):
+        result = {"region_firing_rates": {"sensory_cortex": 0.001}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result)
+        assert flags[0].classification == "quiet_undertrained"
+        assert "undertrained" in flags[0].note
+
+    def test_normal_firing_rate_is_healthy(self):
+        result = {"region_firing_rates": {"motor_cortex": 0.15}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result)
+        assert flags[0].classification == "healthy"
+
+    def test_custom_quiet_threshold(self):
+        result = {"region_firing_rates": {"cerebellum": 0.05}, "region_energy_units": {}}
+        assert classify_quiet_regions(result)[0].classification == "healthy"
+        assert (
+            classify_quiet_regions(result, quiet_threshold=0.1)[0].classification
+            == "quiet_undertrained"
+        )
+
+    def test_region_scores_override_marks_positive_score_healthy(self):
+        """A real per-region score (once #297/#315/#316 land) beats the heuristic."""
+        result = {"region_firing_rates": {"working_memory": 0.001}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result, region_scores={"working_memory": 0.87})
+        assert flags[0].classification == "healthy"
+        assert "per-region score" in flags[0].note
+
+    def test_region_scores_override_marks_zero_score_undertrained(self):
+        result = {"region_firing_rates": {"concept_layer": 0.02}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result, region_scores={"concept_layer": 0.0})
+        assert flags[0].classification == "quiet_undertrained"
+
+    def test_energy_units_carried_through_when_present(self):
+        result = {
+            "region_firing_rates": {"motor_cortex": 0.2},
+            "region_energy_units": {"motor_cortex": 3.14},
+        }
+        assert classify_quiet_regions(result)[0].energy_units == pytest.approx(3.14)
+
+    def test_missing_energy_units_is_none(self):
+        result = {"region_firing_rates": {"motor_cortex": 0.2}}
+        assert classify_quiet_regions(result)[0].energy_units is None
+
+    def test_empty_firing_rates_returns_empty_list(self):
+        assert classify_quiet_regions({}) == []
+        assert classify_quiet_regions({"region_firing_rates": {}}) == []
+
+    def test_intentionally_sparse_regions_table_has_notes(self):
+        assert set(INTENTIONALLY_SPARSE_REGIONS) == {"concept_layer", "pattern_separator"}
+        assert all(INTENTIONALLY_SPARSE_REGIONS.values())
+
+
+class TestFormatQuietRegionReport:
+    def test_empty_flags(self):
+        assert "no per-region" in format_quiet_region_report([])
+
+    def test_report_mentions_each_region_and_classification(self):
+        flags = [
+            RegionQuietFlag("concept_layer", 0.02, 1.0, "intentional_sparsity", "k-WTA design"),
+            RegionQuietFlag(
+                "sensory_cortex", 0.001, None, "quiet_undertrained", "likely undertrained"
+            ),
+            RegionQuietFlag("motor_cortex", 0.2, 2.0, "healthy", "normal range"),
+        ]
+        text = format_quiet_region_report(flags)
+        for f in flags:
+            assert f.region in text
+            assert f.classification in text
+
+    def test_report_sorted_quietest_first(self):
+        flags = [
+            RegionQuietFlag("motor_cortex", 0.2, None, "healthy", "x"),
+            RegionQuietFlag("sensory_cortex", 0.001, None, "quiet_undertrained", "y"),
+        ]
+        text = format_quiet_region_report(flags)
+        assert text.index("sensory_cortex") < text.index("motor_cortex")
+
 
 class TestBenchmarkSuite:
     def test_run_all(self, small_network):
@@ -229,6 +336,15 @@ class TestBenchmarkSuite:
         assert "Energy Efficiency" in text
         assert "Concept Separability" in text
         assert "Cross-Modal Binding Accuracy" in text
+
+    def test_summary_includes_per_region_quiet_report(self, small_network):
+        """issue #331: the summary cross-references quiet regions automatically."""
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=2, training_reps=1, steps_per_pattern=4)
+        text = suite.summary(results)
+        assert "issue #331" in text
+        for region in results["energy_efficiency"]["region_firing_rates"]:
+            assert region in text
 
 
 class TestCrossModalBindingAccuracyInSuite:

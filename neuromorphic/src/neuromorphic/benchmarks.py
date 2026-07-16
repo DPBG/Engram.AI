@@ -20,6 +20,13 @@ Usage:
     results = suite.run_multi_seed(n_seeds=5)
     print(suite.summary_multi_seed(results))
 
+    # Per-region quiet-vs-sparse triage (issue #331) — is a quiet region
+    # undertrained or intentionally sparse by design (k-WTA)? summary()
+    # includes this automatically; call directly for a saved JSON result:
+    from neuromorphic.benchmarks import classify_quiet_regions, format_quiet_region_report
+    flags = classify_quiet_regions(results["energy_efficiency"])
+    print(format_quiet_region_report(flags))
+
     # Or run from checkpoint on server:
     cd neuromorphic && uv run python -m neuromorphic.benchmarks --checkpoint /data/sqlite/neuromorphic.db
     cd neuromorphic && uv run python -m neuromorphic.benchmarks --seeds 5
@@ -31,6 +38,7 @@ import argparse
 import json
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -427,13 +435,16 @@ class EnergyEfficiencyBenchmark:
             if pat_spikes_list and steps_per_pattern
             else 0.0
         )
-        energy = sum(
-            rr.get(nm, 0.0) * r.n * r.population.params.tau / 20.0 for nm, r in net.regions.items()
-        )
+        region_energy = {
+            nm: rr.get(nm, 0.0) * r.n * r.population.params.tau / 20.0
+            for nm, r in net.regions.items()
+        }
+        energy = sum(region_energy.values())
         return {
             "mean_spikes_per_step": round(mss, 2),
             "global_firing_rate": round(mss / total_n if total_n else 0.0, 6),
             "region_firing_rates": rr,
+            "region_energy_units": {nm: round(v, 6) for nm, v in region_energy.items()},
             "approx_energy_units": round(energy, 4),
             "spikes_per_association": (
                 round(
@@ -445,6 +456,116 @@ class EnergyEfficiencyBenchmark:
             "total_steps": len(patterns) * steps_per_pattern,
             "total_neurons": int(total_n),
         }
+
+
+# ---------------------------------------------------------------------------
+# Per-region quiet-vs-sparse cross-reference (issue #331)
+#
+# #331 asks to join EnergyEfficiencyBenchmark's per-region data against
+# "the new per-region benchmarks (items #30-#36)" to tell undertrained
+# regions apart from intentionally sparse ones. As of this writing those
+# per-region benchmarks (tracked in #297, #315, #316, and siblings) are all
+# still open/unimplemented, so there is nothing to join yet. What this
+# module *can* do honestly today is cross-reference firing rate against the
+# architecture's own documented sparsity design (k-WTA regions), and leave a
+# `region_scores` hook so a real per-region learning score can override the
+# heuristic the moment one of those benchmarks lands.
+# ---------------------------------------------------------------------------
+
+# Regions with a k-WTA / winner-take-all design that intentionally targets a
+# very low active fraction (see regions.py ConceptLayer/PatternSeparator and
+# their k_winners config, both ~2%) — a low firing rate here is the
+# architecture working as designed, not evidence of undertraining.
+INTENTIONALLY_SPARSE_REGIONS: dict[str, str] = {
+    "concept_layer": (
+        "k-WTA bottleneck, ~2% active by design "
+        "(50:1 compression from association cortex into sparse distributed representations)"
+    ),
+    "pattern_separator": (
+        "k-WTA dentate-gyrus analog, ~2% active by design "
+        "(orthogonal codes for episodic pattern separation)"
+    ),
+}
+
+# Below this firing rate, a region absent from INTENTIONALLY_SPARSE_REGIONS
+# is flagged as quiet-and-unexplained rather than assumed healthy.
+DEFAULT_QUIET_THRESHOLD = 0.01
+
+
+@dataclass(frozen=True)
+class RegionQuietFlag:
+    """One region's firing-rate classification from classify_quiet_regions()."""
+
+    region: str
+    firing_rate: float
+    energy_units: float | None
+    classification: str  # "intentional_sparsity" | "quiet_undertrained" | "healthy"
+    note: str
+
+
+def classify_quiet_regions(
+    energy_efficiency_result: dict[str, Any],
+    *,
+    quiet_threshold: float = DEFAULT_QUIET_THRESHOLD,
+    region_scores: dict[str, float] | None = None,
+) -> list[RegionQuietFlag]:
+    """Cross-reference per-region firing rates against known sparse-by-design
+    regions to separate undertrained-quiet from designed-quiet (issue #331).
+
+    `region_scores` is a hook for a genuine per-region learning-capability
+    score (once #297/#315/#316 and siblings land): if present for a region it
+    overrides the firing-rate heuristic below, since a region that scores well
+    on its own dedicated benchmark is healthy regardless of firing rate. Until
+    then this is firing-rate-only triage, not a full learning-capability
+    judgment — every note says so explicitly rather than overclaiming.
+    """
+    rates = energy_efficiency_result.get("region_firing_rates", {}) or {}
+    energy = energy_efficiency_result.get("region_energy_units", {}) or {}
+    flags = []
+    for region, rate in rates.items():
+        if region_scores and region in region_scores:
+            score = region_scores[region]
+            classification = "healthy" if score > 0 else "quiet_undertrained"
+            note = f"per-region score={score:.4f} (from a completed per-region benchmark)"
+        elif region in INTENTIONALLY_SPARSE_REGIONS:
+            classification = "intentional_sparsity"
+            note = INTENTIONALLY_SPARSE_REGIONS[region]
+        elif rate < quiet_threshold:
+            classification = "quiet_undertrained"
+            note = (
+                f"firing rate {rate:.4f} is below {quiet_threshold:.4f} with no documented "
+                "sparse-by-design rationale — likely undertrained, not intentional (pending "
+                "#297/#315/#316 and siblings to confirm with a real per-region score)"
+            )
+        else:
+            classification = "healthy"
+            note = f"firing rate {rate:.4f} is within the normal range"
+        flags.append(
+            RegionQuietFlag(
+                region=region,
+                firing_rate=rate,
+                energy_units=energy.get(region),
+                classification=classification,
+                note=note,
+            )
+        )
+    return flags
+
+
+def format_quiet_region_report(flags: list[RegionQuietFlag]) -> str:
+    """Human-readable rendering of classify_quiet_regions() output."""
+    if not flags:
+        return "  (no per-region firing-rate data)"
+    icons = {"intentional_sparsity": "~", "quiet_undertrained": "!", "healthy": " "}
+    lines = []
+    for f in sorted(flags, key=lambda f: f.firing_rate):
+        icon = icons.get(f.classification, "?")
+        energy_str = f"{f.energy_units:.4f}" if f.energy_units is not None else "?"
+        lines.append(
+            f"  [{icon}] {f.region:22s} rate={f.firing_rate:.4f}  energy={energy_str}  "
+            f"{f.classification} — {f.note}"
+        )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -944,8 +1065,12 @@ class BenchmarkSuite:
             f"   Spikes/step: {en.get('mean_spikes_per_step', 0):.0f}",
             f"   Global rate:  {en.get('global_firing_rate', 0):.6f}",
             f"   Energy units: {en.get('approx_energy_units', 0):.2f}",
-            "",
         ]
+        if en.get("region_firing_rates"):
+            lines.append("   Per-region (issue #331 — quiet-vs-sparse triage, no per-region")
+            lines.append("   learning score yet; see #297/#315/#316):")
+            lines.append(format_quiet_region_report(classify_quiet_regions(en)))
+        lines.append("")
         cs = results.get("concept_separability", {})
         if cs:
             if "error" not in cs:
