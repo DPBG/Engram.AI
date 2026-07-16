@@ -37,6 +37,14 @@ compiled = [
 gpu = [
     "jax>=0.4.20",
 ]
+# Dev-time-only ground-truth check for the pure-NumPy metrics benchmarks.py
+# reimplements (silhouette score, nearest-centroid probe) — see issue #330 and
+# scripts/verify_silhouette_score.py. sklearn is NOT a dependency of
+# benchmarks.py itself and never ships with the benchmark code; this extra
+# exists solely so the verification script has something to compare against.
+verify = [
+    "scikit-learn>=1.3.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
