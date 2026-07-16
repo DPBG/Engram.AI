@@ -261,15 +261,17 @@ async def get_database() -> Database:
 
 
 async def close_database() -> None:
-    """Close and reset the global database singleton, if open.
+    """Close and reset the global database singleton, if open (issue #248).
 
-    Production services never call this — BaseService.stop() deliberately
+    Production services never call this — ``BaseService.stop()`` deliberately
     leaves the singleton open and relies on process exit to reap it. But
-    aiosqlite's connection worker runs on a non-daemon thread, so a test
-    process that opens the singleton via get_database() (e.g. by driving a
-    service through its real start()/stop() lifecycle) and never closes it
-    will hang at interpreter shutdown waiting for that thread to join. Tests
-    doing real end-to-end service lifecycles must call this in teardown.
+    ``aiosqlite``'s connection worker runs on a non-daemon thread, so a test
+    process that opens the singleton via ``get_database()`` (e.g. by driving a
+    service through its real ``start()``/``stop()`` lifecycle) and never
+    closes it will hang at interpreter shutdown waiting for that thread to
+    join — and the still-open singleton leaks into whatever test runs next in
+    the same pytest process, regardless of collection order. Tests that
+    exercise the real singleton must call this in teardown.
     """
     global _db
     if _db is not None:
