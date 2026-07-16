@@ -103,11 +103,25 @@ class TestSTDPContribution:
 
     def test_ablated_stdp_no_weight_change(self) -> None:
         """a_plus=a_minus=0 (ablated STDP) must leave weights unchanged."""
-        ablated = STDPParams(a_plus=0.0, a_minus=0.0, tau_plus=20.0, tau_minus=20.0,
-                            w_min=0.01, w_max=1.0, min_dt=1.0, max_dt=50.0)
+        ablated = STDPParams(
+            a_plus=0.0,
+            a_minus=0.0,
+            tau_plus=20.0,
+            tau_minus=20.0,
+            w_min=0.01,
+            w_max=1.0,
+            min_dt=1.0,
+            max_dt=50.0,
+        )
         syn = SynapseGroup(
-            n_pre=_N, n_post=_N, sparsity=1.0, init_weight=0.5, plastic=True,
-            stdp_params=ablated, rng=np.random.default_rng(42), name="ablated_stdp",
+            n_pre=_N,
+            n_post=_N,
+            sparsity=1.0,
+            init_weight=0.5,
+            plastic=True,
+            stdp_params=ablated,
+            rng=np.random.default_rng(42),
+            name="ablated_stdp",
         )
         before = syn.weights.data.copy()
         pre_sp, post_sp, pre_t, post_t = _spike_pattern()
@@ -181,11 +195,11 @@ class TestEligibilityTraces:
         n_steps = 50
         for _ in range(n_steps):
             syn.apply_neuromodulation_and_decay(modulator_signal=0.0, interval=1)
-        expected = _ELIG.trace_decay ** n_steps  # ≈ 0.951
+        expected = _ELIG.trace_decay**n_steps  # ≈ 0.951
         actual = float(np.max(np.abs(syn.eligibility)))
-        assert abs(actual - expected) < 0.01, (
-            f"Trace should decay to ≈{expected:.4f}; got {actual:.4f}"
-        )
+        assert (
+            abs(actual - expected) < 0.01
+        ), f"Trace should decay to ≈{expected:.4f}; got {actual:.4f}"
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +226,9 @@ class TestBCMMetaplasticity:
         syn_bcm.update_weights_stdp(pre_sp, post_sp, pre_t, post_t, current_time=10.0)
         delta_base = float(np.mean(syn_base.weights.data) - np.mean(before_base))
         delta_bcm = float(np.mean(syn_bcm.weights.data) - np.mean(before_bcm))
-        assert delta_bcm < delta_base, (
-            f"High BCM theta must reduce LTP: bcm={delta_bcm:.6f} base={delta_base:.6f}"
-        )
+        assert (
+            delta_bcm < delta_base
+        ), f"High BCM theta must reduce LTP: bcm={delta_bcm:.6f} base={delta_base:.6f}"
 
     def test_low_theta_enhances_ltp(self) -> None:
         """BCM theta below theta_init (quiet neuron history) must enlarge LTP."""
@@ -232,9 +246,9 @@ class TestBCMMetaplasticity:
         syn_bcm.update_weights_stdp(pre_sp, post_sp, pre_t, post_t, current_time=10.0)
         delta_base = float(np.mean(syn_base.weights.data) - np.mean(before_base))
         delta_bcm = float(np.mean(syn_bcm.weights.data) - np.mean(before_bcm))
-        assert delta_bcm > delta_base, (
-            f"Low BCM theta must enhance LTP: bcm={delta_bcm:.6f} base={delta_base:.6f}"
-        )
+        assert (
+            delta_bcm > delta_base
+        ), f"Low BCM theta must enhance LTP: bcm={delta_bcm:.6f} base={delta_base:.6f}"
 
     def test_ablated_bcm_returns_none_scaling(self) -> None:
         """_get_bcm_scaling must return None (no modulation) when BCM is disabled."""
@@ -311,9 +325,9 @@ class TestHomeostaticScaling:
         for _ in range(50):
             syn.normalize_weights(target_frac=0.5, base_rate=0.01, plasticity_multiplier=1.0)
         after_mean = float(np.mean(syn.weights.data))
-        assert after_mean < before_mean, (
-            f"High weights must decrease: before={before_mean:.4f} after={after_mean:.4f}"
-        )
+        assert (
+            after_mean < before_mean
+        ), f"High weights must decrease: before={before_mean:.4f} after={after_mean:.4f}"
 
     def test_low_weights_pulled_toward_target(self) -> None:
         """Mean weight near w_min must increase toward target after normalisation."""
@@ -323,15 +337,20 @@ class TestHomeostaticScaling:
         for _ in range(50):
             syn.normalize_weights(target_frac=0.5, base_rate=0.01, plasticity_multiplier=1.0)
         after_mean = float(np.mean(syn.weights.data))
-        assert after_mean > before_mean, (
-            f"Low weights must increase: before={before_mean:.4f} after={after_mean:.4f}"
-        )
+        assert (
+            after_mean > before_mean
+        ), f"Low weights must increase: before={before_mean:.4f} after={after_mean:.4f}"
 
     def test_ablated_homeostasis_non_plastic_is_noop(self) -> None:
         """plastic=False must make normalize_weights a complete no-op."""
         syn = SynapseGroup(
-            n_pre=_N, n_post=_N, sparsity=1.0, init_weight=0.95, plastic=False,
-            rng=np.random.default_rng(42), name="nonplastic",
+            n_pre=_N,
+            n_post=_N,
+            sparsity=1.0,
+            init_weight=0.95,
+            plastic=False,
+            rng=np.random.default_rng(42),
+            name="nonplastic",
         )
         before = syn.weights.data.copy()
         for _ in range(50):
@@ -353,8 +372,9 @@ class TestRSTDP:
         def total_elig(mod: float) -> float:
             s = _syn(with_eligibility=True, with_rstdp=True)
             pre_sp, post_sp, pre_t, post_t = _spike_pattern()
-            s.update_weights_rstdp(pre_sp, post_sp, pre_t, post_t,
-                                   current_time=10.0, modulation=mod)
+            s.update_weights_rstdp(
+                pre_sp, post_sp, pre_t, post_t, current_time=10.0, modulation=mod
+            )
             assert s.eligibility is not None
             return float(np.sum(np.abs(s.eligibility)))
 
@@ -364,8 +384,7 @@ class TestRSTDP:
         """modulation=0 must produce no eligibility changes."""
         syn = _syn(with_eligibility=True, with_rstdp=True)
         pre_sp, post_sp, pre_t, post_t = _spike_pattern()
-        syn.update_weights_rstdp(pre_sp, post_sp, pre_t, post_t,
-                                 current_time=10.0, modulation=0.0)
+        syn.update_weights_rstdp(pre_sp, post_sp, pre_t, post_t, current_time=10.0, modulation=0.0)
         assert syn.eligibility is not None
         assert np.all(syn.eligibility == 0.0), "Zero modulation must leave eligibility unchanged"
 
@@ -374,8 +393,7 @@ class TestRSTDP:
         syn = _syn(with_eligibility=False, with_rstdp=False)
         before = syn.weights.data.copy()
         pre_sp, post_sp, pre_t, post_t = _spike_pattern()
-        syn.update_weights_rstdp(pre_sp, post_sp, pre_t, post_t,
-                                 current_time=10.0, modulation=5.0)
+        syn.update_weights_rstdp(pre_sp, post_sp, pre_t, post_t, current_time=10.0, modulation=5.0)
         np.testing.assert_array_equal(syn.weights.data, before)
 
     def test_surprise_bonus_increases_weight_change(self) -> None:
@@ -389,11 +407,13 @@ class TestRSTDP:
         before_b = syn_baseline.weights.data.copy()
 
         # modulation_mismatch=3.0; use 10.0 to guarantee surprise bonus
-        syn_surprise.update_weights_rstdp(pre_sp, post_sp, pre_t, post_t,
-                                          current_time=10.0, modulation=10.0)
+        syn_surprise.update_weights_rstdp(
+            pre_sp, post_sp, pre_t, post_t, current_time=10.0, modulation=10.0
+        )
         # modulation=1.0: below mismatch threshold, no surprise bonus
-        syn_baseline.update_weights_rstdp(pre_sp, post_sp, pre_t, post_t,
-                                          current_time=10.0, modulation=1.0)
+        syn_baseline.update_weights_rstdp(
+            pre_sp, post_sp, pre_t, post_t, current_time=10.0, modulation=1.0
+        )
 
         delta_surprise = float(np.mean(syn_surprise.weights.data) - np.mean(before_s))
         delta_baseline = float(np.mean(syn_baseline.weights.data) - np.mean(before_b))
