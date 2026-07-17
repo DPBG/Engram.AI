@@ -34,6 +34,7 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.7.0",
+    "mutmut>=3.6.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -61,3 +62,15 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+# Mutation testing (issue #211 / M1.18): scoped to evaluator.py's
+# risk-clamping logic, the class of bug PR #122 fixed one instance of
+# (missing risk analysis silently treated as zero risk). See
+# docs/MUTATION-TESTING.md for the workflow and the enforced kill-rate floor.
+[tool.mutmut]
+source_paths = ["src"]
+only_mutate = ["src/kernel/evaluator.py"]
+pytest_add_cli_args_test_selection = ["tests/test_evaluator.py"]
+# The full evaluator suite runs in well under a second; a generous multiplier
+# just avoids flaking on a loaded CI runner, not because mutants are slow.
+timeout_multiplier = 15.0

@@ -23,9 +23,15 @@ class Subjects:
     POLICY_LOAD_PROFILE = "policy.load_profile"
     POLICY_RESTRICT = "policy.restrict"
     POLICY_RESTRICT_REQUEST = "policy.restrict.request"
+    POLICY_RESTRICT_STATUS = "policy.restrict.status"
     POLICY_ROLLBACK = "policy.rollback"
+    POLICY_ROLLBACK_STATUS = "policy.rollback.status"
     POLICY_UPDATE = "policy.update"
+    POLICY_UPDATE_STATUS = "policy.update.status"
+    POLICY_PROFILE_STATUS = "policy.profile.status"
     COGNITIVE_RESPONSE_VALIDATE = "cognitive.response.validate"
+    COGNITIVE_RESPONSE_VALIDATED = "cognitive.response.validated"
+    COGNITIVE_RESPONSE_REJECTED = "cognitive.response.rejected"
     COGNITIVE_EXECUTE = "cognitive.execute"
     COGNITIVE_QUERY = "cognitive.query"
 
@@ -74,6 +80,9 @@ class Subjects:
 
     # Kernel watchdog (E1.9.3)
     KERNEL_HEARTBEAT = "kernel.heartbeat"
+
+    # Dead-letter queue (issue #246) — poisoned messages land on dlq.<subject>
+    DLQ_WILDCARD = "dlq.>"
 
 
 def decision_subject(trace_id: str) -> str:

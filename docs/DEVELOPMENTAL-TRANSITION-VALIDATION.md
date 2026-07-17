@@ -78,6 +78,16 @@ Identical to Regime A except the STDP decline signal arrives 40 steps later
 step ~110 in the test config), proving that timing tracks experience rather than
 being fixed at a step-count boundary.
 
+### M5-style noisy sensor replay
+
+Regimes A-D are also replayed with a deterministic noisy-sensor profile derived
+from the sim-to-real risks in [SIM-TO-REAL.md](SIM-TO-REAL.md): bounded sensor
+bias, drift, jitter, and small concept-vector perturbations.
+
+**Expected behaviour:** the same A-D regression expectations hold under the
+noisy profile: Regime A enters adolescence, Regimes B and C do not, and Regime D
+enters later than Regime A.
+
 ---
 
 ## Assertions
@@ -101,6 +111,8 @@ being fixed at a step-count boundary.
 - `entry_step_A ≠ entry_step_D`: same architecture, different experience → different timing
 - After identical step counts, Regime A is in adolescent/mature (via adolescence),
   Regime B is in mature (directly, never adolescent)
+- Under the M5-style noisy sensor profile, Regimes A-D retain the same expected
+  pass/fail and relative-timing outcomes.
 
 ---
 
@@ -110,7 +122,7 @@ being fixed at a step-count boundary.
 neuromorphic/tests/test_developmental_transition_suite.py
 ```
 
-26 tests across 6 classes:
+27 tests across 7 classes:
 
 | Class | Focus |
 |---|---|
@@ -120,7 +132,7 @@ neuromorphic/tests/test_developmental_transition_suite.py
 | `TestRegimeCPartialExperience` | Negative case: 2/3 criteria insufficient |
 | `TestTransitionTimingVariesWithExperience` | Timing comparison (A vs D) |
 | `TestAllThreeCriteriaRequired` | All 7 single/pair combinations are insufficient |
-| `TestInvariant2Regression` | Summary regression: catches any future violation |
+| `TestInvariant2Regression` | Summary regression, including noisy A-D replay |
 
 Run with:
 ```bash

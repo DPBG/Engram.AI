@@ -64,6 +64,7 @@ def build_stream_router(ctx: DashboardContext) -> APIRouter:
                         "bus_metrics": state.bus_metrics_list(
                             include_dashboard=nats.local_bus_metrics_snapshot(),
                         ),
+                        "dlq": state.dlq_summary(),
                     },
                 }
             )

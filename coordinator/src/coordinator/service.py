@@ -55,12 +55,14 @@ class CoordinatorService(BaseService):
             tasks_root=self.tasks_root,
         )
 
-        # Initialize task coordinator (shares the service's embedding client)
+        # Initialize task coordinator (shares the service's embedding client
+        # and the same SensorManager used by LearningController)
         self._task_coordinator = TaskCoordinator(
             nats_client=self.event_bus._nc,
             qdrant_url=self.qdrant_url,
             tasks_root=self.tasks_root,
             embedding_service=self._embedding_service,
+            sensor_manager=self._sensor_manager,
         )
         await self._task_coordinator.setup()
 
