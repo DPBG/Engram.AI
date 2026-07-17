@@ -1089,14 +1089,25 @@ class EventBus:
 
 # Global event bus instance for convenience
 _global_bus: EventBus | None = None
+_global_bus_lock = asyncio.Lock()
 
 
 async def get_event_bus() -> EventBus:
-    """Get or create the global EventBus instance."""
+    """Get or create the global EventBus instance.
+
+    Guarded by a lock so concurrent first-callers during startup can't race
+    past the `_global_bus is None` check and each construct + connect their
+    own instance (issue #254). The unlocked check is a fast path once
+    initialized; the locked re-check handles the narrow window where two
+    coroutines both see `_global_bus is None` before either has finished
+    constructing/connecting it.
+    """
     global _global_bus
     if _global_bus is None:
-        _global_bus = EventBus()
-        await _global_bus.connect()
+        async with _global_bus_lock:
+            if _global_bus is None:
+                _global_bus = EventBus()
+                await _global_bus.connect()
     return _global_bus
 
 
