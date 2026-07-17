@@ -92,3 +92,12 @@ merges — the `Tests` workflow is the gate):
   cannot run must deny/halt, never degrade open.
 - Keep tests deterministic and offline: inject fakes/mocks for NATS, Qdrant, and
   LLM clients rather than requiring a live service.
+
+## Performance / load benches
+
+- **Neuromorphic** step-timing regression: `neuromorphic/scripts/benchmark.py`
+  (+ CI gate via `benchmark_ci_gate.py`). See CONTRIBUTING.md.
+- **EventBus / NATS sustained publish** (M2.2): `sdk/scripts/bench_eventbus_publish.py`.
+  Documents throughput ceiling and bottlenecks in
+  [EVENTBUS-LOAD-TEST.md](EVENTBUS-LOAD-TEST.md). Not a CI gate — rates are
+  machine-dependent; re-run on the target host when planning capacity.

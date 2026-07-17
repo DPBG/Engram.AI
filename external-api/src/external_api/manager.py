@@ -140,8 +140,11 @@ class ExternalAPIManager:
 
             proposal = {
                 "trace_id": trace_id,
-                "type": "external_query",
-                "query": query[:200],  # Truncate for safety
+                "provenance": "external-api",
+                "action": {
+                    "type": "external_query",
+                    "query": query[:200],  # Truncate for safety
+                },
             }
 
             # Publish to Kernel

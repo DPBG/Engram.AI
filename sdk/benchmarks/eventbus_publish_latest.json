@@ -1,0 +1,186 @@
+{
+  "benchmark": "eventbus_sustained_publish",
+  "timestamp": "2026-07-16T12:46:36Z",
+  "args": {
+    "duration_s": 20.0,
+    "payload_bytes": 256,
+    "sample_every": 10,
+    "scenarios": [
+      "core",
+      "core_sub",
+      "jetstream",
+      "raw_nats"
+    ]
+  },
+  "system": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 165 Stepping 3, GenuineIntel",
+    "cpu_count": 12,
+    "python_version": "3.13.2",
+    "nats_url": "nats://127.0.0.1:60199",
+    "nats_py_version": "2.15.0",
+    "nats_server_version": "2.10.22",
+    "nats_server_cores": 12,
+    "nats_max_connections": 65536
+  },
+  "scenarios": [
+    {
+      "name": "core",
+      "subject": "loadtest.publish.66682665",
+      "duration_s": 20.0,
+      "published": 1127140,
+      "errors": 0,
+      "bytes_total": 288547840,
+      "msgs_per_sec": 56357.0,
+      "bytes_per_sec": 14427383.8,
+      "publish_latency": {
+        "count": 112714,
+        "p50_ms": 0.011,
+        "p95_ms": 0.013,
+        "p99_ms": 0.021,
+        "max_ms": 1.914,
+        "mean_ms": 0.011
+      },
+      "received": null,
+      "delivery_ratio": null,
+      "eventbus_metrics": {
+        "service": "bench-core-8a89e8",
+        "timestamp_ms": 1784205934687,
+        "publish": {
+          "count": 1127140,
+          "avg_ms": 0.004,
+          "max_ms": 3.851,
+          "jetstream_count": 0
+        },
+        "subscribe": {
+          "count": 0,
+          "avg_ms": 0.0,
+          "max_ms": 0.0
+        },
+        "request": {
+          "count": 0,
+          "avg_ms": 0.0,
+          "max_ms": 0.0
+        }
+      },
+      "notes": "Fire-and-forget core NATS via EventBus.publish (JSON serialize + nc.publish)"
+    },
+    {
+      "name": "core_sub",
+      "subject": "loadtest.publish.406b95de",
+      "duration_s": 20.732,
+      "published": 718443,
+      "errors": 0,
+      "bytes_total": 183921408,
+      "msgs_per_sec": 34653.9,
+      "bytes_per_sec": 8871389.7,
+      "publish_latency": {
+        "count": 71845,
+        "p50_ms": 0.011,
+        "p95_ms": 0.012,
+        "p99_ms": 0.019,
+        "max_ms": 972.564,
+        "mean_ms": 0.031
+      },
+      "received": 718443,
+      "delivery_ratio": 1.0,
+      "eventbus_metrics": {
+        "service": "bench-pub-5530ef",
+        "timestamp_ms": 1784205955942,
+        "publish": {
+          "count": 718443,
+          "avg_ms": 0.015,
+          "max_ms": 981.651,
+          "jetstream_count": 0
+        },
+        "subscribe": {
+          "count": 0,
+          "avg_ms": 0.0,
+          "max_ms": 0.0
+        },
+        "request": {
+          "count": 0,
+          "avg_ms": 0.0,
+          "max_ms": 0.0
+        }
+      },
+      "notes": "Core NATS with a fast subscriber; delivery_ratio < 1 hints at slow-consumer pressure"
+    },
+    {
+      "name": "jetstream",
+      "subject": "decision.bench-*",
+      "duration_s": 20.0,
+      "published": 80735,
+      "errors": 0,
+      "bytes_total": 20668160,
+      "msgs_per_sec": 4036.7,
+      "bytes_per_sec": 1033399.4,
+      "publish_latency": {
+        "count": 8074,
+        "p50_ms": 0.225,
+        "p95_ms": 0.282,
+        "p99_ms": 0.354,
+        "max_ms": 4.806,
+        "mean_ms": 0.235
+      },
+      "received": null,
+      "delivery_ratio": null,
+      "eventbus_metrics": {
+        "service": "bench-js-459680",
+        "timestamp_ms": 1784205976100,
+        "publish": {
+          "count": 80735,
+          "avg_ms": 0.208,
+          "max_ms": 18.452,
+          "jetstream_count": 80735
+        },
+        "subscribe": {
+          "count": 0,
+          "avg_ms": 0.0,
+          "max_ms": 0.0
+        },
+        "request": {
+          "count": 0,
+          "avg_ms": 0.0,
+          "max_ms": 0.0
+        }
+      },
+      "notes": "JetStream ack path (SAFETY_CRITICAL stream); expects lower ceiling than core"
+    },
+    {
+      "name": "raw_nats",
+      "subject": "loadtest.raw.0bcceff2",
+      "duration_s": 20.0,
+      "published": 1441321,
+      "errors": 0,
+      "bytes_total": 361771571,
+      "msgs_per_sec": 72066.0,
+      "bytes_per_sec": 18088575.7,
+      "publish_latency": {
+        "count": 144133,
+        "p50_ms": 0.003,
+        "p95_ms": 0.003,
+        "p99_ms": 0.005,
+        "max_ms": 3.741,
+        "mean_ms": 0.003
+      },
+      "received": null,
+      "delivery_ratio": null,
+      "eventbus_metrics": {},
+      "notes": "Pre-serialized bytes via nats-py only (isolates SDK EventBus overhead)"
+    }
+  ],
+  "bottleneck": {
+    "primary_bottleneck": "jetstream_pub_ack",
+    "core_path_bottleneck": "nats_py_or_broker",
+    "sustained_ceiling_msgs_per_sec": 72066.0,
+    "ceiling_scenario": "raw_nats",
+    "eventbus_core_msgs_per_sec": 56357.0,
+    "jetstream_msgs_per_sec": 4036.7,
+    "analysis": [
+      "EventBus core is 22% slower than raw nats-py (56357 vs 72066 msg/s) -- JSON serialize + EventBus plumbing.",
+      "JetStream sustained rate is 0.07x core (4037 vs 56357 msg/s) -- ack round-trip dominates safety-critical publish.",
+      "Safety-critical (JetStream) ceiling is the binding constraint for proposal/decision fan-out, not core observation publish."
+    ]
+  }
+}

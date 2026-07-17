@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, is_dataclass
@@ -110,6 +111,38 @@ DEFAULT_REDELIVERY_BACKOFF: list[float] = [1.0, 5.0, 15.0, 30.0]
 # Exhausted or unprocessable messages are republished here (core NATS, not the
 # JetStream-backed safety stream) so they are observable, never silently dropped.
 DLQ_SUBJECT_PREFIX: str = "dlq."
+
+# Reconnect storm mitigation (M2.3): nats-py retries on a fixed interval per
+# client (default 2 s). Every service using that default reconnects in lockstep
+# after a broker restart. Each EventBus picks a jittered wait at connect time
+# so simultaneous disconnects desynchronize their retry attempts.
+DEFAULT_RECONNECT_BASE_WAIT_S: float = 2.0
+DEFAULT_RECONNECT_JITTER_S: float = 2.0
+
+
+def jittered_reconnect_wait(
+    *,
+    base_wait_s: float | None = None,
+    jitter_s: float | None = None,
+) -> float:
+    """Return a per-client reconnect wait with random jitter.
+
+    nats-py has no reconnect_jitter option; varying ``reconnect_time_wait`` per
+    client is the supported way to spread retry attempts after a broker outage.
+    """
+    base = (
+        base_wait_s
+        if base_wait_s is not None
+        else float(os.environ.get("NATS_RECONNECT_BASE_WAIT_S", DEFAULT_RECONNECT_BASE_WAIT_S))
+    )
+    jitter = (
+        jitter_s
+        if jitter_s is not None
+        else float(os.environ.get("NATS_RECONNECT_JITTER_S", DEFAULT_RECONNECT_JITTER_S))
+    )
+    if jitter <= 0:
+        return base
+    return base + random.uniform(0, jitter)
 
 
 def _env_timeout(name: str, default: float) -> float:
@@ -246,12 +279,15 @@ class EventBus:
             )
             return
 
+        self._reconnect_time_wait_s = jittered_reconnect_wait()
+
         connect_kwargs: dict[str, Any] = {
             "name": self.name,
             "error_cb": self._error_callback,
             "disconnected_cb": self._disconnected_callback,
             "reconnected_cb": self._reconnected_callback,
             "max_reconnect_attempts": -1,
+            "reconnect_time_wait": self._reconnect_time_wait_s,
         }
 
         creds_mode = "none"
@@ -285,6 +321,7 @@ class EventBus:
                 nats_url=self.nats_url,
                 creds_mode=creds_mode,
                 creds_path=self.nats_creds if creds_mode == "file" else None,
+                reconnect_time_wait_s=self._reconnect_time_wait_s,
             )
 
         self._nc = await nats.connect(self.nats_url, **connect_kwargs)

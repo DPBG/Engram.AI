@@ -170,6 +170,34 @@ def test_kernel_allow_proposal_published_to_correct_subject():
     assert "proposal.new" in subjects
 
 
+def test_kernel_proposal_uses_action_envelope():
+    """Kernel rejects proposal.new payloads missing 'action' — shape must match ActionProposal."""
+    bus = _FakeBus(decision={"type": "ALLOW"})
+    mgr = _manager(bus, _FakeDB())
+    _run(mgr.query_external("what is the weather?"))
+    _subject, proposal = next(p for p in bus.published if p[0] == "proposal.new")
+    assert proposal.get("provenance") == "external-api"
+    assert proposal["action"]["type"] == "external_query"
+    assert "query" in proposal["action"]
+
+
+def test_external_query_proposal_can_be_kernel_allowed():
+    """End-to-end shape check: a well-formed external query is evaluable, not malformed-DENY."""
+    from activelearning import RiskAnalysis
+    from kernel.evaluator import DecisionType, KernelEvaluator
+
+    proposal = {
+        "trace_id": "t-ext",
+        "provenance": "external-api",
+        "action": {"type": "external_query", "query": "safe question"},
+    }
+    decision = KernelEvaluator().evaluate_action_proposal(
+        proposal,
+        risk_analysis=RiskAnalysis(trace_id="t-ext", risk_score=0.1, flags=[]),
+    )
+    assert decision.type == DecisionType.ALLOW
+
+
 # ── ExternalAPIManager: API routing ──────────────────────────────────────────
 
 
