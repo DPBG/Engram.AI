@@ -3,8 +3,8 @@
 Verifies all 6 benchmarks produce valid results on a small network.
 """
 
-import math
 import json
+import math
 from pathlib import Path
 
 import numpy as np
