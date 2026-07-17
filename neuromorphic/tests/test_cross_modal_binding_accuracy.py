@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+import numpy as np
 import pytest
 
 from neuromorphic.benchmarks import (
@@ -172,3 +173,62 @@ class TestBindingAccuracyRegression:
             benchmark_result["binding_strength_after"]
             >= benchmark_result["binding_strength_before"]
         )
+
+
+class TestDecoyRealism:
+    """Issue #323: verify decoy difficulty and confirm the hard-decoy variant works."""
+
+    def _cosine_sim(self, a: list[float], b: list[float]) -> float:
+        va, vb = np.array(a, dtype=np.float64), np.array(b, dtype=np.float64)
+        return float(np.dot(va, vb) / (np.linalg.norm(va) * np.linalg.norm(vb) + 1e-9))
+
+    def test_easy_decoys_have_low_auditory_similarity(self):
+        """Easy decoys (default) must be clearly distinguishable — cos_sim < 0.5."""
+        fixtures = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=False)
+        matched = {p["pair_id"]: p["auditory"] for p in fixtures["correlated_pairs"]}
+        for decoy in fixtures["decoy_pairs"]:
+            sim = self._cosine_sim(matched[decoy["visual_pair_id"]], decoy["auditory"])
+            assert sim < 0.5, (
+                f"{decoy['pair_id']}: easy decoy is too similar to match (cos_sim={sim:.3f}); "
+                "decoy generation may have drifted toward the matched signature"
+            )
+
+    def test_hard_decoys_have_high_auditory_similarity(self):
+        """Hard decoys (noise-perturbed) must stay close to matched — cos_sim > 0.7."""
+        fixtures = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=True)
+        matched = {p["pair_id"]: p["auditory"] for p in fixtures["correlated_pairs"]}
+        for decoy in fixtures["decoy_pairs"]:
+            sim = self._cosine_sim(matched[decoy["visual_pair_id"]], decoy["auditory"])
+            assert sim > 0.7, (
+                f"{decoy['pair_id']}: hard decoy is not similar enough to match "
+                f"(cos_sim={sim:.3f}); increase σ or reduce noise"
+            )
+
+    def test_hard_decoys_are_deterministic(self):
+        """Hard decoy generation must be deterministic for the same seed."""
+        a = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=True)
+        b = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=True)
+        for da, db in zip(a["decoy_pairs"], b["decoy_pairs"]):
+            assert da["auditory"] == db["auditory"], (
+                f"{da['pair_id']}: hard decoy is not reproducible across calls with same seed"
+            )
+
+    def test_hard_decoys_differ_across_seeds(self):
+        """Different seeds must produce different hard decoys (RNG is actually used)."""
+        a = generate_correlated_stimulus_fixtures(n_pairs=4, seed=0, hard_decoys=True)
+        b = generate_correlated_stimulus_fixtures(n_pairs=4, seed=99, hard_decoys=True)
+        assert a["decoy_pairs"][0]["auditory"] != b["decoy_pairs"][0]["auditory"]
+
+    def test_fixture_output_records_hard_decoy_flag(self):
+        """Return dict must carry hard_decoys so consumers know which variant they got."""
+        assert generate_correlated_stimulus_fixtures(n_pairs=2, hard_decoys=True)["hard_decoys"] is True
+        assert (
+            generate_correlated_stimulus_fixtures(n_pairs=2, hard_decoys=False)["hard_decoys"]
+            is False
+        )
+
+    def test_easy_and_hard_decoy_correlated_pairs_are_identical(self):
+        """Switching hard_decoys must not alter the matched correlated pairs."""
+        easy = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=False)
+        hard = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=True)
+        assert easy["correlated_pairs"] == hard["correlated_pairs"]
