@@ -341,6 +341,7 @@ prefix/token family; the allowlist entry uses the wildcard form.
 | `sensory.gateway.command` | dashboard | gateway | Operator commands. |
 | `sensory.gateway.status` | gateway | dashboard | |
 | `video.training.status` | gateway | dashboard | |
+| `training.session.complete` | gateway | neuro | Published when the video-training queue drains after processing at least one video (issue #324); neuro runs an auto-benchmark against a fresh, checkpoint-restored network and saves results to the standard `neuromorphic/benchmarks/*.json` location. |
 
 ### System / observability
 
