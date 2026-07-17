@@ -304,6 +304,24 @@ and Kernel approval gating automatically — you only implement `capture()` or
 `_do_execute()`. See [`sdk/src/activelearning/plugins.py`](sdk/src/activelearning/plugins.py)
 for the full interface.
 
+## SDK versioning (`activelearning`)
+
+The SDK is shared by every Engram service, so version bumps must be deliberate.
+See [`sdk/CHANGELOG.md`](sdk/CHANGELOG.md) for the full bump policy and history.
+
+**Quick reference:**
+
+| Type of change | Bump |
+|---|---|
+| New public symbol, module, or backwards-compatible behaviour | **minor** (`0.y.0`) |
+| Bug fix, internal refactor, performance, docs | **patch** (`0.y.z`) |
+| Removed / renamed public API, changed semantics | **minor** while `< 1.0` |
+
+**Checklist for any SDK PR:**
+1. Update `version` in `sdk/pyproject.toml`.
+2. Update `__version__` in `sdk/src/activelearning/__init__.py` to match.
+3. Add a dated `## [X.Y.Z]` section to `sdk/CHANGELOG.md` and move relevant items out of `[Unreleased]`.
+
 ## Changes That Need Extra Review
 
 These areas affect safety or system integrity and require maintainer review
