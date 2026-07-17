@@ -711,6 +711,8 @@ class TestMetaControllerGatingBenchmark:
         suite = BenchmarkSuite(network_with_meta_controller)
         results = suite.run_all(n_patterns=1, training_reps=1, steps_per_pattern=4)
         assert "meta_controller_gating" not in results
+
+
 def _cosine_dist(mat: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
