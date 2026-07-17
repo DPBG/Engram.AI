@@ -188,10 +188,7 @@ class TestDecoyRealism:
         matched = {p["pair_id"]: p["auditory"] for p in fixtures["correlated_pairs"]}
         for decoy in fixtures["decoy_pairs"]:
             sim = self._cosine_sim(matched[decoy["visual_pair_id"]], decoy["auditory"])
-            assert sim < 0.5, (
-                f"{decoy['pair_id']}: easy decoy is too similar to match (cos_sim={sim:.3f}); "
-                "decoy generation may have drifted toward the matched signature"
-            )
+            assert sim < 0.5, f"{decoy['pair_id']}: easy decoy too similar (cos_sim={sim:.3f})"
 
     def test_hard_decoys_have_high_auditory_similarity(self):
         """Hard decoys (noise-perturbed) must stay close to matched — cos_sim > 0.7."""
@@ -199,19 +196,16 @@ class TestDecoyRealism:
         matched = {p["pair_id"]: p["auditory"] for p in fixtures["correlated_pairs"]}
         for decoy in fixtures["decoy_pairs"]:
             sim = self._cosine_sim(matched[decoy["visual_pair_id"]], decoy["auditory"])
-            assert sim > 0.7, (
-                f"{decoy['pair_id']}: hard decoy is not similar enough to match "
-                f"(cos_sim={sim:.3f}); increase σ or reduce noise"
-            )
+            assert sim > 0.7, f"{decoy['pair_id']}: hard decoy not close enough ({sim:.3f} < 0.7)"
 
     def test_hard_decoys_are_deterministic(self):
         """Hard decoy generation must be deterministic for the same seed."""
         a = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=True)
         b = generate_correlated_stimulus_fixtures(n_pairs=4, seed=42, hard_decoys=True)
         for da, db in zip(a["decoy_pairs"], b["decoy_pairs"]):
-            assert da["auditory"] == db["auditory"], (
-                f"{da['pair_id']}: hard decoy is not reproducible across calls with same seed"
-            )
+            assert (
+                da["auditory"] == db["auditory"]
+            ), f"{da['pair_id']}: hard decoy not reproducible with same seed"
 
     def test_hard_decoys_differ_across_seeds(self):
         """Different seeds must produce different hard decoys (RNG is actually used)."""
@@ -221,7 +215,10 @@ class TestDecoyRealism:
 
     def test_fixture_output_records_hard_decoy_flag(self):
         """Return dict must carry hard_decoys so consumers know which variant they got."""
-        assert generate_correlated_stimulus_fixtures(n_pairs=2, hard_decoys=True)["hard_decoys"] is True
+        assert (
+            generate_correlated_stimulus_fixtures(n_pairs=2, hard_decoys=True)["hard_decoys"]
+            is True
+        )
         assert (
             generate_correlated_stimulus_fixtures(n_pairs=2, hard_decoys=False)["hard_decoys"]
             is False
