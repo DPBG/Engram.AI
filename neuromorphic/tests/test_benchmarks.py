@@ -765,6 +765,8 @@ class TestBenchmarkFlakiness:
             flat = _flatten_numeric(results)
             bad = {k: v for k, v in flat.items() if not math.isfinite(v)}
             assert not bad, f"seed={seed}: non-finite metrics found: {bad}"
+
+
 class TestRuntimeBudget:
     """Issue #332: BenchmarkSuite must complete within the committed wall-clock budget."""
 
