@@ -1,6 +1,6 @@
 """Tests for the benchmarking framework (benchmarks.py).
 
-Verifies all 6 benchmarks produce valid results on a small network.
+Verifies all 7 benchmarks produce valid results on a small network.
 """
 
 import json
@@ -16,6 +16,7 @@ from neuromorphic.benchmarks import (
     ConceptSeparabilityBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
+    GlobalWorkspaceBroadcastBenchmark,
     NoveltyDetectionBenchmark,
     RegionQuietFlag,
     _confidence_interval,
@@ -28,7 +29,7 @@ from neuromorphic.benchmarks import (
     nearest_centroid_loo_accuracy,
     silhouette_scores_from_distance_matrix,
 )
-from neuromorphic.config import NeuromorphicConfig
+from neuromorphic.config import GlobalWorkspaceConfig, NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
 
 _NEURO_DIR = Path(__file__).resolve().parents[1]
@@ -51,6 +52,44 @@ def small_network():
     cfg.populations.concept_layer = 0
     cfg.populations.meta_controller = 0
     return NeuromorphicNetwork(cfg)
+
+
+@pytest.fixture
+def workspace_network():
+    """Small network with GlobalWorkspace enabled for broadcast decode tests.
+
+    Dendrites are disabled so association→workspace currents reach the soma.
+    With default dendritic apical-distal routing and plastic ``w_max`` clipping,
+    small-network afferent drive is otherwise below spike threshold (an honest
+    negative finding on full dendritic configs — see benchmark docstring).
+    """
+    cfg = NeuromorphicConfig(
+        global_workspace=GlobalWorkspaceConfig(
+            enabled=True,
+            n_neurons=100,
+            afferent_sparsity=0.15,
+            afferent_weight=1.0,
+            efferent_sparsity=0.05,
+            lateral_sparsity=0.01,
+            competition_inhibition=0.2,
+            ignition_threshold=0.99,
+            refractory_steps=2,
+        )
+    )
+    cfg.dendrites.enabled = False
+    cfg.populations.brainstem = 50
+    cfg.populations.reflex_arc = 30
+    cfg.populations.sensory_cortex = 200
+    cfg.populations.motor_cortex = 100
+    cfg.populations.cerebellum = 100
+    cfg.populations.association_cortex = 150
+    cfg.populations.predictive_layer = 60
+    cfg.populations.working_memory = 40
+    cfg.populations.feature_layer = 0
+    cfg.populations.concept_layer = 0
+    cfg.populations.meta_controller = 0
+    cfg.populations.global_workspace = 100
+    return NeuromorphicNetwork(cfg, seed=42)
 
 
 @pytest.fixture
@@ -330,8 +369,11 @@ class TestBenchmarkSuite:
         assert "energy_efficiency" in results
         assert "concept_separability" in results
         assert "cross_modal_binding_accuracy" in results
+        assert "global_workspace_broadcast" in results
         assert "timestamp" in results
         assert results["total_neurons"] > 0
+        # Default small fixture has no workspace — error shape, not a measurement.
+        assert results["global_workspace_broadcast"]["error"] == "no global workspace"
 
     def test_summary(self, small_network):
         suite = BenchmarkSuite(small_network)
@@ -343,6 +385,8 @@ class TestBenchmarkSuite:
         assert "Energy Efficiency" in text
         assert "Concept Separability" in text
         assert "Cross-Modal Binding Accuracy" in text
+        assert "Global Workspace Broadcast" in text
+        assert "no global workspace" in text
 
     def test_summary_includes_per_region_quiet_report(self, small_network):
         """issue #331: the summary cross-references quiet regions automatically."""
@@ -352,6 +396,73 @@ class TestBenchmarkSuite:
         assert "issue #331" in text
         for region in results["energy_efficiency"]["region_firing_rates"]:
             assert region in text
+
+
+class TestGlobalWorkspaceBroadcast:
+    """issue #318: workspace output encodes source-region pattern identity."""
+
+    def test_missing_workspace_returns_error_shape(self, small_network):
+        result = GlobalWorkspaceBroadcastBenchmark(small_network).run(n_patterns=3, probe_reps=2)
+        assert result["error"] == "no global workspace"
+        assert result["source_decode_accuracy"] == 0.0
+        assert result["control_decode_accuracy"] == 0.0
+        assert result["specificity_gap"] == 0.0
+        assert result["chance_accuracy"] == pytest.approx(1.0 / 3, abs=1e-4)
+
+    def test_produces_metrics(self, workspace_network):
+        result = GlobalWorkspaceBroadcastBenchmark(workspace_network).run(
+            n_patterns=3,
+            probe_reps=2,
+            steps_per_rep=8,
+            washout_steps=2,
+            injection_strength=250.0,
+            seed=7,
+        )
+        assert "error" not in result
+        assert result["source_region"] == "association_cortex"
+        assert result["control_region"] == "cerebellum"
+        assert result["workspace_region"] == "global_workspace"
+        assert result["n_patterns"] == 3
+        assert result["n_samples_per_condition"] == 6
+        assert 0.0 <= result["source_decode_accuracy"] <= 1.0
+        assert 0.0 <= result["control_decode_accuracy"] <= 1.0
+        assert result["specificity_gap"] == pytest.approx(
+            result["source_decode_accuracy"] - result["control_decode_accuracy"]
+        )
+        assert result["chance_accuracy"] == pytest.approx(1.0 / 3, abs=1e-4)
+
+    def test_source_outperforms_control(self, workspace_network):
+        """Association→workspace path should beat an unconnected cerebellum control."""
+        result = GlobalWorkspaceBroadcastBenchmark(workspace_network).run(
+            n_patterns=4,
+            probe_reps=4,
+            steps_per_rep=12,
+            washout_steps=3,
+            injection_strength=250.0,
+            active_fraction=0.25,
+            seed=11,
+        )
+        assert "error" not in result
+        assert result["source_decode_accuracy"] > result["chance_accuracy"]
+        assert result["specificity_gap"] > 0.0
+        assert result["source_decode_accuracy"] > result["control_decode_accuracy"]
+        assert result["source_workspace_firing_rate"] > result["control_workspace_firing_rate"]
+
+    def test_insufficient_patterns_returns_error_shape(self, workspace_network):
+        result = GlobalWorkspaceBroadcastBenchmark(workspace_network).run(
+            n_patterns=1, probe_reps=2, steps_per_rep=4
+        )
+        assert result["error"] == "insufficient patterns for workspace decode"
+        assert result["source_decode_accuracy"] == 0.0
+
+    def test_suite_includes_success_shape_when_workspace_present(self, workspace_network):
+        suite = BenchmarkSuite(workspace_network)
+        results = suite.run_all(n_patterns=2, training_reps=2, steps_per_pattern=4)
+        gw = results["global_workspace_broadcast"]
+        assert "error" not in gw
+        assert "specificity_gap" in gw
+        text = suite.summary(results)
+        assert "Specificity gap" in text
 
 
 class TestCrossModalBindingAccuracyInSuite:

@@ -6,7 +6,7 @@
     "training_reps": 1,
     "steps_per_pattern": 4
   },
-  "measured_baseline_s": 0.11,
+  "measured_baseline_s": 0.13,
   "network": "700-neuron small network (same env overrides as ci_performance_baseline.json)",
   "note": "To recapture the baseline after an intentional change: run BenchmarkSuite.run_all() with ci_params on the small network and update measured_baseline_s. Do NOT widen budget_s to paper over a slow regression."
 }

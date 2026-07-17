@@ -1,13 +1,15 @@
 """
 Structured benchmarking framework for investor-ready metrics.
 
-Provides 6 benchmark tests that produce quantitative proof the brain learns:
+Provides 7 benchmark tests that produce quantitative proof the brain learns:
 1. CrossModalRecall — inject visual, measure auditory cortex activation (and vice versa)
 2. NoveltyDetection — present known vs unknown stimuli, measure response difference
 3. AssociationStrength — measure weight changes after paired multi-modal training
 4. EnergyEfficiency — compute energy per learned association vs baseline
 5. ConceptSeparability — silhouette score + linear-probe accuracy over concept-layer activations
 6. CrossModalBindingAccuracy — precision/recall of bound modality pairs vs ground truth
+7. GlobalWorkspaceBroadcast — pattern identity injected into a source region is
+   decodable from GlobalWorkspace spikes, vs an unconnected control (issue #318)
 
 Usage:
     from neuromorphic.benchmarks import BenchmarkSuite
@@ -967,10 +969,273 @@ class CrossModalBindingAccuracyBenchmark:
 
 
 # ---------------------------------------------------------------------------
+# Benchmark 7: Global Workspace Broadcast (issue #318)
+# ---------------------------------------------------------------------------
+def _sparse_region_patterns(
+    n_neurons: int,
+    n_patterns: int,
+    rng: np.random.Generator,
+    *,
+    active_fraction: float = 0.15,
+    strength: float = 25.0,
+) -> list[np.ndarray]:
+    """Distinct sparse current patterns for direct region injection."""
+    n_active = max(1, int(round(n_neurons * active_fraction)))
+    n_active = min(n_active, n_neurons)
+    patterns: list[np.ndarray] = []
+    for _ in range(n_patterns):
+        idx = rng.choice(n_neurons, size=n_active, replace=False)
+        current = np.zeros(n_neurons, dtype=np.float32)
+        current[idx] = np.float32(strength)
+        patterns.append(current)
+    return patterns
+
+
+def _decode_accuracy_from_spike_vectors(
+    vecs: list[np.ndarray],
+    labels: list[int],
+) -> float:
+    """L2-normalize accumulated spike vectors and run leave-one-out nearest-centroid."""
+    labels_arr = np.asarray(labels, dtype=np.int32)
+    n_samples = len(labels_arr)
+    n_classes = len(np.unique(labels_arr))
+    if n_classes < 2 or n_samples < 4:
+        return 0.0
+    mat = np.asarray(vecs, dtype=np.float32)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    mat_unit = mat / norms
+    return round(nearest_centroid_loo_accuracy(mat_unit, labels_arr), 4)
+
+
+class GlobalWorkspaceBroadcastBenchmark:
+    """Measure whether GlobalWorkspace actually integrates cross-region information.
+
+    Protocol (issue #318):
+    1. Inject labeled sparse current patterns into a source region that has a
+       direct afferent to the workspace (default: ``association_cortex``).
+    2. Accumulate ``global_workspace`` spike counts over a short window and
+       decode pattern identity with leave-one-out nearest-centroid accuracy.
+    3. Repeat with a control region that has no workspace afferent (default:
+       ``cerebellum``) under an identical injection / decode protocol.
+    4. Report ``specificity_gap = source_decode_accuracy - control_decode_accuracy``.
+
+    A positive gap means workspace output carries source-specific information
+    that is not explained by generic network drive — i.e. the workspace is not
+    merely wired but inert.
+
+    This measures *afferent integration into workspace output*. Efferent
+    ``broadcast_gain`` scaling to downstream targets is a related but separate
+    property (workspace spikes themselves are the decode target here).
+
+    Note on dendrites: workspace afferents target apical-distal compartments.
+    Plastic ``w_max`` clipping caps synaptic weights near 1.0, so on small
+    networks with dendrites enabled the projection may deliver subthreshold
+    current and yield chance decode (``specificity_gap ≈ 0``) — that is a
+    real architectural measurement, not a benchmark bug. Disable dendrites
+    or use a large enough population if you need a positive-control decode.
+    """
+
+    DEFAULT_SOURCE = "association_cortex"
+    DEFAULT_CONTROL = "cerebellum"
+
+    def __init__(self, net: NeuromorphicNetwork) -> None:
+        self._net = net
+
+    @staticmethod
+    def _error_result(
+        error: str,
+        *,
+        source_region: str,
+        control_region: str,
+        n_patterns: int,
+        probe_reps: int,
+        steps_per_rep: int,
+        injection_strength: float,
+        seed: int,
+    ) -> dict[str, Any]:
+        """Fixed error shape — placeholder zeros are not measurements."""
+        return {
+            "error": error,
+            "source_region": source_region,
+            "control_region": control_region,
+            "workspace_region": "global_workspace",
+            "source_decode_accuracy": 0.0,
+            "control_decode_accuracy": 0.0,
+            "specificity_gap": 0.0,
+            "chance_accuracy": round(1.0 / max(n_patterns, 1), 4),
+            "source_workspace_firing_rate": 0.0,
+            "control_workspace_firing_rate": 0.0,
+            "n_patterns": n_patterns,
+            "n_samples_per_condition": 0,
+            "probe_reps": probe_reps,
+            "steps_per_rep": steps_per_rep,
+            "injection_strength": injection_strength,
+            "fixture_seed": seed,
+        }
+
+    def _collect_workspace_vectors(
+        self,
+        region_name: str,
+        patterns: list[np.ndarray],
+        *,
+        probe_reps: int,
+        steps_per_rep: int,
+        washout_steps: int,
+    ) -> tuple[list[int], list[np.ndarray], float]:
+        """Drive ``region_name`` with each pattern; accumulate workspace spikes."""
+        net = self._net
+        region = net.regions[region_name]
+        workspace = net.workspace
+        assert workspace is not None
+
+        labels: list[int] = []
+        vecs: list[np.ndarray] = []
+        total_spikes = 0.0
+        total_neuron_steps = 0
+
+        for idx, pattern in enumerate(patterns):
+            for _ in range(probe_reps):
+                for _ in range(washout_steps):
+                    net.step()
+                acc = np.zeros(workspace.n, dtype=np.float32)
+                for _ in range(steps_per_rep):
+                    region.inject_current(pattern)
+                    net.step()
+                    acc += workspace.spikes.astype(np.float32)
+                labels.append(idx)
+                vecs.append(acc)
+                total_spikes += float(acc.sum())
+                total_neuron_steps += workspace.n * steps_per_rep
+
+        rate = total_spikes / max(total_neuron_steps, 1)
+        return labels, vecs, rate
+
+    def run(
+        self,
+        n_patterns: int = 4,
+        probe_reps: int = 3,
+        steps_per_rep: int = 10,
+        source_region: str = DEFAULT_SOURCE,
+        control_region: str = DEFAULT_CONTROL,
+        injection_strength: float = 250.0,
+        active_fraction: float = 0.25,
+        washout_steps: int = 5,
+        seed: int = 42,
+    ) -> dict[str, Any]:
+        net = self._net
+        if net.workspace is None:
+            return self._error_result(
+                "no global workspace",
+                source_region=source_region,
+                control_region=control_region,
+                n_patterns=n_patterns,
+                probe_reps=probe_reps,
+                steps_per_rep=steps_per_rep,
+                injection_strength=injection_strength,
+                seed=seed,
+            )
+        if source_region not in net.regions:
+            return self._error_result(
+                f"missing source region: {source_region}",
+                source_region=source_region,
+                control_region=control_region,
+                n_patterns=n_patterns,
+                probe_reps=probe_reps,
+                steps_per_rep=steps_per_rep,
+                injection_strength=injection_strength,
+                seed=seed,
+            )
+        if control_region not in net.regions:
+            return self._error_result(
+                f"missing control region: {control_region}",
+                source_region=source_region,
+                control_region=control_region,
+                n_patterns=n_patterns,
+                probe_reps=probe_reps,
+                steps_per_rep=steps_per_rep,
+                injection_strength=injection_strength,
+                seed=seed,
+            )
+        if n_patterns < 2 or probe_reps * n_patterns < 4:
+            return self._error_result(
+                "insufficient patterns for workspace decode",
+                source_region=source_region,
+                control_region=control_region,
+                n_patterns=n_patterns,
+                probe_reps=probe_reps,
+                steps_per_rep=steps_per_rep,
+                injection_strength=injection_strength,
+                seed=seed,
+            )
+
+        rng = np.random.default_rng(seed)
+        source_patterns = _sparse_region_patterns(
+            net.regions[source_region].n,
+            n_patterns,
+            rng,
+            active_fraction=active_fraction,
+            strength=injection_strength,
+        )
+        control_patterns = _sparse_region_patterns(
+            net.regions[control_region].n,
+            n_patterns,
+            rng,
+            active_fraction=active_fraction,
+            strength=injection_strength,
+        )
+
+        # Snapshot so source probing cannot contaminate the control condition
+        # via membrane state, refractory counters, or plastic weight drift.
+        baseline = net.get_state()
+
+        src_labels, src_vecs, src_rate = self._collect_workspace_vectors(
+            source_region,
+            source_patterns,
+            probe_reps=probe_reps,
+            steps_per_rep=steps_per_rep,
+            washout_steps=washout_steps,
+        )
+        source_acc = _decode_accuracy_from_spike_vectors(src_vecs, src_labels)
+
+        net.set_state(baseline)
+        ctrl_labels, ctrl_vecs, ctrl_rate = self._collect_workspace_vectors(
+            control_region,
+            control_patterns,
+            probe_reps=probe_reps,
+            steps_per_rep=steps_per_rep,
+            washout_steps=washout_steps,
+        )
+        control_acc = _decode_accuracy_from_spike_vectors(ctrl_vecs, ctrl_labels)
+
+        chance = round(1.0 / n_patterns, 4)
+        gap = round(source_acc - control_acc, 4)
+        n_samples = n_patterns * probe_reps
+
+        return {
+            "source_region": source_region,
+            "control_region": control_region,
+            "workspace_region": "global_workspace",
+            "source_decode_accuracy": source_acc,
+            "control_decode_accuracy": control_acc,
+            "specificity_gap": gap,
+            "chance_accuracy": chance,
+            "source_workspace_firing_rate": round(src_rate, 6),
+            "control_workspace_firing_rate": round(ctrl_rate, 6),
+            "n_patterns": n_patterns,
+            "n_samples_per_condition": n_samples,
+            "probe_reps": probe_reps,
+            "steps_per_rep": steps_per_rep,
+            "injection_strength": injection_strength,
+            "fixture_seed": seed,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Suite
 # ---------------------------------------------------------------------------
 class BenchmarkSuite:
-    """Runs all 6 benchmarks and produces a unified results dict."""
+    """Runs all 7 benchmarks and produces a unified results dict."""
 
     def __init__(self, network: NeuromorphicNetwork) -> None:
         self.network = network
@@ -986,31 +1251,38 @@ class BenchmarkSuite:
         patterns = generate_test_patterns(n_patterns, rng)
         t0 = time.perf_counter()
         logger.info(
-            "Benchmark 1/6: CrossModalRecall (%d patterns x %d reps)", n_patterns, training_reps
+            "Benchmark 1/7: CrossModalRecall (%d patterns x %d reps)", n_patterns, training_reps
         )
         cm = CrossModalRecallBenchmark(self.network).run(patterns, training_reps, steps_per_pattern)
-        logger.info("Benchmark 2/6: NoveltyDetection")
+        logger.info("Benchmark 2/7: NoveltyDetection")
         nd = NoveltyDetectionBenchmark(self.network).run(
             patterns[0],
             generate_test_patterns(1, np.random.default_rng(seed + 999))[0],
             training_reps,
             steps_per_pattern,
         )
-        logger.info("Benchmark 3/6: AssociationStrength")
+        logger.info("Benchmark 3/7: AssociationStrength")
         ass = AssociationStrengthBenchmark(self.network).run(
             patterns, training_reps, steps_per_pattern
         )
-        logger.info("Benchmark 4/6: EnergyEfficiency")
+        logger.info("Benchmark 4/7: EnergyEfficiency")
         en = EnergyEfficiencyBenchmark(self.network).run(patterns, steps_per_pattern)
-        logger.info("Benchmark 5/6: ConceptSeparability")
+        logger.info("Benchmark 5/7: ConceptSeparability")
         cs = ConceptSeparabilityBenchmark(self.network).run(
             patterns, training_reps=training_reps, steps_per_rep=steps_per_pattern
         )
-        logger.info("Benchmark 6/6: CrossModalBindingAccuracy")
+        logger.info("Benchmark 6/7: CrossModalBindingAccuracy")
         ba = CrossModalBindingAccuracyBenchmark(self.network).run(
             n_pairs=max(2, min(n_patterns, 8)),
             training_reps=training_reps,
             steps_per_pair=steps_per_pattern,
+            seed=seed,
+        )
+        logger.info("Benchmark 7/7: GlobalWorkspaceBroadcast")
+        gw = GlobalWorkspaceBroadcastBenchmark(self.network).run(
+            n_patterns=max(2, min(n_patterns, 4)),
+            probe_reps=max(2, min(training_reps, 3)),
+            steps_per_rep=max(4, min(steps_per_pattern, 10)),
             seed=seed,
         )
         return _to_native(
@@ -1025,6 +1297,7 @@ class BenchmarkSuite:
                 "energy_efficiency": en,
                 "concept_separability": cs,
                 "cross_modal_binding_accuracy": ba,
+                "global_workspace_broadcast": gw,
             }
         )
 
@@ -1171,6 +1444,25 @@ class BenchmarkSuite:
             f"   Matched/decoy ratio: {ba.get('matched_to_decoy_ratio', 0):.2f}x",
             "",
         ]
+        gw = results.get("global_workspace_broadcast", {})
+        if gw:
+            if "error" not in gw:
+                lines += [
+                    "7. Global Workspace Broadcast",
+                    f"   Source ({gw.get('source_region', '?')}) decode: "
+                    f"{gw.get('source_decode_accuracy', 0):.4f}",
+                    f"   Control ({gw.get('control_region', '?')}) decode: "
+                    f"{gw.get('control_decode_accuracy', 0):.4f}",
+                    f"   Specificity gap: {gw.get('specificity_gap', 0):+.4f}  "
+                    f"(chance={gw.get('chance_accuracy', 0):.4f})",
+                    "",
+                ]
+            else:
+                lines += [
+                    "7. Global Workspace Broadcast",
+                    f"   (skipped — {gw['error']})",
+                    "",
+                ]
         lines.append("=" * 35)
         return "\n".join(lines)
 
@@ -1192,6 +1484,8 @@ class BenchmarkSuite:
             "novelty_detection.discrimination_ratio",
             "association_strength.concept_count",
             "energy_efficiency.global_firing_rate",
+            "global_workspace_broadcast.specificity_gap",
+            "global_workspace_broadcast.source_decode_accuracy",
         ]
         for name in headline_metrics:
             stat = agg.get(name)

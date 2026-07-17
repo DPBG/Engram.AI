@@ -18,7 +18,7 @@ person who reads it.
 
 | Producer | Filename pattern | Top-level keys |
 |---|---|---|
-| `BenchmarkSuite.save_results()` (this doc) | `benchmarks_YYYYMMDD_HHMMSS.json` (plural) | `timestamp`, `step_count`, `total_neurons`, `elapsed_s`, `cross_modal_recall`, `novelty_detection`, `association_strength`, `energy_efficiency`, `concept_separability`, `cross_modal_binding_accuracy` |
+| `BenchmarkSuite.save_results()` (this doc) | `benchmarks_YYYYMMDD_HHMMSS.json` (plural) | `timestamp`, `step_count`, `total_neurons`, `elapsed_s`, `cross_modal_recall`, `novelty_detection`, `association_strength`, `energy_efficiency`, `concept_separability`, `cross_modal_binding_accuracy`, `global_workspace_broadcast` |
 | `scripts/benchmark.py` (a separate step-timing/speed benchmark, unrelated to `BenchmarkSuite`) | `benchmark_YYYYMMDD_HHMMSS.json` (singular) | `timestamp`, `system`, `config`, `init`, `speed`, `learning`, `memory`, `final_state` |
 
 `dashboard/src/dashboard/learning_evidence.py`'s `is_benchmark_result_file()`
@@ -59,12 +59,14 @@ Always present, regardless of any individual benchmark's internal state:
 | `energy_efficiency` | `dict` | Benchmark 4 — see below. Always full shape. |
 | `concept_separability` | `dict` | Benchmark 5 — see below. **Two distinct shapes** — see its section. |
 | `cross_modal_binding_accuracy` | `dict` | Benchmark 6 — see below. Always full shape. |
+| `global_workspace_broadcast` | `dict` | Benchmark 7 — see below. **Two distinct shapes** (like concept_separability). |
 
-Five of the six per-benchmark dicts (1–4, 6) **always** return their full,
+Five of the seven per-benchmark dicts (1–4, 6) **always** return their full,
 fixed key set — a degenerate input (empty patterns, no plastic synapses,
 etc.) produces zero/default-valued fields, never a reduced shape and never
-an `error` key. **Benchmark 5 (`concept_separability`) is the one exception**
-and is the specific ambiguity issue #308 (item #23) flags — see its section.
+an `error` key. **Benchmarks 5 (`concept_separability`) and 7
+(`global_workspace_broadcast`) are the exceptions** with an `error` key and
+a reduced / placeholder-zero shape — see their sections.
 
 ### 1. `cross_modal_recall` (`CrossModalRecallBenchmark`)
 
@@ -210,6 +212,61 @@ Always this exact key set (no error path):
 | `training_reps` | `int` |
 | `fixture_seed` | `int` |
 | `coupling_matrix` | `list[list[float]]`, `n_pairs × n_pairs` |
+
+### 7. `global_workspace_broadcast` (`GlobalWorkspaceBroadcastBenchmark`) — two shapes
+
+Issue [#318](https://github.com/DPBG/Engram.AI/issues/318): measures whether
+pattern identity injected into a source region (default `association_cortex`)
+is leave-one-out nearest-centroid decodable from `global_workspace` spike
+output, versus a control region with no workspace afferent (default
+`cerebellum`). `specificity_gap = source_decode_accuracy - control_decode_accuracy`.
+
+**Error shape** — returned when `network.workspace is None`, a requested
+region is missing, or there are too few patterns/samples
+(`"insufficient patterns for workspace decode"`):
+
+| Key | Type | Value |
+|---|---|---|
+| `error` | `str` | e.g. `"no global workspace"` |
+| `source_region` | `str` | |
+| `control_region` | `str` | |
+| `workspace_region` | `str` | Always `"global_workspace"` |
+| `source_decode_accuracy` | `float` | Always `0.0` — **not a measured score** |
+| `control_decode_accuracy` | `float` | Always `0.0` — **not a measured score** |
+| `specificity_gap` | `float` | Always `0.0` — **not a measured score** |
+| `chance_accuracy` | `float` | `1 / n_patterns` |
+| `source_workspace_firing_rate` | `float` | Always `0.0` |
+| `control_workspace_firing_rate` | `float` | Always `0.0` |
+| `n_patterns` | `int` | |
+| `n_samples_per_condition` | `int` | Always `0` on error |
+| `probe_reps` | `int` | |
+| `steps_per_rep` | `int` | |
+| `injection_strength` | `float` | |
+| `fixture_seed` | `int` | |
+
+**Success shape** — no `error` key:
+
+| Key | Type |
+|---|---|
+| `source_region` | `str` |
+| `control_region` | `str` |
+| `workspace_region` | `str` |
+| `source_decode_accuracy` | `float`, `[0, 1]` |
+| `control_decode_accuracy` | `float`, `[0, 1]` |
+| `specificity_gap` | `float` |
+| `chance_accuracy` | `float` |
+| `source_workspace_firing_rate` | `float`, `>= 0` |
+| `control_workspace_firing_rate` | `float`, `>= 0` |
+| `n_patterns` | `int` |
+| `n_samples_per_condition` | `int` |
+| `probe_reps` | `int` |
+| `steps_per_rep` | `int` |
+| `injection_strength` | `float` |
+| `fixture_seed` | `int` |
+
+**Contract:** check `"error" in result` first. If present, treat the accuracy /
+gap fields as absent (placeholder zeros). `BenchmarkSuite.summary()` already
+does this.
 
 ## What each real consumer actually reads today
 
