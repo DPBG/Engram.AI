@@ -1018,6 +1018,18 @@ class BenchmarkSuite:
             }
         )
 
+    @staticmethod
+    def check_runtime_budget(elapsed_s: float, budget_s: float) -> list[str]:
+        """Return failure messages if elapsed_s exceeds budget_s; empty list on pass."""
+        if elapsed_s > budget_s:
+            return [
+                f"BenchmarkSuite.run_all() took {elapsed_s:.2f}s, "
+                f"exceeding the budget of {budget_s:.2f}s. "
+                "Fix the regression or update benchmarks/suite_runtime_budget.json "
+                "(with a new measured_baseline_s, not just a wider budget_s)."
+            ]
+        return []
+
     def save_results(self, results: dict[str, Any], output_dir: str) -> Path:
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)

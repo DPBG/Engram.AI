@@ -3,6 +3,9 @@
 Verifies all 6 benchmarks produce valid results on a small network.
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -25,6 +28,8 @@ from neuromorphic.benchmarks import (
 )
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
+
+_NEURO_DIR = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -590,3 +595,54 @@ class TestConceptSeparabilityBenchmark:
         text = suite.summary(results)
         assert "Concept Separability" in text
         assert "Silhouette score" in text
+
+
+class TestRuntimeBudget:
+    """Issue #332: BenchmarkSuite must complete within the committed wall-clock budget."""
+
+    def test_committed_budget_file_is_valid(self):
+        path = _NEURO_DIR / "benchmarks" / "suite_runtime_budget.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["budget_s"] > 0, "budget_s must be positive"
+        assert "ci_params" in data, "ci_params section is required"
+        for key in ("n_patterns", "training_reps", "steps_per_pattern"):
+            assert key in data["ci_params"], f"ci_params.{key} is required"
+        assert data["measured_baseline_s"] > 0, "measured_baseline_s must be positive"
+
+    def test_run_all_within_runtime_budget(self, small_network):
+        """run_all() with CI params must complete within the committed budget.
+
+        If this fails the suite has regressed or a new benchmark added more work
+        than the budget allows. Fix the regression or — after deliberate review —
+        update measured_baseline_s and budget_s in suite_runtime_budget.json.
+        """
+        budget_path = _NEURO_DIR / "benchmarks" / "suite_runtime_budget.json"
+        budget_data = json.loads(budget_path.read_text(encoding="utf-8"))
+        budget_s = budget_data["budget_s"]
+        params = budget_data["ci_params"]
+
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(
+            n_patterns=int(params["n_patterns"]),
+            training_reps=int(params["training_reps"]),
+            steps_per_pattern=int(params["steps_per_pattern"]),
+        )
+
+        failures = BenchmarkSuite.check_runtime_budget(results["elapsed_s"], budget_s)
+        assert failures == [], (
+            f"BenchmarkSuite exceeded the committed runtime budget ({budget_s}s).\n"
+            "If this is a genuine regression, fix the code.\n"
+            "If the budget itself must grow (e.g. new CI-required benchmarks added), "
+            "update measured_baseline_s and budget_s in "
+            "benchmarks/suite_runtime_budget.json after reviewing the new numbers.\n"
+            "Failures:\n" + "\n".join(f"  - {f}" for f in failures)
+        )
+
+    def test_check_runtime_budget_passes_under_limit(self):
+        assert BenchmarkSuite.check_runtime_budget(1.0, 30.0) == []
+
+    def test_check_runtime_budget_fails_over_limit(self):
+        failures = BenchmarkSuite.check_runtime_budget(31.0, 30.0)
+        assert len(failures) == 1
+        assert "31.00s" in failures[0]
+        assert "30.00s" in failures[0]

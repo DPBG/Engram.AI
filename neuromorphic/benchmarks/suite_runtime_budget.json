@@ -1,0 +1,12 @@
+{
+  "description": "Wall-clock budget for BenchmarkSuite.run_all() in CI. Prevents the suite from growing so slow that CI integration becomes impractical as per-region benchmarks are added.",
+  "budget_s": 30.0,
+  "ci_params": {
+    "n_patterns": 2,
+    "training_reps": 1,
+    "steps_per_pattern": 4
+  },
+  "measured_baseline_s": 0.11,
+  "network": "700-neuron small network (same env overrides as ci_performance_baseline.json)",
+  "note": "To recapture the baseline after an intentional change: run BenchmarkSuite.run_all() with ci_params on the small network and update measured_baseline_s. Do NOT widen budget_s to paper over a slow regression."
+}
