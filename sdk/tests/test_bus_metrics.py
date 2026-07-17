@@ -37,6 +37,18 @@ class TestEventBusMetrics:
         assert snap["request"]["count"] == 1
         assert "timestamp_ms" in snap
 
+    def test_resubscribe_failed_count_starts_at_zero(self):
+        metrics = EventBusMetrics()
+        assert metrics.resubscribe_failed_count == 0
+        assert metrics.snapshot("kernel")["resubscribe_failed_count"] == 0
+
+    def test_record_resubscribe_failed_increments(self):
+        metrics = EventBusMetrics()
+        metrics.record_resubscribe_failed()
+        metrics.record_resubscribe_failed()
+        assert metrics.resubscribe_failed_count == 2
+        assert metrics.snapshot("kernel")["resubscribe_failed_count"] == 2
+
 
 class TestEventBusInstrumentation:
     @pytest.mark.asyncio

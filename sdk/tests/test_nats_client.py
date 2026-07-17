@@ -5,6 +5,8 @@ import uuid
 
 import pytest
 
+from activelearning import nats_client as nats_client_module
+from activelearning.connection_logging import TRANSITION_FORCE_RECONNECT_COMPLETE
 from activelearning.core import current_timestamp, generate_trace_id
 from activelearning.nats_client import EventBus
 from activelearning.signing import DECISION_KEY_ENV, DECISION_KEY_SECONDARY_ENV, sign_decision
@@ -66,6 +68,88 @@ async def test_force_reconnect_restores_handlers(event_bus: EventBus, wait_for_m
     await event_bus.publish(subject, {"after": "reconnect"})
     await wait_for_message(lambda: len(received) == 1)
     assert received[0]["after"] == "reconnect"
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_retries_transient_resubscribe_failure(
+    event_bus: EventBus, wait_for_message, monkeypatch
+):
+    """A subject that fails to resubscribe once should succeed on retry,
+    not be permanently dropped after a single transient error."""
+    subject = f"test.reconnect.retry.{uuid.uuid4().hex[:8]}"
+    received: list[dict] = []
+
+    async def handler(data: dict) -> None:
+        received.append(data)
+
+    await event_bus.subscribe(subject, handler)
+
+    original_subscribe = event_bus.subscribe
+    call_count = {"n": 0}
+
+    async def flaky_subscribe(subj, hdlr, **kwargs):
+        call_count["n"] += 1
+        if subj == subject and call_count["n"] == 1:
+            raise ConnectionError("simulated transient resubscribe failure")
+        return await original_subscribe(subj, hdlr, **kwargs)
+
+    monkeypatch.setattr(event_bus, "subscribe", flaky_subscribe)
+
+    await event_bus.force_reconnect()
+    assert event_bus.is_connected
+    assert subject in event_bus._handlers
+    assert event_bus._metrics.resubscribe_failed_count == 0
+
+    await event_bus.publish(subject, {"after": "retry"})
+    await wait_for_message(lambda: len(received) == 1)
+    assert received[0]["after"] == "retry"
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_marks_persistent_resubscribe_failure(
+    event_bus: EventBus, monkeypatch
+):
+    """A subject that keeps failing to resubscribe across all attempts should
+    be reported in the completion event and counted in metrics, instead of
+    disappearing silently with only a log line."""
+    good_subject = f"test.reconnect.ok.{uuid.uuid4().hex[:8]}"
+    bad_subject = f"test.reconnect.bad.{uuid.uuid4().hex[:8]}"
+
+    async def noop_handler(data: dict) -> None:
+        pass
+
+    await event_bus.subscribe(good_subject, noop_handler)
+    await event_bus.subscribe(bad_subject, noop_handler)
+
+    original_subscribe = event_bus.subscribe
+
+    async def selective_subscribe(subj, hdlr, **kwargs):
+        if subj == bad_subject:
+            raise ConnectionError("simulated persistent resubscribe failure")
+        return await original_subscribe(subj, hdlr, **kwargs)
+
+    original_log = nats_client_module.log_connection_event
+    completion_events: list[dict] = []
+
+    def capturing_log(transition, **fields):
+        payload = original_log(transition, **fields)
+        if transition == TRANSITION_FORCE_RECONNECT_COMPLETE:
+            completion_events.append(payload)
+        return payload
+
+    monkeypatch.setattr(event_bus, "subscribe", selective_subscribe)
+    monkeypatch.setattr(nats_client_module, "log_connection_event", capturing_log)
+
+    before_failed_count = event_bus._metrics.resubscribe_failed_count
+    await event_bus.force_reconnect()
+
+    assert event_bus.is_connected
+    assert good_subject in event_bus._handlers
+    assert bad_subject not in event_bus._handlers
+    assert event_bus._metrics.resubscribe_failed_count == before_failed_count + 1
+    assert completion_events
+    assert bad_subject in completion_events[-1]["failed_subjects"]
+    assert good_subject not in completion_events[-1]["failed_subjects"]
 
 
 @pytest.mark.asyncio
