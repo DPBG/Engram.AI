@@ -676,6 +676,8 @@ class TestNearestCentroidLooAccuracy:
         _dist, unit = _cosine_dist(np.eye(3))
         accuracy = nearest_centroid_loo_accuracy(unit, labels)
         assert 0.0 <= accuracy <= 1.0
+
+
 class TestRuntimeBudget:
     """Issue #332: BenchmarkSuite must complete within the committed wall-clock budget."""
 
