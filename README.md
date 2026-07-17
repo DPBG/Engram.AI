@@ -557,6 +557,7 @@ python run.py --only dashboard
 | [`docs/META-PROGRAMMER.md`](docs/META-PROGRAMMER.md) | Self-evolution agent system |
 | [`docs/KERNEL-CRASH-RECOVERY.md`](docs/KERNEL-CRASH-RECOVERY.md) | Threat model for the Kernel process dying mid-decision, and how callers still fail closed |
 | [`docs/DECISION-KEY-ROTATION.md`](docs/DECISION-KEY-ROTATION.md) | Zero-downtime rotation procedure for the decision-bus signing key |
+| [`docs/benchmark-schema.md`](docs/benchmark-schema.md) | `BenchmarkSuite`'s output JSON schema — guaranteed vs conditional fields, consumed by the dashboard and CI gate |
 | [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md) | Mutation testing for the Kernel's risk-clamping logic — scope, workflow, enforced kill-rate floor |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, PR process, code standards |
 

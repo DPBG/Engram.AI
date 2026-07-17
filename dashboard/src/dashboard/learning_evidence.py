@@ -2,6 +2,13 @@
 
 Reads ``neuromorphic/benchmarks/*.json`` (and optional ``/data/benchmarks``)
 and normalizes metrics for the dashboard Learning Evidence panel.
+
+Schema: see docs/benchmark-schema.md (issue #325). Two unrelated producers'
+JSON land in this directory with confusingly similar filenames
+(``BenchmarkSuite.save_results()`` -> ``benchmarks_*.json``,
+``scripts/benchmark.py`` -> ``benchmark_*.json``); ``extract_learning_metrics``
+below reads fields from both defensively because it can't tell which
+producer wrote a given file without trying both.
 """
 
 from __future__ import annotations
@@ -71,6 +78,12 @@ def extract_learning_metrics(raw: dict[str, Any]) -> dict[str, float | int | Non
     learning = raw.get("learning") or {}
     concept_sep_block = raw.get("concept_separability") or {}
 
+    # NOTE: concept_separability can be the degenerate/error shape (an
+    # "error" key present, silhouette_score/linear_probe_accuracy both
+    # placeholder 0.0, not measurements) -- see docs/benchmark-schema.md's
+    # "concept_separability" section. Reading silhouette_score unconditionally
+    # here means a degenerate run currently plots as a real zero score rather
+    # than being excluded; fixing that is tracked by issue #308, not this one.
     concept_sep = _safe_float(concept_sep_block.get("silhouette_score"))
     if concept_sep is None:
         concept_sep = _safe_float(concept_sep_block.get("linear_probe_accuracy"))
