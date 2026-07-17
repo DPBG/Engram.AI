@@ -123,11 +123,13 @@ Every `publish()`, `subscribe()`, `request()`, and `js_subscribe()` call
 `_ensure_connected()` before touching the NATS client:
 
 - If already connected: returns immediately.
-- If reconnecting: waits up to **10 s** for `_connected` to be set.
-- If still not connected after 10 s: raises `RuntimeError("Not connected to NATS")`.
+- If reconnecting: waits up to `RECONNECT_WAIT_TIMEOUT_S` (**10 s** default,
+  env-overridable via `ENGRAM_RECONNECT_WAIT_TIMEOUT_S`) for `_connected` to be set.
+- If still not connected after that window: raises `RuntimeError("Not connected to NATS")`.
 
-This means a brief outage (< 10 s) is transparently absorbed; a sustained outage
-surfaces as a `RuntimeError` to the caller.
+This means a brief outage (below the window) is transparently absorbed; a sustained
+outage surfaces as a `RuntimeError` to the caller. See
+[`docs/EVENTBUS-TIMEOUT-POLICY.md`](EVENTBUS-TIMEOUT-POLICY.md).
 
 ### 3.4 `force_reconnect()` — manual recovery
 
@@ -217,9 +219,14 @@ On validation failure:
 **Caller side:**
 
 ```python
-response = await self.event_bus.request(subject, payload, timeout=30.0)
+response = await self.event_bus.request(subject, payload)  # uses the shared default
 # response is a dict; raises asyncio.TimeoutError if no reply within timeout
 ```
+
+Passing `timeout=None` (the default) uses the centralized
+`DEFAULT_REQUEST_TIMEOUT_S` policy value (env-overridable via
+`ENGRAM_REQUEST_TIMEOUT_S`). Pass an explicit `timeout` only when a specific call
+must deviate. See [`docs/EVENTBUS-TIMEOUT-POLICY.md`](EVENTBUS-TIMEOUT-POLICY.md).
 
 **Handler side** (registered with `is_request_handler=True`):
 
@@ -252,9 +259,12 @@ await self.event_bus.js_subscribe(subject, handler, durable="my-consumer-name")
 ### 3.10 Decision waiting
 
 ```python
-decision = await self.event_bus.wait_for_decision(trace_id, timeout=30.0)
+decision = await self.event_bus.wait_for_decision(trace_id)  # uses the shared default
 ```
 
+- Uses the centralized `DEFAULT_DECISION_TIMEOUT_S` policy value when `timeout` is
+  `None` (env-overridable via `ENGRAM_DECISION_TIMEOUT_S`). See
+  [`docs/EVENTBUS-TIMEOUT-POLICY.md`](EVENTBUS-TIMEOUT-POLICY.md).
 - Creates a per-trace JetStream consumer with `deliver_all` policy so decisions
   published before the call is made are not missed.
 - Consumers auto-expire after 60 s of inactivity.
@@ -332,6 +342,10 @@ All configuration is loaded from environment variables by `ServiceConfig.from_en
 | `LOG_LEVEL` | `INFO` | Python logging level |
 | `ENGRAM_DECISION_KEY` | *(unset)* | HMAC signing secret. **Unset = signing disabled (dev mode).** |
 | `ENGRAM_DECISION_KEY_SECONDARY` | *(unset)* | Verify-only second signing key, accepted alongside `ENGRAM_DECISION_KEY`. Used only during key rotation — see [`docs/DECISION-KEY-ROTATION.md`](DECISION-KEY-ROTATION.md). |
+| `ENGRAM_REQUEST_TIMEOUT_S` | `30.0` | Default `EventBus.request()` request-reply timeout (seconds). See [`docs/EVENTBUS-TIMEOUT-POLICY.md`](EVENTBUS-TIMEOUT-POLICY.md). |
+| `ENGRAM_DECISION_TIMEOUT_S` | `30.0` | Default `EventBus.wait_for_decision()` timeout (seconds). |
+| `ENGRAM_RECONNECT_WAIT_TIMEOUT_S` | `10.0` | How long a queued op waits for auto-reconnect before raising. |
+| `ENGRAM_CONNECTION_DRAIN_TIMEOUT_S` | `5.0` | Grace period to drain a dead connection during `force_reconnect()`. |
 
 ---
 

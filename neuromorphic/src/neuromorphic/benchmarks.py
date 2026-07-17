@@ -20,6 +20,13 @@ Usage:
     results = suite.run_multi_seed(n_seeds=5)
     print(suite.summary_multi_seed(results))
 
+    # Per-region quiet-vs-sparse triage (issue #331) — is a quiet region
+    # undertrained or intentionally sparse by design (k-WTA)? summary()
+    # includes this automatically; call directly for a saved JSON result:
+    from neuromorphic.benchmarks import classify_quiet_regions, format_quiet_region_report
+    flags = classify_quiet_regions(results["energy_efficiency"])
+    print(format_quiet_region_report(flags))
+
     # Or run from checkpoint on server:
     cd neuromorphic && uv run python -m neuromorphic.benchmarks --checkpoint /data/sqlite/neuromorphic.db
     cd neuromorphic && uv run python -m neuromorphic.benchmarks --seeds 5
@@ -31,6 +38,7 @@ import argparse
 import json
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,23 +54,96 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Discrete blob widths (issue #327): the prior generator always used sigma=50,
+# so every pattern was the *same* Gaussian blob translated to a new position —
+# one shape class with n>64 producing exact duplicates (positions are (i*7)%64,
+# (i*13)%64, period 64). Cycling through several widths gives genuine
+# shape-class diversity in addition to position, not just translation.
+_VISUAL_SIGMAS: tuple[float, ...] = (25.0, 50.0, 90.0)
+
+
 def generate_test_patterns(n: int, rng: np.random.Generator) -> list[dict]:
-    """Visual gaussian blobs + MFCC-like auditory signatures."""
+    """Visual gaussian blobs (varying position + size) with auditory signatures
+    (varying which/how-many dims are elevated).
+
+    See issue #327: the previous version had a single fixed blob shape
+    (position-only diversity, exactly repeating every 64 patterns) and
+    auditory vectors whose 12 shared-noise dims dominated similarity
+    (~0.9 mean cosine similarity between any two patterns regardless of
+    which single dim was "hot"). Position is now drawn from ``rng`` instead
+    of a fixed-period formula, size cycles through _VISUAL_SIGMAS, and the
+    auditory signature elevates 1-3 dims instead of always exactly 1.
+    """
     y, x = np.mgrid[0:64, 0:64]
     patterns = []
     for i in range(n):
-        d2 = (x - (i * 7) % 64).astype(np.float32) ** 2 + (y - (i * 13) % 64).astype(
-            np.float32
-        ) ** 2
-        vis = np.exp(-d2 / 50.0, dtype=np.float32).flatten()
+        cx = int(rng.integers(0, 64))
+        cy = int(rng.integers(0, 64))
+        sigma = _VISUAL_SIGMAS[i % len(_VISUAL_SIGMAS)]
+        d2 = (x - cx).astype(np.float32) ** 2 + (y - cy).astype(np.float32) ** 2
+        vis = np.exp(-d2 / sigma, dtype=np.float32).flatten()
         vis /= vis.max() + 1e-8
-        aud = rng.normal(0.5, 0.1, size=13).astype(np.float32)
-        aud[i % 13] = 1.0
+
+        # Background at 0.5±0.1 (the old constant) made every pattern's 12
+        # shared-noise dims dominate the dot product, so any two patterns had
+        # ~0.9 mean cosine similarity regardless of which dim was "hot" —
+        # a lower, tighter background floor lets the elevated dims actually
+        # distinguish classes (measured ~0.9 -> ~0.44 mean pairwise similarity).
+        n_hot = 1 + (i % 3)  # 1, 2, or 3 elevated dims -> more distinguishable classes
+        hot_dims = {(i + k * 4) % 13 for k in range(n_hot)}
+        aud = rng.normal(0.15, 0.05, size=13).astype(np.float32)
+        for hd in hot_dims:
+            aud[hd] = 1.0
         np.clip(aud, 0.0, 1.0, out=aud)
+
         patterns.append(
             {"visual": vis.tolist(), "auditory": aud.tolist(), "label": f"pattern_{i:03d}"}
         )
     return patterns
+
+
+def audit_pattern_diversity(patterns: list[dict]) -> dict[str, float]:
+    """Quantify generate_test_patterns() diversity (issue #327).
+
+    Every benchmark in BenchmarkSuite shares one pattern generator, so a
+    narrow-diversity generator is a single point of failure all 6 metrics
+    inherit. This returns exact-duplicate counts and mean pairwise cosine
+    similarity per modality so a future regression (e.g. reverting to one
+    fixed blob shape) is visible as unique counts dropping below
+    len(patterns) or similarity climbing back toward 1.0, instead of silently
+    degrading every downstream benchmark's ability to distinguish patterns.
+    """
+    if not patterns:
+        return {
+            "n_patterns": 0,
+            "unique_visual": 0,
+            "unique_auditory": 0,
+            "mean_visual_cosine_sim": 0.0,
+            "mean_auditory_cosine_sim": 0.0,
+        }
+    vis = np.array([p["visual"] for p in patterns], dtype=np.float64)
+    aud = np.array([p["auditory"] for p in patterns], dtype=np.float64)
+
+    def _unique_count(arr: np.ndarray) -> int:
+        return len({tuple(np.round(row, 6)) for row in arr})
+
+    def _mean_pairwise_cosine(arr: np.ndarray) -> float:
+        n = len(arr)
+        if n < 2:
+            return 0.0
+        norms = np.linalg.norm(arr, axis=1) + 1e-9
+        normalized = arr / norms[:, None]
+        sim_matrix = normalized @ normalized.T
+        iu = np.triu_indices(n, k=1)
+        return float(np.mean(sim_matrix[iu]))
+
+    return {
+        "n_patterns": len(patterns),
+        "unique_visual": _unique_count(vis),
+        "unique_auditory": _unique_count(aud),
+        "mean_visual_cosine_sim": round(_mean_pairwise_cosine(vis), 4),
+        "mean_auditory_cosine_sim": round(_mean_pairwise_cosine(aud), 4),
+    }
 
 
 def _to_native(obj: Any) -> Any:
@@ -354,13 +435,16 @@ class EnergyEfficiencyBenchmark:
             if pat_spikes_list and steps_per_pattern
             else 0.0
         )
-        energy = sum(
-            rr.get(nm, 0.0) * r.n * r.population.params.tau / 20.0 for nm, r in net.regions.items()
-        )
+        region_energy = {
+            nm: rr.get(nm, 0.0) * r.n * r.population.params.tau / 20.0
+            for nm, r in net.regions.items()
+        }
+        energy = sum(region_energy.values())
         return {
             "mean_spikes_per_step": round(mss, 2),
             "global_firing_rate": round(mss / total_n if total_n else 0.0, 6),
             "region_firing_rates": rr,
+            "region_energy_units": {nm: round(v, 6) for nm, v in region_energy.items()},
             "approx_energy_units": round(energy, 4),
             "spikes_per_association": (
                 round(
@@ -372,6 +456,116 @@ class EnergyEfficiencyBenchmark:
             "total_steps": len(patterns) * steps_per_pattern,
             "total_neurons": int(total_n),
         }
+
+
+# ---------------------------------------------------------------------------
+# Per-region quiet-vs-sparse cross-reference (issue #331)
+#
+# #331 asks to join EnergyEfficiencyBenchmark's per-region data against
+# "the new per-region benchmarks (items #30-#36)" to tell undertrained
+# regions apart from intentionally sparse ones. As of this writing those
+# per-region benchmarks (tracked in #297, #315, #316, and siblings) are all
+# still open/unimplemented, so there is nothing to join yet. What this
+# module *can* do honestly today is cross-reference firing rate against the
+# architecture's own documented sparsity design (k-WTA regions), and leave a
+# `region_scores` hook so a real per-region learning score can override the
+# heuristic the moment one of those benchmarks lands.
+# ---------------------------------------------------------------------------
+
+# Regions with a k-WTA / winner-take-all design that intentionally targets a
+# very low active fraction (see regions.py ConceptLayer/PatternSeparator and
+# their k_winners config, both ~2%) — a low firing rate here is the
+# architecture working as designed, not evidence of undertraining.
+INTENTIONALLY_SPARSE_REGIONS: dict[str, str] = {
+    "concept_layer": (
+        "k-WTA bottleneck, ~2% active by design "
+        "(50:1 compression from association cortex into sparse distributed representations)"
+    ),
+    "pattern_separator": (
+        "k-WTA dentate-gyrus analog, ~2% active by design "
+        "(orthogonal codes for episodic pattern separation)"
+    ),
+}
+
+# Below this firing rate, a region absent from INTENTIONALLY_SPARSE_REGIONS
+# is flagged as quiet-and-unexplained rather than assumed healthy.
+DEFAULT_QUIET_THRESHOLD = 0.01
+
+
+@dataclass(frozen=True)
+class RegionQuietFlag:
+    """One region's firing-rate classification from classify_quiet_regions()."""
+
+    region: str
+    firing_rate: float
+    energy_units: float | None
+    classification: str  # "intentional_sparsity" | "quiet_undertrained" | "healthy"
+    note: str
+
+
+def classify_quiet_regions(
+    energy_efficiency_result: dict[str, Any],
+    *,
+    quiet_threshold: float = DEFAULT_QUIET_THRESHOLD,
+    region_scores: dict[str, float] | None = None,
+) -> list[RegionQuietFlag]:
+    """Cross-reference per-region firing rates against known sparse-by-design
+    regions to separate undertrained-quiet from designed-quiet (issue #331).
+
+    `region_scores` is a hook for a genuine per-region learning-capability
+    score (once #297/#315/#316 and siblings land): if present for a region it
+    overrides the firing-rate heuristic below, since a region that scores well
+    on its own dedicated benchmark is healthy regardless of firing rate. Until
+    then this is firing-rate-only triage, not a full learning-capability
+    judgment — every note says so explicitly rather than overclaiming.
+    """
+    rates = energy_efficiency_result.get("region_firing_rates", {}) or {}
+    energy = energy_efficiency_result.get("region_energy_units", {}) or {}
+    flags = []
+    for region, rate in rates.items():
+        if region_scores and region in region_scores:
+            score = region_scores[region]
+            classification = "healthy" if score > 0 else "quiet_undertrained"
+            note = f"per-region score={score:.4f} (from a completed per-region benchmark)"
+        elif region in INTENTIONALLY_SPARSE_REGIONS:
+            classification = "intentional_sparsity"
+            note = INTENTIONALLY_SPARSE_REGIONS[region]
+        elif rate < quiet_threshold:
+            classification = "quiet_undertrained"
+            note = (
+                f"firing rate {rate:.4f} is below {quiet_threshold:.4f} with no documented "
+                "sparse-by-design rationale — likely undertrained, not intentional (pending "
+                "#297/#315/#316 and siblings to confirm with a real per-region score)"
+            )
+        else:
+            classification = "healthy"
+            note = f"firing rate {rate:.4f} is within the normal range"
+        flags.append(
+            RegionQuietFlag(
+                region=region,
+                firing_rate=rate,
+                energy_units=energy.get(region),
+                classification=classification,
+                note=note,
+            )
+        )
+    return flags
+
+
+def format_quiet_region_report(flags: list[RegionQuietFlag]) -> str:
+    """Human-readable rendering of classify_quiet_regions() output."""
+    if not flags:
+        return "  (no per-region firing-rate data)"
+    icons = {"intentional_sparsity": "~", "quiet_undertrained": "!", "healthy": " "}
+    lines = []
+    for f in sorted(flags, key=lambda f: f.firing_rate):
+        icon = icons.get(f.classification, "?")
+        energy_str = f"{f.energy_units:.4f}" if f.energy_units is not None else "?"
+        lines.append(
+            f"  [{icon}] {f.region:22s} rate={f.firing_rate:.4f}  energy={energy_str}  "
+            f"{f.classification} — {f.note}"
+        )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +1018,18 @@ class BenchmarkSuite:
             }
         )
 
+    @staticmethod
+    def check_runtime_budget(elapsed_s: float, budget_s: float) -> list[str]:
+        """Return failure messages if elapsed_s exceeds budget_s; empty list on pass."""
+        if elapsed_s > budget_s:
+            return [
+                f"BenchmarkSuite.run_all() took {elapsed_s:.2f}s, "
+                f"exceeding the budget of {budget_s:.2f}s. "
+                "Fix the regression or update benchmarks/suite_runtime_budget.json "
+                "(with a new measured_baseline_s, not just a wider budget_s)."
+            ]
+        return []
+
     def save_results(self, results: dict[str, Any], output_dir: str) -> Path:
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -871,8 +1077,12 @@ class BenchmarkSuite:
             f"   Spikes/step: {en.get('mean_spikes_per_step', 0):.0f}",
             f"   Global rate:  {en.get('global_firing_rate', 0):.6f}",
             f"   Energy units: {en.get('approx_energy_units', 0):.2f}",
-            "",
         ]
+        if en.get("region_firing_rates"):
+            lines.append("   Per-region (issue #331 — quiet-vs-sparse triage, no per-region")
+            lines.append("   learning score yet; see #297/#315/#316):")
+            lines.append(format_quiet_region_report(classify_quiet_regions(en)))
+        lines.append("")
         cs = results.get("concept_separability", {})
         if cs:
             if "error" not in cs:

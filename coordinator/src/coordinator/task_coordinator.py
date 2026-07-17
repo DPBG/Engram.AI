@@ -46,9 +46,11 @@ class TaskCoordinator:
         *,
         store: QdrantStore | None = None,
         embedding_service: EmbeddingService | None = None,
+        sensor_manager: Any | None = None,
     ):
         self.nats_client = nats_client
         self.tasks_root = tasks_root
+        self._sensor_manager = sensor_manager
 
         # Shared SDK infrastructure (injectable for testing): embeddings via the
         # EmbeddingService (which raises instead of returning a zero vector that
@@ -235,9 +237,10 @@ class TaskCoordinator:
         return trace_id
 
     async def _get_available_sensors(self) -> list[str]:
-        """Get list of available sensor IDs."""
-        # TODO: Query SensorManager
-        return ["camera_0", "microphone_0"]
+        """Get list of available sensor IDs from SensorManager when wired."""
+        if self._sensor_manager is None:
+            return []
+        return list(self._sensor_manager.get_sensor_ids())
 
     async def index_task(self, task_id: str) -> bool:
         """

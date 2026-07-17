@@ -295,3 +295,75 @@ def test_halt_count_increments():
     _expire(wdog)
     asyncio.run(_run_until_halt(wdog, published))
     assert wdog._halt_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Own-transport disconnect: fail toward SAFE_HALT (M2.40)
+# ---------------------------------------------------------------------------
+
+
+def test_brief_transport_blip_does_not_force_halt():
+    """A disconnect shorter than timeout_s must not mandate a post-blind halt."""
+    wdog = KernelWatchdog(timeout_s=_HB_TIMEOUT, check_interval_s=_CHECK)
+    wdog.notify_transport_down()
+    # Simulate a short blip (well under timeout).
+    wdog._blind_since = time.monotonic() - (_HB_TIMEOUT * 0.1)
+    wdog.notify_transport_up()
+    assert not wdog._halt_after_blind
+    assert not wdog.is_timed_out()
+
+
+def test_long_transport_blindness_mandates_halt():
+    """Blind longer than timeout_s → halt required; heartbeats cannot cancel it."""
+    published: list = []
+    wdog = KernelWatchdog(timeout_s=_HB_TIMEOUT, check_interval_s=_CHECK)
+    wdog.notify_transport_down()
+    wdog._blind_since = time.monotonic() - (_HB_TIMEOUT + 0.5)
+    wdog.notify_transport_up()
+
+    assert wdog._halt_after_blind
+    assert wdog.is_timed_out()
+
+    # Kernel "still alive" — heartbeats resume. Must not clear the mandate.
+    wdog.record_heartbeat()
+    assert wdog._halt_after_blind, "post-blind halt must ignore resumed heartbeats"
+    assert wdog.is_timed_out()
+
+    asyncio.run(_run_until_halt(wdog, published))
+    assert published[0][0] == "safety.halt"
+    assert "NATS connection lost" in published[0][1]["reason"]
+    assert not wdog._halt_after_blind, "successful publish clears the mandate"
+
+
+def test_transport_down_retries_halt_while_publish_fails():
+    """While disconnected, publish failures must leave the watchdog retrying.
+
+    Silent inaction (giving up / clearing the pending halt) is the unsafe mode.
+    """
+    attempts: list[str] = []
+
+    async def _inner() -> None:
+        wdog = KernelWatchdog(timeout_s=_HB_TIMEOUT, check_interval_s=_CHECK)
+        wdog.notify_transport_down()
+        wdog._blind_since = time.monotonic() - (_HB_TIMEOUT + 0.5)
+        wdog.notify_transport_up()
+
+        async def _publish_fail(subject: str, payload: dict) -> None:
+            attempts.append(subject)
+            raise ConnectionError("NATS disconnected")
+
+        task = asyncio.create_task(wdog.run(publish_halt=_publish_fail))
+        try:
+            deadline = time.monotonic() + _SAFE_WAIT
+            while time.monotonic() < deadline and len(attempts) < 2:
+                await asyncio.sleep(_CHECK)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert len(attempts) >= 2, "must retry SAFE_HALT while publish fails"
+        assert not wdog._halted, "must not mark halted after a failed publish"
+        assert wdog._halt_after_blind, "mandate survives publish failures"
+
+    asyncio.run(_inner())
