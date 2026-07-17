@@ -571,6 +571,102 @@ def format_quiet_region_report(flags: list[RegionQuietFlag]) -> str:
 # ---------------------------------------------------------------------------
 # Benchmark 5: Concept Separability
 # ---------------------------------------------------------------------------
+def silhouette_scores_from_distance_matrix(
+    dist: np.ndarray,
+    labels_arr: np.ndarray,
+) -> np.ndarray:
+    """Per-sample silhouette coefficient (Rousseeuw 1987) from a precomputed
+    distance matrix — pure NumPy, no sklearn dependency.
+
+    s(i) = (b(i) - a(i)) / max(a(i), b(i)), where a(i) is the mean distance
+    from sample i to the other members of its own cluster, and b(i) is the
+    smallest mean distance from i to the members of any other single
+    cluster.
+
+    A cluster with only one member has no other in-cluster neighbor, so
+    a(i) is undefined for that sample. Rousseeuw's original definition (and
+    sklearn.metrics.silhouette_samples, whose source comments this exactly:
+    "nan values are for clusters of size 1, and should be 0") sets the
+    *whole score* to 0 in that case, rather than deriving it from the
+    general formula with a(i)=0 -- the latter would give 1.0 here (i.e.
+    "perfectly separated"), which is wrong: a singleton's separation can't
+    be assessed at all, so 0 (neither well- nor poorly-clustered) is the
+    correct convention, not the maximum score. An earlier version of this
+    function used the a(i)=0 shortcut and silently returned 1.0 for
+    singleton clusters -- found and fixed via
+    scripts/verify_silhouette_score.py (issue #330), which compares this
+    function against sklearn.metrics.silhouette_samples on synthetic
+    fixtures including a singleton-cluster case.
+
+    Extracted from ConceptSeparabilityBenchmark.run() so the exact shipped
+    aggregation logic is what that verification script exercises, not a
+    reimplementation of it.
+    """
+    unique_labels = np.unique(labels_arr)
+    n_samples = len(labels_arr)
+    sil_scores = np.empty(n_samples, dtype=np.float64)
+    for i in range(n_samples):
+        lbl = labels_arr[i]
+        same = labels_arr == lbl
+        same[i] = False  # exclude self
+        if not same.any():
+            # Singleton cluster: score undefined by convention, not derived.
+            sil_scores[i] = 0.0
+            continue
+        a = float(dist[i, same].mean())
+        b = min(
+            float(dist[i, labels_arr == other_lbl].mean())
+            for other_lbl in unique_labels
+            if other_lbl != lbl
+        )
+        denom = max(a, b)
+        sil_scores[i] = (b - a) / denom if denom > 0 else 0.0
+    return sil_scores
+
+
+def nearest_centroid_loo_accuracy(
+    mat_unit: np.ndarray,
+    labels_arr: np.ndarray,
+) -> float:
+    """Leave-one-out nearest-centroid classification accuracy — pure NumPy.
+
+    For each sample, builds class centroids from every *other* sample (so
+    a sample never contributes to its own reference centroid — an unbiased
+    probe of separability, not memorization) and classifies it by cosine
+    similarity to the nearest centroid. Verified against
+    sklearn.neighbors.NearestCentroid + LeaveOneOut in
+    scripts/verify_silhouette_score.py (issue #330).
+
+    Extracted from ConceptSeparabilityBenchmark.run(); see its docstring
+    there for why this stays pure NumPy.
+    """
+    unique_labels = np.unique(labels_arr)
+    n_classes = len(unique_labels)
+    n_samples = len(labels_arr)
+    n_features = mat_unit.shape[1]
+    class_idx = np.array([int(np.where(unique_labels == lbl)[0][0]) for lbl in labels_arr])
+    class_sums = np.zeros((n_classes, n_features), dtype=np.float64)
+    class_counts = np.zeros(n_classes, dtype=np.int64)
+    for ci, vec in zip(class_idx, mat_unit):
+        class_sums[ci] += vec
+        class_counts[ci] += 1
+
+    loo_correct = 0
+    for i in range(n_samples):
+        ci = class_idx[i]
+        sims = np.empty(n_classes, dtype=np.float64)
+        for j in range(n_classes):
+            raw = class_sums[j] - mat_unit[i] if j == ci else class_sums[j]
+            cnt = class_counts[j] - 1 if j == ci else class_counts[j]
+            raw = raw / max(cnt, 1)
+            norm = np.linalg.norm(raw)
+            raw_unit = raw / (norm if norm > 0.0 else 1.0)
+            sims[j] = mat_unit[i].astype(np.float64) @ raw_unit
+        if unique_labels[int(np.argmax(sims))] == labels_arr[i]:
+            loo_correct += 1
+    return loo_correct / n_samples
+
+
 class ConceptSeparabilityBenchmark:
     """Score how well concept-layer activations separate distinct stimuli.
 
@@ -654,20 +750,7 @@ class ConceptSeparabilityBenchmark:
         np.fill_diagonal(dist, 0.0)
 
         # Silhouette score (pure NumPy)
-        sil_scores: list[float] = []
-        for i in range(n_samples):
-            lbl = labels_arr[i]
-            same = labels_arr == lbl
-            same[i] = False  # exclude self
-            a = float(dist[i, same].mean()) if same.any() else 0.0
-            b = min(
-                float(dist[i, labels_arr == other_lbl].mean())
-                for other_lbl in unique_labels
-                if other_lbl != lbl
-            )
-            denom = max(a, b)
-            sil_scores.append((b - a) / denom if denom > 0 else 0.0)
-
+        sil_scores = silhouette_scores_from_distance_matrix(dist, labels_arr)
         silhouette = round(float(np.mean(sil_scores)), 4)
 
         # Mean intra / inter class cosine distances
@@ -690,29 +773,7 @@ class ConceptSeparabilityBenchmark:
         separation_ratio = round(raw_inter / (raw_intra + 1e-8), 4)
 
         # Leave-one-out nearest-centroid linear probe (no sklearn, unbiased)
-        # Pre-compute class sums so each LOO centroid is O(1) to derive
-        n_features = mat_unit.shape[1]
-        class_idx = np.array([int(np.where(unique_labels == lbl)[0][0]) for lbl in labels_arr])
-        class_sums = np.zeros((n_classes, n_features), dtype=np.float64)
-        class_counts = np.zeros(n_classes, dtype=np.int64)
-        for ci, vec in zip(class_idx, mat_unit):
-            class_sums[ci] += vec
-            class_counts[ci] += 1
-
-        loo_correct = 0
-        for i in range(n_samples):
-            ci = class_idx[i]
-            sims = np.empty(n_classes, dtype=np.float64)
-            for j in range(n_classes):
-                raw = class_sums[j] - mat_unit[i] if j == ci else class_sums[j]
-                cnt = class_counts[j] - 1 if j == ci else class_counts[j]
-                raw = raw / max(cnt, 1)
-                norm = np.linalg.norm(raw)
-                raw_unit = raw / (norm if norm > 0.0 else 1.0)
-                sims[j] = mat_unit[i].astype(np.float64) @ raw_unit
-            if unique_labels[int(np.argmax(sims))] == labels_arr[i]:
-                loo_correct += 1
-        accuracy = round(loo_correct / n_samples, 4)
+        accuracy = round(nearest_centroid_loo_accuracy(mat_unit, labels_arr), 4)
 
         # Top concept neurons per pattern (most selective on average)
         raw_centroids = np.array(
