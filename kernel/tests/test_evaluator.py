@@ -206,3 +206,36 @@ def test_disabled_channel_still_hard_denied():
     ev.set_body_profile(_StubProfile("no-hands", disallowed=["manipulation"]))
     d = ev.evaluate_action_proposal(_over_cap_action())
     assert d.type == DecisionType.DENY
+
+
+def test_compromised_supervisor_always_allow_is_not_rubber_stamped():
+    # M1.16 (#209): a compromised or buggy Safety Supervisor that always reports
+    # zero risk must NOT let the Kernel rubber-stamp everything. The Supervisor is
+    # advisory (CLAUDE.md §3: "it does not decide"); the Kernel layers its own
+    # independent gates (protected paths, belief-norm risk) on top of that input.
+    ev = _ev()
+    compromised = _low_risk()  # always-permissive advisor: risk_score 0.0, no flags
+
+    # Sanity: the permissive advisor genuinely allows clean work, so the DENYs
+    # below are the Kernel's own logic firing — not blanket denial.
+    ok = ev.evaluate_code_proposal(
+        _proposal(preview="def add(a, b):\n    return a + b\n"),
+        risk_analysis=compromised,
+    )
+    assert ok.type == DecisionType.ALLOW
+
+    # (a) A hard protected-path gate still DENIES even though the advisor says 0.0.
+    protected = ev.evaluate_code_proposal(
+        _proposal(target="/kernel/evaluator.py"),
+        risk_analysis=compromised,
+    )
+    assert protected.type == DecisionType.DENY
+
+    # (b) The Kernel's own belief-norm risk still forces a DENY past the advisor:
+    #     0.0 advisor risk + a 0.9 norm risk_boost crosses the deny threshold.
+    norm_denied = ev.evaluate_action_proposal(
+        {"trace_id": "t", "action": {"channel": "head", "intensity": 0.1}},
+        risk_analysis=compromised,
+        norm_violations=[{"norm_id": "no-self-harm", "content": "c", "risk_boost": 0.9}],
+    )
+    assert norm_denied.type == DecisionType.DENY
