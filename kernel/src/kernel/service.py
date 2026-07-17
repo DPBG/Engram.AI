@@ -189,15 +189,10 @@ class KernelService(BaseService):
             self._handle_load_profile,
         )
         # Brain/dashboard may not publish policy.restrict directly (ADR 0001 §3).
-        # They publish policy.restrict.request; the Kernel validates and re-publishes
-        # as authoritative policy.restrict that consumers (planner, brain) act on.
-        # Two separate calls: a single call with 4 positional args would silently
-        # pass the second subject as the queue-group parameter and the second
-        # handler as pending_msgs_limit, dropping the subscription entirely.
-        await self.event_bus.subscribe(
-            Subjects.POLICY_RESTRICT,
-            self._handle_restrict,
-        )
+        # They publish policy.restrict.request; the Kernel validates, applies
+        # locally, and re-publishes authoritative policy.restrict for consumers
+        # (planner, brain). Kernel must NOT subscribe to policy.restrict itself:
+        # _handle_restrict re-publishes the same subject and would feedback-loop.
         await self.event_bus.subscribe(
             Subjects.POLICY_RESTRICT_REQUEST,
             self._handle_restrict_request,
@@ -594,11 +589,13 @@ class KernelService(BaseService):
             await self.event_bus.publish(Subjects.POLICY_RESTRICT, data)
 
     async def _handle_restrict(self, data: dict) -> None:
-        """Apply a restriction coming from an internal Kernel operation.
+        """Apply a restriction from an internal Kernel operation (not a NATS sub).
 
-        Called by _handle_policy_update when the operator update contains
+        Called by ``_handle_policy_update`` when the operator update contains
         motor_limits or capabilities. Applies the restriction to the evaluator
-        and broadcasts the authoritative policy.restrict.
+        and broadcasts authoritative ``policy.restrict`` for external consumers.
+        Kernel must not subscribe to ``policy.restrict`` — this method
+        re-publishes that subject.
         """
         if await self._apply_restriction(data):
             await self.event_bus.publish(Subjects.POLICY_RESTRICT, data)
@@ -1271,23 +1268,6 @@ class KernelService(BaseService):
             f"{DecisionSequenceTracker.DISABLE_THRESHOLD} consecutive DENYs"
         )
         try:
-            await self.event_bus.publish(
-                Subjects.POLICY_RESTRICT,
-                {
-                    "motor_limits": {channel: {"max_intensity": 0.0}},
-                    "reason": f"Auto-disable: {channel} consecutive DENY threshold",
-                    "operator_id": "system:deny_tracker",
-                },
-            )
-            await self.event_bus.publish(
-                "safety.deny_escalation",
-                {
-                    "channel": channel,
-                    "action": "auto_disabled",
-                    "deny_count": self._deny_tracker._sequences[channel].count,
-                    "operator_id": "system:deny_tracker",
-                },
-            )
             restrict_data = {
                 "motor_limits": {channel: {"max_intensity": 0.0}},
                 "reason": f"Auto-disable: {channel} consecutive DENY threshold",

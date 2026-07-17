@@ -204,15 +204,19 @@ def test_setup_subscribes_policy_restrict_request_handler():
         subscribe_calls = svc.event_bus.subscribe.call_args_list
         wired = [(call.args[0], call.args[1]) for call in subscribe_calls if call.args]
 
-        assert (Subjects.POLICY_RESTRICT, svc._handle_restrict) in wired
+        assert (Subjects.POLICY_RESTRICT, svc._handle_restrict) not in wired, (
+            "Kernel must not subscribe to policy.restrict — _handle_restrict "
+            "re-publishes that subject and would create a feedback loop"
+        )
         assert (Subjects.POLICY_RESTRICT_REQUEST, svc._handle_restrict_request) in wired
 
-        restrict_call = next(
-            call for call in subscribe_calls if call.args[0] == Subjects.POLICY_RESTRICT
-        )
-        assert (
-            len(restrict_call.args) == 2
-        ), "policy.restrict must not pass restrict.request as a queue group name"
+        # Guard against the old 4-arg subscribe bug that treated the second
+        # subject as a queue group (ADR 0001 §3 / PR #178).
+        for call in subscribe_calls:
+            if call.args and call.args[0] == Subjects.POLICY_RESTRICT_REQUEST:
+                assert (
+                    len(call.args) == 2
+                ), "policy.restrict.request must be a dedicated subscribe call"
 
     asyncio.run(_run_setup())
 
