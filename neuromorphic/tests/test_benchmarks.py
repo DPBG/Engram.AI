@@ -25,6 +25,8 @@ from neuromorphic.benchmarks import (
     classify_quiet_regions,
     format_quiet_region_report,
     generate_test_patterns,
+    nearest_centroid_loo_accuracy,
+    silhouette_scores_from_distance_matrix,
 )
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
@@ -595,6 +597,85 @@ class TestConceptSeparabilityBenchmark:
         text = suite.summary(results)
         assert "Concept Separability" in text
         assert "Silhouette score" in text
+
+
+def _cosine_dist(mat: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    unit = mat / norms
+    dist = np.clip(1.0 - unit @ unit.T, 0.0, 2.0).astype(np.float64)
+    np.fill_diagonal(dist, 0.0)
+    return dist, unit
+
+
+class TestSilhouetteScoresFromDistanceMatrix:
+    """Direct unit tests for the extracted, sklearn-verified silhouette function.
+
+    See scripts/verify_silhouette_score.py (issue #330) for the fuller
+    ground-truth comparison against sklearn.metrics.silhouette_samples;
+    these tests pin the specific behaviors that comparison caught or relies
+    on, so a regression fails CI without needing scikit-learn installed.
+    """
+
+    def test_singleton_cluster_scores_zero_not_one(self):
+        # Regression test (issue #330): an earlier version derived a
+        # singleton cluster's score from the general formula with a(i)=0,
+        # which silently produced 1.0 ("perfectly separated") instead of the
+        # textbook/sklearn convention of exactly 0 (undefined -> neutral).
+        dist = np.array(
+            [
+                [0.0, 0.9, 0.9],
+                [0.9, 0.0, 0.1],
+                [0.9, 0.1, 0.0],
+            ]
+        )
+        labels = np.array([0, 1, 1])  # sample 0 is a singleton cluster
+        scores = silhouette_scores_from_distance_matrix(dist, labels)
+        assert scores[0] == 0.0
+
+    def test_well_separated_clusters_score_near_one(self):
+        rng = np.random.default_rng(0)
+        mat = np.concatenate(
+            [
+                rng.normal(loc=10.0, scale=0.1, size=(5, 8)),
+                rng.normal(loc=-10.0, scale=0.1, size=(5, 8)),
+            ]
+        )
+        labels = np.array([0] * 5 + [1] * 5)
+        dist, _unit = _cosine_dist(mat)
+        scores = silhouette_scores_from_distance_matrix(dist, labels)
+        assert np.all(scores > 0.9)
+
+    def test_identical_points_across_clusters_score_zero(self):
+        # a == b == 0 for every sample -> denom == 0 -> defined as 0, not NaN.
+        dist = np.zeros((4, 4))
+        labels = np.array([0, 0, 1, 1])
+        scores = silhouette_scores_from_distance_matrix(dist, labels)
+        assert np.all(scores == 0.0)
+
+
+class TestNearestCentroidLooAccuracy:
+    """Direct unit tests for the extracted, sklearn-verified linear-probe function."""
+
+    def test_well_separated_clusters_perfectly_classified(self):
+        rng = np.random.default_rng(0)
+        mat = np.concatenate(
+            [
+                rng.normal(loc=10.0, scale=0.1, size=(5, 8)),
+                rng.normal(loc=-10.0, scale=0.1, size=(5, 8)),
+            ]
+        )
+        labels = np.array([0] * 5 + [1] * 5)
+        _dist, unit = _cosine_dist(mat)
+        assert nearest_centroid_loo_accuracy(unit, labels) == 1.0
+
+    def test_singleton_cluster_does_not_crash(self):
+        # A held-out singleton class has zero remaining training members;
+        # must fall back to a defined (zero-vector) centroid, not raise.
+        labels = np.array([0, 1, 1])  # sample 0 is a singleton cluster
+        _dist, unit = _cosine_dist(np.eye(3))
+        accuracy = nearest_centroid_loo_accuracy(unit, labels)
+        assert 0.0 <= accuracy <= 1.0
 
 
 class TestRuntimeBudget:
