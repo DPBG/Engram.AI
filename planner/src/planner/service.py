@@ -271,8 +271,12 @@ class PlannerService(BaseService):
         elif decision.type == "TRANSFORM":
             self.logger.info(f"Action {trace_id} TRANSFORMED")
             if decision.transformations:
-                # Execute transformed action
-                await self._execute_action(decision.transformations[0])
+                # Kernel emits bare action dicts; wrap into proposal shape so
+                # _execute_action sees action.intensity (not action={}).
+                transformed = decision.transformations[0]
+                if isinstance(transformed, dict) and "action" not in transformed:
+                    transformed = {**proposal, "action": transformed}
+                await self._execute_action(transformed)
             else:
                 await self._execute_action(proposal)
 

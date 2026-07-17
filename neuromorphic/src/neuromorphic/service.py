@@ -21,6 +21,7 @@ from neuromorphic.encoding import _resolve_modality
 from neuromorphic.network import NeuromorphicNetwork
 from neuromorphic.persistence import NeuromorphicPersistence
 from neuromorphic.sleep_phase import SleepPhaseManager
+from neuromorphic.transform_intensity import intensity_from_transformations
 from neuromorphic.watchdog import AlertLevel, NeuralWatchdog, WatchdogConfig, WatchdogStatus
 
 if TYPE_CHECKING:
@@ -1317,12 +1318,12 @@ class NeuromorphicService(BaseService):
             await self._inject_safety_feedback(cmd["channel"], success=False, confidence=1.0)
 
         elif decision_type == "TRANSFORM" and sg.transform_feedback:
-            # Inject CORRECTED feedback — brain learns the safe output range
-            transformations = decision.get("transformations") or []
-            corrected_intensity = cmd["intensity"]
-            for t in transformations:
-                if isinstance(t, dict) and "action" in t:
-                    corrected_intensity = t["action"].get("intensity", corrected_intensity)
+            # Inject CORRECTED feedback — brain learns the safe output range.
+            # Kernel emits bare action dicts; also accept nested ActionProposal.
+            corrected_intensity = intensity_from_transformations(
+                cmd["intensity"],
+                decision.get("transformations"),
+            )
             self.logger.info(
                 f"Safety TRANSFORM: {cmd['channel']} {cmd['intensity']:.2f} → {corrected_intensity:.2f}"
             )
