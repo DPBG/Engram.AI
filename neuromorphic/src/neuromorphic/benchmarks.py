@@ -1152,7 +1152,14 @@ class BenchmarkSuite:
 # ---------------------------------------------------------------------------
 # CLI: python -m neuromorphic.benchmarks
 # ---------------------------------------------------------------------------
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Build the `python -m neuromorphic.benchmarks` CLI parser.
+
+    Factored out of ``main()`` so the flag wiring (issue #322: overriding
+    the suite's seed from the command line, threaded through to
+    ``run_all()`` and ``binding_fixtures.generate_correlated_stimulus_fixtures()``)
+    is directly testable without spinning up a real network.
+    """
     parser = argparse.ArgumentParser(description="Engram investor-ready benchmarks")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--output", type=str, default="benchmarks/")
@@ -1174,6 +1181,11 @@ def main() -> None:
         default=0.95,
         help="Confidence level for multi-seed intervals (default: 0.95)",
     )
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     from neuromorphic.config import NeuromorphicConfig
