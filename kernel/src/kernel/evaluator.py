@@ -12,6 +12,7 @@ Body-profile integration:
 """
 
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
@@ -82,6 +83,20 @@ def unavailable_risk_analysis(trace_id: str = "") -> RiskAnalysis:
         risk_score=_UNAVAILABLE_RISK_SCORE,
         flags=[_UNAVAILABLE_FLAG],
     )
+
+
+_UNAVAILABLE_BELIEFS_NORM_ID = "BELIEFS_UNAVAILABLE"
+
+
+def unavailable_belief_norm_violations(reason: str = "") -> list[dict[str, Any]]:
+    """Return fail-closed norm violations when Beliefs service cannot run."""
+    return [
+        {
+            "norm_id": _UNAVAILABLE_BELIEFS_NORM_ID,
+            "content": reason or "Beliefs service unavailable",
+            "risk_boost": 1.0,
+        }
+    ]
 
 
 class KernelEvaluator:
@@ -156,8 +171,22 @@ class KernelEvaluator:
 
         Missing analysis is treated as maximum risk so the Kernel fails closed
         when the safety layer cannot run.
+
+        PR #122 fixed a fail-open path where a missing risk analysis was
+        silently treated as zero risk. This function is the last line of
+        defense against the same class of bug at the value level: a NaN (or
+        +/-inf) ``risk_score`` must never slip through as if it were safe.
+        ``max(0.0, min(nan, 1.0))`` evaluates to ``0.0`` in Python — NaN
+        comparisons are always False, so ``min``/``max`` silently keep their
+        first argument — which would fail OPEN exactly like the original bug.
+        kernel/service.py's ``_get_risk_analysis()`` already rejects a
+        non-finite ``risk_score`` from the wire before constructing a
+        ``RiskAnalysis``, but this method must not depend on every caller
+        having done that: it is public API and any code that constructs a
+        ``RiskAnalysis`` directly and calls ``evaluate_action_proposal``/
+        ``evaluate_code_proposal`` must still be handled fail-closed here.
         """
-        if risk_analysis is None:
+        if risk_analysis is None or not math.isfinite(risk_analysis.risk_score):
             return _UNAVAILABLE_RISK_SCORE, [_UNAVAILABLE_FLAG]
         return (
             max(0.0, min(risk_analysis.risk_score, 1.0)),
@@ -514,14 +543,6 @@ class KernelEvaluator:
             }
 
         # Cognitive channel check (action_type based)
-        if action_type == "cognitive_query":
-            if not profile.is_channel_allowed("cognitive"):
-                flags.append("PROFILE_DENY:cognitive")
-                return {
-                    "type": DecisionType.DENY,
-                    "reason": (f"Body profile '{profile.name}' disallows " f"cognitive queries"),
-                    "risk_score": 1.0,
-                }
         if action_type == "cognitive_query" and not profile.is_channel_allowed("cognitive"):
             flags.append("PROFILE_DENY:cognitive")
             return {

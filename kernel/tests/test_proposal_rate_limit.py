@@ -1,4 +1,4 @@
-"""Tests for code-proposal per-source rate limiting (M1.14).
+"""Tests for per-source proposal rate limiting (M1.14).
 
 Covers:
 - _check_proposal_rate_limit: within-limit returns True and records timestamp
@@ -7,6 +7,8 @@ Covers:
 - _check_proposal_rate_limit: independent buckets per source
 - _handle_code_proposal: over-limit source receives a fail-closed DENY
 - _handle_code_proposal: within-limit source is not rate-limited
+- _handle_action_proposal: over-limit source receives a fail-closed DENY
+- _handle_action_proposal: within-limit source is not rate-limited
 """
 
 import asyncio
@@ -190,3 +192,81 @@ def test_different_sources_have_independent_limits():
             assert "Rate limit" not in (
                 payload.get("reason") or ""
             ), "source-b denial must not be due to rate limiting"
+
+
+# ── Integration tests for _handle_action_proposal ─────────────────────────────
+
+
+def test_action_proposal_rate_limited_source_receives_fail_closed_deny():
+    """Over-limit action source must receive a DENY decision — never a silent drop."""
+    svc = _make_service(rate_limit=2)
+    published: list[tuple] = []
+
+    async def _capture_publish(trace_id, proposal_type, source, decision, **kwargs):
+        published.append((trace_id, proposal_type, decision))
+
+    svc._publish_and_log_decision = _capture_publish
+
+    async def run():
+        for _ in range(2):
+            svc._check_proposal_rate_limit("neuromorphic")
+        await svc._handle_action_proposal(
+            {
+                "trace_id": "t-motor-rl",
+                "provenance": "neuromorphic",
+                "action": {"type": "motor_command", "channel": "locomotion", "intensity": 0.5},
+            }
+        )
+
+    asyncio.run(run())
+
+    assert len(published) == 1
+    trace_id, proposal_type, decision = published[0]
+    assert trace_id == "t-motor-rl"
+    assert proposal_type == "action"
+    assert decision.type.value == "DENY"
+    assert "Rate limit exceeded" in (decision.reason or "")
+    assert svc._deny_count == 1
+
+
+def test_action_proposal_within_limit_reaches_evaluator():
+    """Action source within budget must reach evaluation, not rate-limit DENY."""
+    svc = _make_service(rate_limit=5)
+
+    evaluator = MagicMock()
+    from kernel.evaluator import DecisionType, KernelDecision
+
+    evaluator.evaluate_action_proposal.return_value = KernelDecision(
+        trace_id="t-motor-ok",
+        type=DecisionType.ALLOW,
+        reason="test",
+        risk_score=0.0,
+    )
+    svc._evaluator = evaluator
+
+    async def _no_risk(*args, **kwargs):
+        return None
+
+    async def _no_norms(*args, **kwargs):
+        return []
+
+    async def _capture_publish(*args, **kwargs):
+        return None
+
+    svc._get_risk_analysis = _no_risk
+    svc._check_belief_norms = _no_norms
+    svc._publish_and_log_decision = _capture_publish
+    svc._update_metrics = MagicMock()
+
+    async def run():
+        await svc._handle_action_proposal(
+            {
+                "trace_id": "t-motor-ok",
+                "provenance": "planner",
+                "action": {"type": "motor_command", "channel": "locomotion", "intensity": 0.2},
+            }
+        )
+
+    asyncio.run(run())
+
+    evaluator.evaluate_action_proposal.assert_called_once()

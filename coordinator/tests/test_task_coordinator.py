@@ -29,7 +29,14 @@ TaskCoordinator = tc.TaskCoordinator
 LEARNED_TASKS_COLLECTION = tc.LEARNED_TASKS_COLLECTION
 
 
-def _make(*, search_result=None, embed=(0.1, 0.2, 0.3), embed_error=None, tasks_root="/tmp"):
+def _make(
+    *,
+    search_result=None,
+    embed=(0.1, 0.2, 0.3),
+    embed_error=None,
+    tasks_root="/tmp",
+    sensor_manager=None,
+):
     """Build a TaskCoordinator with mocked store + embeddings."""
     store = MagicMock()
     store.search = AsyncMock(return_value=list(search_result or []))
@@ -49,6 +56,7 @@ def _make(*, search_result=None, embed=(0.1, 0.2, 0.3), embed_error=None, tasks_
         tasks_root=tasks_root,
         store=store,
         embedding_service=embeddings,
+        sensor_manager=sensor_manager,
     )
     return coord, store, embeddings
 
@@ -176,3 +184,42 @@ def test_setup_ensures_collection():
     coord, store, _ = _make()
     asyncio.run(coord.setup())
     store.ensure_collection.assert_awaited_once_with(LEARNED_TASKS_COLLECTION)
+
+
+# ── SensorManager wiring for knowledge gaps ─────────────────────────────────
+
+
+def test_get_available_sensors_queries_sensor_manager():
+    sensor_manager = MagicMock()
+    sensor_manager.get_sensor_ids.return_value = ["camera_0", "imu_ttyUSB0", "gps_ttyUSB1"]
+    coord, _, _ = _make(sensor_manager=sensor_manager)
+
+    sensors = asyncio.run(coord._get_available_sensors())
+
+    assert sensors == ["camera_0", "imu_ttyUSB0", "gps_ttyUSB1"]
+    sensor_manager.get_sensor_ids.assert_called_once_with()
+
+
+def test_get_available_sensors_empty_without_manager():
+    coord, _, _ = _make(sensor_manager=None)
+    assert asyncio.run(coord._get_available_sensors()) == []
+
+
+def test_trigger_knowledge_gap_includes_live_sensor_ids():
+    sensor_manager = MagicMock()
+    sensor_manager.get_sensor_ids.return_value = ["microphone_0", "gps_ttyUSB1"]
+    nats = MagicMock()
+    nats.publish = AsyncMock()
+    coord, _, _ = _make(sensor_manager=sensor_manager)
+    coord.nats_client = nats
+
+    trace_id = asyncio.run(coord.trigger_knowledge_gap("how do I navigate outdoors?"))
+
+    assert isinstance(trace_id, str) and trace_id
+    nats.publish.assert_awaited_once()
+    subject, payload = nats.publish.call_args.args
+    assert subject == "knowledge.gap"
+    gap = json.loads(payload.decode())
+    assert gap["available_sensors"] == ["microphone_0", "gps_ttyUSB1"]
+    assert gap["description"] == "how do I navigate outdoors?"
+    assert gap["source"] == "task_coordinator"

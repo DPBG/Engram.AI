@@ -156,6 +156,22 @@ SVG ring chart showing knowledge growth by source:
 - 🟠 Deployment (self-generated health check data)
 - 🟣 Simulation (synthetic/test data)
 
+### Learning Evidence
+`BenchmarkSuite` (`neuromorphic/src/neuromorphic/benchmarks.py`) produces 6 quantitative
+benchmarks proving the brain learns, run via `python -m neuromorphic.benchmarks`
+and saved to `neuromorphic/benchmarks/*.json`:
+1. **CrossModalRecall** — inject visual, measure auditory cortex activation (and vice versa)
+2. **NoveltyDetection** — present known vs unknown stimuli, measure response difference
+3. **AssociationStrength** — measure weight changes after paired multi-modal training
+4. **EnergyEfficiency** — compute energy per learned association vs baseline
+5. **ConceptSeparability** — silhouette score + linear-probe accuracy over concept-layer activations
+6. **CrossModalBindingAccuracy** — precision/recall of bound modality pairs vs ground truth
+
+The dashboard's Learning Evidence panel (`/api/learning-evidence`) currently trends
+**ConceptSeparability** and **CrossModalBindingAccuracy** over time; the other 4 are
+computed and saved to the JSON results but not yet plotted (tracked in
+[#307](https://github.com/DPBG/Engram.AI/issues/307)).
+
 ---
 
 ## Architecture
@@ -542,6 +558,7 @@ python run.py --only dashboard
 | [`docs/KERNEL-CRASH-RECOVERY.md`](docs/KERNEL-CRASH-RECOVERY.md) | Threat model for the Kernel process dying mid-decision, and how callers still fail closed |
 | [`docs/DECISION-KEY-ROTATION.md`](docs/DECISION-KEY-ROTATION.md) | Zero-downtime rotation procedure for the decision-bus signing key |
 | [`docs/benchmark-schema.md`](docs/benchmark-schema.md) | `BenchmarkSuite`'s output JSON schema — guaranteed vs conditional fields, consumed by the dashboard and CI gate |
+| [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md) | Mutation testing for the Kernel's risk-clamping logic — scope, workflow, enforced kill-rate floor |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, PR process, code standards |
 
 > **Naming:** Engram is the product/brand name and the domain is `engram.ai`. "Engram" was a former brand name and "ActiveLearningAI" is the original project directory name — both are still retained in a few places (the GitHub org/repos, the `activelearning` Python packages, and the legal entity Engram Incorporated). Public-facing materials use Engram.

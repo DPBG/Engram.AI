@@ -45,6 +45,7 @@ from activelearning.consumer_lag import (
     should_monitor_consumer,
 )
 from activelearning.core import current_timestamp
+from activelearning.dlq_monitor import emit_dlq_alert, parse_dlq_envelope
 from activelearning.messages import (
     KernelDecisionMessage,
     MessageValidationError,
@@ -64,12 +65,35 @@ logger = logging.getLogger(__name__)
 
 # JetStream stream that guarantees delivery for every safety-critical subject.
 # Proposals and decisions must never be fire-and-forget.
+#
+# Single source of truth (issue #252): _ensure_safety_stream() (which subjects
+# JetStream persists) and _is_safety_critical() (which publish() calls route
+# through JetStream) both derive from these two tuples, so the two can never
+# drift apart the way a hand-maintained if/else in _is_safety_critical() could.
+#
+# This is also the Kernel-privileged publisher set from ADR 0001 §3 ("Only the
+# kernel user may publish" decision.>, code.decision.>, policy.*, and
+# cognitive.response.validated) — every subject only the Kernel may author is
+# safety-critical enough to need guaranteed, durable delivery. Losing
+# `policy.restrict` in transit, for example, would mean a consumer that is
+# mid-reconnect when SAFE_HALT fires silently never receives the
+# motor-zeroing restriction, with no redelivery.
+# sdk/tests/test_safety_critical_subjects.py fails CI if a subject documented
+# as Kernel-privileged in the ADR isn't covered here.
 SAFETY_STREAM_NAME = "SAFETY_CRITICAL"
-_SAFETY_STREAM_SUBJECTS: list[str] = [
+_SAFETY_CRITICAL_EXACT: tuple[str, ...] = (
     Subjects.PROPOSAL_NEW,
     Subjects.CODE_PROPOSAL,
-    f"{Subjects.DECISION_PREFIX}>",
-    f"{Subjects.CODE_DECISION_PREFIX}>",
+)
+_SAFETY_CRITICAL_PREFIXES: tuple[str, ...] = (
+    Subjects.DECISION_PREFIX,  # "decision."
+    Subjects.CODE_DECISION_PREFIX,  # "code.decision."
+    "policy.",  # policy.restrict(.request), .rollback, .update, .load_profile, *.status
+    "cognitive.response.",  # cognitive.response.validate(d), .rejected
+)
+_SAFETY_STREAM_SUBJECTS: list[str] = [
+    *_SAFETY_CRITICAL_EXACT,
+    *(f"{prefix}>" for prefix in _SAFETY_CRITICAL_PREFIXES),
 ]
 # Auto-delete idle waiter consumers after this many seconds of inactivity.
 _CONSUMER_INACTIVE_THRESHOLD_S: float = 60.0
@@ -86,6 +110,44 @@ DEFAULT_REDELIVERY_BACKOFF: list[float] = [1.0, 5.0, 15.0, 30.0]
 # Exhausted or unprocessable messages are republished here (core NATS, not the
 # JetStream-backed safety stream) so they are observable, never silently dropped.
 DLQ_SUBJECT_PREFIX: str = "dlq."
+
+
+def _env_timeout(name: str, default: float) -> float:
+    """Read a positive-float timeout override from the environment.
+
+    Invalid or non-positive values fall back to ``default`` with a warning so a
+    typo can never silently disable a timeout (which would let a call hang
+    forever).
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s=%r (not a number); using default %.1fs", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("Invalid %s=%r (must be > 0); using default %.1fs", name, raw, default)
+        return default
+    return value
+
+
+# --- Centralized request-reply timeout policy (issue #233) ---
+#
+# Every EventBus request-reply and decision-wait uses one of these shared
+# defaults unless a caller passes an explicit ``timeout``. Each is overridable
+# per-deployment via an environment variable so operators can tune failure
+# behavior without editing call sites. See docs/EVENTBUS-TIMEOUT-POLICY.md.
+#
+# Default timeout (seconds) for EventBus.request() request-reply RPCs.
+DEFAULT_REQUEST_TIMEOUT_S: float = _env_timeout("ENGRAM_REQUEST_TIMEOUT_S", 30.0)
+# Default timeout (seconds) for EventBus.wait_for_decision() Kernel gate waits.
+DEFAULT_DECISION_TIMEOUT_S: float = _env_timeout("ENGRAM_DECISION_TIMEOUT_S", 30.0)
+# How long a queued operation waits for auto-reconnect before giving up.
+RECONNECT_WAIT_TIMEOUT_S: float = _env_timeout("ENGRAM_RECONNECT_WAIT_TIMEOUT_S", 10.0)
+# Grace period for draining a dead connection during force_reconnect().
+CONNECTION_DRAIN_TIMEOUT_S: float = _env_timeout("ENGRAM_CONNECTION_DRAIN_TIMEOUT_S", 5.0)
 
 
 def poison_subject(subject: str) -> str:
@@ -343,16 +405,29 @@ class EventBus:
             except Exception as e:
                 logger.warning("JetStream lag monitor error: %s", e)
 
+    async def _handle_dlq_message(self, data: dict[str, Any]) -> None:
+        """Alert on a dead-lettered message (issue #246): observe, never re-drop."""
+        original_subject = str(data.get("original_subject", "unknown"))
+        record = parse_dlq_envelope(poison_subject(original_subject), data)
+        emit_dlq_alert(record, monitor=self.name)
+
+    async def start_dlq_monitor(self) -> None:
+        """Subscribe to the dead-letter wildcard so poisoned messages are observed
+        and alerted on (issue #246) instead of accumulating silently forever."""
+        await self.subscribe(Subjects.DLQ_WILDCARD, self._handle_dlq_message)
+
     @staticmethod
     def _is_safety_critical(subject: str) -> bool:
-        """Return True when this subject must use JetStream persistence."""
-        if subject in (Subjects.PROPOSAL_NEW, Subjects.CODE_PROPOSAL):
+        """Return True when this subject must use JetStream persistence.
+
+        Derived from _SAFETY_CRITICAL_EXACT / _SAFETY_CRITICAL_PREFIXES — the
+        same two tuples _ensure_safety_stream() uses to configure the stream's
+        subjects — so this check and what the stream actually persists can
+        never diverge. See the module-level comment above them.
+        """
+        if subject in _SAFETY_CRITICAL_EXACT:
             return True
-        if subject.startswith(Subjects.DECISION_PREFIX) or subject.startswith(
-            Subjects.CODE_DECISION_PREFIX,
-        ):
-            return True
-        return False
+        return subject.startswith(_SAFETY_CRITICAL_PREFIXES)
 
     @staticmethod
     def _is_metrics_subject(subject: str) -> bool:
@@ -676,7 +751,7 @@ class EventBus:
         self,
         subject: str,
         data: Any,
-        timeout: float = 30.0,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """
         Send a request and wait for a response.
@@ -684,7 +759,10 @@ class EventBus:
         Args:
             subject: NATS subject
             data: Request payload
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds. ``None`` (the default) uses the shared
+                ``DEFAULT_REQUEST_TIMEOUT_S`` policy value (env-overridable via
+                ``ENGRAM_REQUEST_TIMEOUT_S``). Pass an explicit value only when a
+                specific call needs to deviate — see docs/EVENTBUS-TIMEOUT-POLICY.md.
 
         Returns:
             Response data as dict
@@ -692,18 +770,19 @@ class EventBus:
         Raises:
             asyncio.TimeoutError: If no response within timeout
         """
+        effective_timeout = DEFAULT_REQUEST_TIMEOUT_S if timeout is None else timeout
         await self._ensure_connected()
         assert self._nc is not None
         payload = serialize_message(data)
         t0 = time.perf_counter()
-        response = await self._nc.request(subject, payload, timeout=timeout)
+        response = await self._nc.request(subject, payload, timeout=effective_timeout)
         self._metrics.record_request((time.perf_counter() - t0) * 1000)
         return deserialize_message(response.data)
 
     async def wait_for_decision(
         self,
         trace_id: str,
-        timeout: float = 30.0,
+        timeout: float | None = None,
         *,
         code: bool = False,
     ) -> dict[str, Any]:
@@ -717,13 +796,17 @@ class EventBus:
 
         Args:
             trace_id: The trace ID to wait for
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds. ``None`` (the default) uses the shared
+                ``DEFAULT_DECISION_TIMEOUT_S`` policy value (env-overridable via
+                ``ENGRAM_DECISION_TIMEOUT_S``). On timeout the caller MUST fail
+                closed (deny/halt) — see docs/EVENTBUS-TIMEOUT-POLICY.md.
             code: When True, wait on ``code.decision.{trace_id}`` instead of
                 ``decision.{trace_id}`` (Kernel code-proposal gate).
 
         Returns:
             Decision data as dict
         """
+        effective_timeout = DEFAULT_DECISION_TIMEOUT_S if timeout is None else timeout
         subject = code_decision_subject(trace_id) if code else decision_subject(trace_id)
         durable = f"waiter-{'code' if code else 'action'}-{trace_id}"
         decision_received = asyncio.Event()
@@ -787,7 +870,7 @@ class EventBus:
             ),
         )
         try:
-            await asyncio.wait_for(decision_received.wait(), timeout=timeout)
+            await asyncio.wait_for(decision_received.wait(), timeout=effective_timeout)
             return result
         finally:
             await sub.unsubscribe()
@@ -821,7 +904,7 @@ class EventBus:
         # Best-effort close of old connection
         if self._nc is not None:
             try:
-                await asyncio.wait_for(self._nc.close(), timeout=5.0)
+                await asyncio.wait_for(self._nc.close(), timeout=CONNECTION_DRAIN_TIMEOUT_S)
             except Exception as e:
                 log_connection_event(
                     TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
@@ -880,11 +963,12 @@ class EventBus:
         """Ensure we're connected, waiting briefly for reconnection if needed."""
         if self.is_connected:
             return
-        # NATS client may be reconnecting — wait up to 10s before giving up.
-        # This prevents transient disconnects from crashing publish loops.
+        # NATS client may be reconnecting — wait up to RECONNECT_WAIT_TIMEOUT_S
+        # before giving up. This prevents transient disconnects from crashing
+        # publish loops.
         if self._nc is not None:
             try:
-                await asyncio.wait_for(self._connected.wait(), timeout=10.0)
+                await asyncio.wait_for(self._connected.wait(), timeout=RECONNECT_WAIT_TIMEOUT_S)
                 return
             except TimeoutError:
                 pass
@@ -977,6 +1061,29 @@ async def get_event_bus() -> EventBus:
         _global_bus = EventBus()
         await _global_bus.connect()
     return _global_bus
+
+
+async def close_event_bus() -> None:
+    """Close and reset the global EventBus singleton, if open (issue #248).
+
+    Mirrors ``activelearning.database.close_database()``. Nothing in the
+    production runtime calls this — a real service's process exit reclaims
+    the connection. But ``EventBus.__init__`` creates an ``asyncio.Event``
+    bound to whatever event loop is running at construction time, and
+    pytest-asyncio gives each test function its own loop, so a test that
+    exercises ``get_event_bus()`` (or the module-level ``publish()``/
+    ``subscribe()`` convenience functions above, which route through it) and
+    never closes it leaves a connected ``EventBus`` — with a ``_connected``
+    Event tied to a now-dead loop — sitting in this module's global for every
+    subsequent test in the same pytest process to inherit, regardless of
+    collection order. That surfaces as "attached to a different loop" errors
+    that only reproduce in a particular test order. Tests that exercise the
+    real singleton must call this in teardown.
+    """
+    global _global_bus
+    if _global_bus is not None:
+        await _global_bus.close()
+        _global_bus = None
 
 
 async def publish(subject: str, data: Any) -> None:

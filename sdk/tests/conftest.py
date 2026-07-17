@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 
 import pytest
 
-from activelearning.nats_client import EventBus
+from activelearning.database import close_database
+from activelearning.nats_client import EventBus, close_event_bus
 
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -97,6 +98,23 @@ def nats_url() -> Generator[str, None, None]:
         except subprocess.TimeoutExpired:
             proc.kill()
         shutil.rmtree(data_dir, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+async def _reset_global_singletons() -> AsyncGenerator[None, None]:
+    """Guarantee _db/_global_bus never leak between tests (issue #248).
+
+    A singleton left open by one test carries a stale event loop reference
+    (EventBus._connected, an asyncio.Event) or a non-daemon aiosqlite worker
+    thread (Database) into whatever test runs next, regardless of collection
+    order. Since pytest-asyncio gives each test function its own loop, that is
+    an ordering-dependent failure waiting to happen — reset both
+    unconditionally after every test rather than relying on each test to
+    remember.
+    """
+    yield
+    await close_database()
+    await close_event_bus()
 
 
 @pytest.fixture

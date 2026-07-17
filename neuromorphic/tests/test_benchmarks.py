@@ -3,21 +3,33 @@
 Verifies all 6 benchmarks produce valid results on a small network.
 """
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from neuromorphic.benchmarks import (
+    INTENTIONALLY_SPARSE_REGIONS,
     AssociationStrengthBenchmark,
     BenchmarkSuite,
     ConceptSeparabilityBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
     NoveltyDetectionBenchmark,
+    RegionQuietFlag,
+    _confidence_interval,
+    _flatten_numeric,
     _to_native,
+    audit_pattern_diversity,
+    classify_quiet_regions,
+    format_quiet_region_report,
     generate_test_patterns,
 )
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.network import NeuromorphicNetwork
+
+_NEURO_DIR = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -59,6 +71,64 @@ class TestGeneratePatterns:
         a = generate_test_patterns(3, np.random.default_rng(42))
         b = generate_test_patterns(3, np.random.default_rng(42))
         assert a[0]["visual"] == b[0]["visual"]
+
+    def test_no_exact_duplicates_beyond_64_patterns(self):
+        """issue #327: the prior generator's (i*7)%64/(i*13)%64 position formula
+        made pattern[i] == pattern[i+64] exactly — any benchmark requesting
+        more than 64 patterns silently trained on duplicates."""
+        pats = generate_test_patterns(80, np.random.default_rng(42))
+        visuals = {tuple(p["visual"]) for p in pats}
+        assert len(visuals) == 80
+
+    def test_visual_patterns_are_not_a_single_shape_class(self):
+        """issue #327: the prior generator used one fixed sigma, so every
+        pattern was a translated copy of the same blob shape."""
+        pats = generate_test_patterns(9, np.random.default_rng(1))
+        vis = np.array([p["visual"] for p in pats])
+
+        def radius(v):
+            img = v.reshape(64, 64)
+            total = img.sum()
+            ys, xs = np.mgrid[0:64, 0:64]
+            cx, cy = (xs * img).sum() / total, (ys * img).sum() / total
+            return np.sqrt((((xs - cx) ** 2 + (ys - cy) ** 2) * img).sum() / total)
+
+        radii = [radius(v) for v in vis]
+        assert np.std(radii) > 0.5  # genuine size variation, not one fixed blob
+
+    def test_auditory_patterns_are_distinguishable(self):
+        """issue #327: 12 shared-noise dims used to dominate similarity
+        regardless of which single dim was "hot" (~0.9 mean cosine sim)."""
+        diversity = audit_pattern_diversity(generate_test_patterns(20, np.random.default_rng(7)))
+        assert diversity["mean_auditory_cosine_sim"] < 0.6
+
+
+class TestAuditPatternDiversity:
+    def test_empty_patterns(self):
+        result = audit_pattern_diversity([])
+        assert result["n_patterns"] == 0
+        assert result["unique_visual"] == 0
+        assert result["unique_auditory"] == 0
+
+    def test_single_pattern_similarity_is_zero(self):
+        pats = generate_test_patterns(1, np.random.default_rng(3))
+        result = audit_pattern_diversity(pats)
+        assert result["n_patterns"] == 1
+        assert result["mean_visual_cosine_sim"] == 0.0
+        assert result["mean_auditory_cosine_sim"] == 0.0
+
+    def test_identical_patterns_have_similarity_one(self):
+        pat = generate_test_patterns(1, np.random.default_rng(3))[0]
+        result = audit_pattern_diversity([pat, dict(pat)])
+        assert result["unique_visual"] == 1
+        assert result["mean_visual_cosine_sim"] == pytest.approx(1.0, abs=1e-6)
+
+    def test_reports_unique_counts_matching_pattern_count_today(self):
+        pats = generate_test_patterns(80, np.random.default_rng(42))
+        result = audit_pattern_diversity(pats)
+        assert result["n_patterns"] == 80
+        assert result["unique_visual"] == 80
+        assert result["unique_auditory"] == 80
 
 
 class TestToNative:
@@ -144,6 +214,109 @@ class TestEnergyEfficiency:
         for name, rate in result["region_firing_rates"].items():
             assert rate >= 0.0
 
+    def test_region_energy_units_matches_firing_rate_regions(self, small_network, patterns):
+        """region_energy_units (issue #331) covers exactly the regions region_firing_rates does."""
+        bench = EnergyEfficiencyBenchmark(small_network)
+        result = bench.run(patterns, steps_per_pattern=4)
+        assert "region_energy_units" in result
+        assert set(result["region_energy_units"]) == set(result["region_firing_rates"])
+
+    def test_region_energy_units_sum_to_approx_energy_units(self, small_network, patterns):
+        bench = EnergyEfficiencyBenchmark(small_network)
+        result = bench.run(patterns, steps_per_pattern=4)
+        assert sum(result["region_energy_units"].values()) == pytest.approx(
+            result["approx_energy_units"], rel=1e-3
+        )
+
+
+class TestClassifyQuietRegions:
+    def test_intentional_sparsity_flagged_for_known_kwta_regions(self):
+        result = {
+            "region_firing_rates": {"concept_layer": 0.02, "pattern_separator": 0.015},
+            "region_energy_units": {"concept_layer": 1.0, "pattern_separator": 0.5},
+        }
+        flags = classify_quiet_regions(result)
+        by_region = {f.region: f for f in flags}
+        assert by_region["concept_layer"].classification == "intentional_sparsity"
+        assert by_region["pattern_separator"].classification == "intentional_sparsity"
+        assert "k-WTA" in by_region["concept_layer"].note
+
+    def test_quiet_region_without_sparsity_rationale_flagged_undertrained(self):
+        result = {"region_firing_rates": {"sensory_cortex": 0.001}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result)
+        assert flags[0].classification == "quiet_undertrained"
+        assert "undertrained" in flags[0].note
+
+    def test_normal_firing_rate_is_healthy(self):
+        result = {"region_firing_rates": {"motor_cortex": 0.15}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result)
+        assert flags[0].classification == "healthy"
+
+    def test_custom_quiet_threshold(self):
+        result = {"region_firing_rates": {"cerebellum": 0.05}, "region_energy_units": {}}
+        assert classify_quiet_regions(result)[0].classification == "healthy"
+        assert (
+            classify_quiet_regions(result, quiet_threshold=0.1)[0].classification
+            == "quiet_undertrained"
+        )
+
+    def test_region_scores_override_marks_positive_score_healthy(self):
+        """A real per-region score (once #297/#315/#316 land) beats the heuristic."""
+        result = {"region_firing_rates": {"working_memory": 0.001}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result, region_scores={"working_memory": 0.87})
+        assert flags[0].classification == "healthy"
+        assert "per-region score" in flags[0].note
+
+    def test_region_scores_override_marks_zero_score_undertrained(self):
+        result = {"region_firing_rates": {"concept_layer": 0.02}, "region_energy_units": {}}
+        flags = classify_quiet_regions(result, region_scores={"concept_layer": 0.0})
+        assert flags[0].classification == "quiet_undertrained"
+
+    def test_energy_units_carried_through_when_present(self):
+        result = {
+            "region_firing_rates": {"motor_cortex": 0.2},
+            "region_energy_units": {"motor_cortex": 3.14},
+        }
+        assert classify_quiet_regions(result)[0].energy_units == pytest.approx(3.14)
+
+    def test_missing_energy_units_is_none(self):
+        result = {"region_firing_rates": {"motor_cortex": 0.2}}
+        assert classify_quiet_regions(result)[0].energy_units is None
+
+    def test_empty_firing_rates_returns_empty_list(self):
+        assert classify_quiet_regions({}) == []
+        assert classify_quiet_regions({"region_firing_rates": {}}) == []
+
+    def test_intentionally_sparse_regions_table_has_notes(self):
+        assert set(INTENTIONALLY_SPARSE_REGIONS) == {"concept_layer", "pattern_separator"}
+        assert all(INTENTIONALLY_SPARSE_REGIONS.values())
+
+
+class TestFormatQuietRegionReport:
+    def test_empty_flags(self):
+        assert "no per-region" in format_quiet_region_report([])
+
+    def test_report_mentions_each_region_and_classification(self):
+        flags = [
+            RegionQuietFlag("concept_layer", 0.02, 1.0, "intentional_sparsity", "k-WTA design"),
+            RegionQuietFlag(
+                "sensory_cortex", 0.001, None, "quiet_undertrained", "likely undertrained"
+            ),
+            RegionQuietFlag("motor_cortex", 0.2, 2.0, "healthy", "normal range"),
+        ]
+        text = format_quiet_region_report(flags)
+        for f in flags:
+            assert f.region in text
+            assert f.classification in text
+
+    def test_report_sorted_quietest_first(self):
+        flags = [
+            RegionQuietFlag("motor_cortex", 0.2, None, "healthy", "x"),
+            RegionQuietFlag("sensory_cortex", 0.001, None, "quiet_undertrained", "y"),
+        ]
+        text = format_quiet_region_report(flags)
+        assert text.index("sensory_cortex") < text.index("motor_cortex")
+
 
 class TestBenchmarkSuite:
     def test_run_all(self, small_network):
@@ -169,6 +342,15 @@ class TestBenchmarkSuite:
         assert "Concept Separability" in text
         assert "Cross-Modal Binding Accuracy" in text
 
+    def test_summary_includes_per_region_quiet_report(self, small_network):
+        """issue #331: the summary cross-references quiet regions automatically."""
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=2, training_reps=1, steps_per_pattern=4)
+        text = suite.summary(results)
+        assert "issue #331" in text
+        for region in results["energy_efficiency"]["region_firing_rates"]:
+            assert region in text
+
 
 class TestCrossModalBindingAccuracyInSuite:
     def test_run_all_includes_binding_accuracy(self, small_network):
@@ -188,6 +370,106 @@ class TestCrossModalBindingAccuracyInSuite:
 
         data = json.loads(path.read_text())
         assert "cross_modal_recall" in data
+
+
+class TestFlattenNumeric:
+    def test_flattens_nested_dicts(self):
+        d = {"a": 1, "b": {"c": 2.5, "d": {"e": 3}}}
+        flat = _flatten_numeric(d)
+        assert flat == {"a": 1.0, "b.c": 2.5, "b.d.e": 3.0}
+
+    def test_drops_non_numeric(self):
+        d = {"label": "pattern_000", "enabled": True, "value": 1.5, "items": [1, 2, 3]}
+        flat = _flatten_numeric(d)
+        assert flat == {"value": 1.5}
+
+    def test_empty_dict(self):
+        assert _flatten_numeric({}) == {}
+
+
+class TestConfidenceInterval:
+    def test_single_value_has_zero_width(self):
+        mean, half_width = _confidence_interval([5.0])
+        assert mean == 5.0
+        assert half_width == 0.0
+
+    def test_identical_values_have_zero_width(self):
+        mean, half_width = _confidence_interval([3.0, 3.0, 3.0])
+        assert mean == 3.0
+        assert half_width == pytest.approx(0.0, abs=1e-9)
+
+    def test_wider_confidence_gives_wider_interval(self):
+        values = [1.0, 2.0, 3.0, 4.0, 5.0]
+        _, narrow = _confidence_interval(values, confidence=0.80)
+        _, wide = _confidence_interval(values, confidence=0.99)
+        assert wide > narrow
+
+    def test_mean_is_correct(self):
+        mean, _ = _confidence_interval([2.0, 4.0, 6.0])
+        assert mean == pytest.approx(4.0)
+
+
+class TestMultiSeed:
+    def test_run_multi_seed_structure(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=3, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        assert results["n_seeds"] == 3
+        assert len(results["seeds"]) == 3
+        assert len(results["seeds"]) == len(set(results["seeds"]))  # distinct seeds
+        assert len(results["runs"]) == 3
+        assert "aggregate" in results
+
+    def test_aggregate_has_mean_and_ci(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=3, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        agg = results["aggregate"]
+        assert len(agg) > 0
+        for name, stat in agg.items():
+            assert set(stat.keys()) == {"mean", "std", "ci_low", "ci_high", "n"}
+            assert stat["n"] == 3
+            assert stat["ci_low"] <= stat["mean"] <= stat["ci_high"]
+
+    def test_single_seed_collapses_ci(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=1, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        agg = results["aggregate"]
+        for stat in agg.values():
+            assert stat["ci_low"] == stat["mean"] == stat["ci_high"]
+
+    def test_base_seed_controls_seed_sequence(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=2, n_patterns=2, training_reps=1, steps_per_pattern=4, base_seed=100
+        )
+        assert results["seeds"] == [100, 101]
+
+    def test_summary_multi_seed(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=2, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        text = suite.summary_multi_seed(results)
+        assert "Multi-Seed" in text
+        assert "95% CI" in text or "metrics tracked" in text
+
+    def test_save_multi_seed_results(self, small_network, tmp_path):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_multi_seed(
+            n_seeds=2, n_patterns=2, training_reps=1, steps_per_pattern=4
+        )
+        path = suite.save_results(results, str(tmp_path))
+        assert path.exists()
+        import json
+
+        data = json.loads(path.read_text())
+        assert data["n_seeds"] == 2
+        assert "aggregate" in data
 
     def test_run_all_includes_concept_separability(self, small_network):
         """run_all() always includes concept_separability key (error or scores)."""
@@ -313,3 +595,54 @@ class TestConceptSeparabilityBenchmark:
         text = suite.summary(results)
         assert "Concept Separability" in text
         assert "Silhouette score" in text
+
+
+class TestRuntimeBudget:
+    """Issue #332: BenchmarkSuite must complete within the committed wall-clock budget."""
+
+    def test_committed_budget_file_is_valid(self):
+        path = _NEURO_DIR / "benchmarks" / "suite_runtime_budget.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["budget_s"] > 0, "budget_s must be positive"
+        assert "ci_params" in data, "ci_params section is required"
+        for key in ("n_patterns", "training_reps", "steps_per_pattern"):
+            assert key in data["ci_params"], f"ci_params.{key} is required"
+        assert data["measured_baseline_s"] > 0, "measured_baseline_s must be positive"
+
+    def test_run_all_within_runtime_budget(self, small_network):
+        """run_all() with CI params must complete within the committed budget.
+
+        If this fails the suite has regressed or a new benchmark added more work
+        than the budget allows. Fix the regression or — after deliberate review —
+        update measured_baseline_s and budget_s in suite_runtime_budget.json.
+        """
+        budget_path = _NEURO_DIR / "benchmarks" / "suite_runtime_budget.json"
+        budget_data = json.loads(budget_path.read_text(encoding="utf-8"))
+        budget_s = budget_data["budget_s"]
+        params = budget_data["ci_params"]
+
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(
+            n_patterns=int(params["n_patterns"]),
+            training_reps=int(params["training_reps"]),
+            steps_per_pattern=int(params["steps_per_pattern"]),
+        )
+
+        failures = BenchmarkSuite.check_runtime_budget(results["elapsed_s"], budget_s)
+        assert failures == [], (
+            f"BenchmarkSuite exceeded the committed runtime budget ({budget_s}s).\n"
+            "If this is a genuine regression, fix the code.\n"
+            "If the budget itself must grow (e.g. new CI-required benchmarks added), "
+            "update measured_baseline_s and budget_s in "
+            "benchmarks/suite_runtime_budget.json after reviewing the new numbers.\n"
+            "Failures:\n" + "\n".join(f"  - {f}" for f in failures)
+        )
+
+    def test_check_runtime_budget_passes_under_limit(self):
+        assert BenchmarkSuite.check_runtime_budget(1.0, 30.0) == []
+
+    def test_check_runtime_budget_fails_over_limit(self):
+        failures = BenchmarkSuite.check_runtime_budget(31.0, 30.0)
+        assert len(failures) == 1
+        assert "31.00s" in failures[0]
+        assert "30.00s" in failures[0]

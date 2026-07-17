@@ -33,6 +33,7 @@ from kernel.evaluator import (
     KernelDecision,
     KernelEvaluator,
     RiskAnalysis,
+    unavailable_belief_norm_violations,
     unavailable_risk_analysis,
 )
 from kernel.policy import (
@@ -44,10 +45,9 @@ from kernel.policy import (
 
 _DECISION_TYPES = ("ALLOW", "TRANSFORM", "DENY", "DEFER")
 
-# Per-source code-proposal rate limiting (M1.14).
-# Exceeding the limit is fail-closed: a DENY decision is published so the
-# meta-programmer's Future resolves rather than hanging, and the over-rate
-# source is logged.  Both values are overridable via environment variables.
+# Per-source proposal rate limiting (M1.14) — applies to both proposal.new
+# and code.proposal. Exceeding the limit is fail-closed: a DENY decision is
+# published so the caller's Future resolves rather than hanging.
 _PROPOSAL_RATE_LIMIT = int(os.environ.get("KERNEL_PROPOSAL_RATE_LIMIT", "10"))
 _PROPOSAL_RATE_WINDOW_S = float(os.environ.get("KERNEL_PROPOSAL_RATE_WINDOW_S", "60"))
 
@@ -224,6 +224,9 @@ class KernelService(BaseService):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         # JetStream consumer lag monitor (M2.1, issue #224).
         self._lag_monitor_task = asyncio.create_task(self.event_bus.run_lag_monitor())
+        # Dead-letter monitor (issue #246): observe and alert on poisoned messages
+        # instead of letting them accumulate silently on dlq.<subject>.
+        await self.event_bus.start_dlq_monitor()
 
     async def _cleanup(self) -> None:
         """Service-specific cleanup."""
@@ -352,7 +355,7 @@ class KernelService(BaseService):
         profile_name = data.get("profile_name", "")
         if not profile_name:
             await self.event_bus.publish(
-                "policy.profile.status",
+                Subjects.POLICY_PROFILE_STATUS,
                 {
                     "status": "error",
                     "reason": "Missing profile_name",
@@ -380,7 +383,7 @@ class KernelService(BaseService):
 
             self.logger.info(f"Runtime profile switch: {profile.name}")
             await self.event_bus.publish(
-                "policy.profile.status",
+                Subjects.POLICY_PROFILE_STATUS,
                 {
                     "status": "loaded",
                     "profile": profile.name,
@@ -395,7 +398,7 @@ class KernelService(BaseService):
         except (FileNotFoundError, ValueError, ImportError) as e:
             self.logger.error(f"Failed to load profile '{profile_name}': {e}")
             await self.event_bus.publish(
-                "policy.profile.status",
+                Subjects.POLICY_PROFILE_STATUS,
                 {
                     "status": "error",
                     "reason": str(e),
@@ -413,7 +416,7 @@ class KernelService(BaseService):
         snap = self._rollback.rollback()
         if snap is None:
             await self.event_bus.publish(
-                "policy.rollback.status",
+                Subjects.POLICY_ROLLBACK_STATUS,
                 {
                     "status": "error",
                     "reason": "No rollback history available",
@@ -429,7 +432,7 @@ class KernelService(BaseService):
                 f"Policy rollback to '{snap.profile_name}' " f"(snapshot from {snap.reason})"
             )
             await self.event_bus.publish(
-                "policy.rollback.status",
+                Subjects.POLICY_ROLLBACK_STATUS,
                 {
                     "status": "rolled_back",
                     "profile": snap.profile_name,
@@ -439,7 +442,7 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"Rollback failed: {e}")
             await self.event_bus.publish(
-                "policy.rollback.status",
+                Subjects.POLICY_ROLLBACK_STATUS,
                 {
                     "status": "error",
                     "reason": str(e),
@@ -456,7 +459,7 @@ class KernelService(BaseService):
         if not valid:
             self.logger.warning(f"Policy update rejected: {reason}")
             await self.event_bus.publish(
-                "policy.update.status",
+                Subjects.POLICY_UPDATE_STATUS,
                 {
                     "status": "rejected",
                     "reason": reason,
@@ -499,7 +502,7 @@ class KernelService(BaseService):
 
         if valid:
             await self.event_bus.publish(
-                "cognitive.response.validated",
+                Subjects.COGNITIVE_RESPONSE_VALIDATED,
                 {
                     "trace_id": trace_id,
                     "response_text": response_text,
@@ -511,7 +514,7 @@ class KernelService(BaseService):
         else:
             self.logger.warning(f"Cognitive response rejected (trace={trace_id}): {reason}")
             await self.event_bus.publish(
-                "cognitive.response.rejected",
+                Subjects.COGNITIVE_RESPONSE_REJECTED,
                 {
                     "trace_id": trace_id,
                     "reason": reason,
@@ -528,7 +531,7 @@ class KernelService(BaseService):
         """
         if self._evaluator._body_profile is None:
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "error",
                     "reason": "No body profile loaded — cannot apply restrictions",
@@ -546,7 +549,7 @@ class KernelService(BaseService):
             self._evaluator.set_body_profile(restricted)
             self.logger.info("Applied runtime restrictions to body profile")
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "applied",
                     "profile": restricted.name,
@@ -561,7 +564,7 @@ class KernelService(BaseService):
         except ValueError as e:
             self.logger.warning(f"Runtime restriction rejected: {e}")
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "rejected",
                     "reason": str(e),
@@ -571,7 +574,7 @@ class KernelService(BaseService):
         except Exception as e:
             self.logger.error(f"Error applying restrictions: {e}")
             await self.event_bus.publish(
-                "policy.restrict.status",
+                Subjects.POLICY_RESTRICT_STATUS,
                 {
                     "status": "error",
                     "reason": str(e),
@@ -618,6 +621,32 @@ class KernelService(BaseService):
 
         try:
             self.logger.debug(f"Evaluating {proposal_type} proposal: {trace_id}")
+
+            # Rate-limit check (M1.14): fail-closed DENY — never silently drop.
+            if not self._check_proposal_rate_limit(source):
+                self.logger.warning(
+                    f"Rate limit exceeded for source '{source}' "
+                    f"(>{self._proposal_rate_limit} proposals/"
+                    f"{self._proposal_rate_window_s:.0f}s) — denying {trace_id}"
+                )
+                deny = KernelDecision(
+                    trace_id=trace_id,
+                    type=DecisionType.DENY,
+                    reason=(
+                        f"Rate limit exceeded: source '{source}' sent more than "
+                        f"{self._proposal_rate_limit} proposals in "
+                        f"{self._proposal_rate_window_s:.0f}s"
+                    ),
+                    risk_score=1.0,
+                )
+                await self._publish_and_log_decision(
+                    trace_id,
+                    proposal_type,
+                    source,
+                    deny,
+                )
+                self._deny_count += 1
+                return
 
             # Validate proposal has required fields
             if "action" not in proposal:
@@ -995,19 +1024,31 @@ class KernelService(BaseService):
         """Query Beliefs service for norm violations relevant to this proposal.
 
         Returns a list of violated norms with risk_boost values.
-        Returns empty list if Beliefs service is unavailable.
+        Fail-closed when Beliefs is unavailable (mirrors Safety Supervisor path).
         """
+        trace_id = proposal.get("trace_id", "")
+
+        def _unavailable(reason: str) -> list[dict[str, Any]]:
+            self.logger.warning(
+                "Beliefs norms unavailable for %s: %s — failing closed",
+                trace_id,
+                reason,
+            )
+            return unavailable_belief_norm_violations(reason)
+
         try:
             response = await self.event_bus.request(
                 Subjects.BELIEFS_QUERY_REQUEST,
                 {"type": "norms", "threshold": 0.8},
                 timeout=2.0,
             )
-            # Check for error response (from EventBus error-reply handler)
             if response.get("type") == "error":
-                self.logger.warning(f"Beliefs service error: {response.get('error', 'unknown')}")
-                return []
-            norms = response.get("result", [])
+                return _unavailable(response.get("error", "unknown"))
+            if response.get("error"):
+                return _unavailable(str(response["error"]))
+            norms = response.get("result")
+            if norms is None:
+                return _unavailable("missing result")
             if not norms:
                 return []
 
@@ -1058,8 +1099,7 @@ class KernelService(BaseService):
 
             return violations
         except Exception as e:
-            self.logger.warning(f"Could not check belief norms (proceeding without): {e}")
-            return []
+            return _unavailable(str(e))
 
     async def _publish_and_log_decision(
         self,

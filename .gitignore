@@ -31,6 +31,10 @@ build/
 coverage.xml
 htmlcov/
 
+# Mutation testing (mutmut) — generated mutant source tree + cache
+mutants/
+.mutmut-cache
+
 # Local launcher runtime (downloaded NATS binary + service data)
 .localrun/
 data/
