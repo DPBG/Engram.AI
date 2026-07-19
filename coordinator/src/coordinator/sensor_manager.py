@@ -46,6 +46,32 @@ def _looks_like_imu_reading(raw: dict) -> bool:
     )
 
 
+def _looks_like_ultrasonic_reading(raw: dict) -> bool:
+    """Return True when a parsed JSON dict contains a numeric distance/range reading."""
+    if not isinstance(raw, dict):
+        return False
+    distance_keys = {
+        "distance",
+        "distance_cm",
+        "distance_mm",
+        "distance_m",
+        "range",
+        "range_cm",
+        "range_mm",
+        "ultrasonic",
+        "ultrasonic_cm",
+    }
+    for key, value in raw.items():
+        if key.lower() not in distance_keys:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if value < 0:
+            continue
+        return True
+    return False
+
+
 class SensorType(Enum):
     """Types of sensors."""
 
@@ -129,6 +155,11 @@ class SensorManager:
         detected = await self._detect_gps()
         if detected:
             logger.info("✓ GPS detected")
+
+        # Try to detect ultrasonic range finders
+        detected = await self._detect_ultrasonic()
+        if detected:
+            logger.info("✓ Ultrasonic detected")
 
         logger.info(f"Total sensors detected: {len(self._sensors)}")
 
@@ -250,6 +281,60 @@ class SensorManager:
                     if not line:
                         continue
                     if _looks_like_nmea_sentence(line):
+                        return True
+            finally:
+                ser.close()
+        except Exception:
+            return False
+        return False
+
+    async def _detect_ultrasonic(self) -> bool:
+        """Detect USB serial ultrasonic range finders emitting JSON distance lines."""
+        try:
+            import serial  # noqa: F401 — optional dependency
+            from serial.tools import list_ports
+        except ImportError:
+            logger.debug("pyserial not available; skipping ultrasonic detection")
+            return False
+
+        loop = asyncio.get_running_loop()
+        detected_any = False
+        try:
+            for port_info in list_ports.comports():
+                port = port_info.device
+                if not await loop.run_in_executor(None, self._probe_ultrasonic_port_sync, port):
+                    continue
+                port_name = port.rsplit("/", 1)[-1]
+                sensor_id = f"ultrasonic_{port_name}"
+                self._sensors[sensor_id] = SensorInfo(
+                    sensor_id=sensor_id,
+                    sensor_type=SensorType.ULTRASONIC,
+                    priority=self.SENSOR_PRIORITIES[SensorType.ULTRASONIC],
+                    capabilities=["distance", "range", "serial"],
+                )
+                detected_any = True
+        except Exception as e:
+            logger.debug(f"Ultrasonic detection failed: {e}")
+
+        return detected_any
+
+    @staticmethod
+    def _probe_ultrasonic_port_sync(port: str, baud_rate: int = 9600) -> bool:
+        """Open a serial port and look for one valid ultrasonic distance JSON line."""
+        try:
+            import serial
+
+            ser = serial.Serial(port, baud_rate, timeout=0.5)
+            try:
+                for _ in range(5):
+                    line = ser.readline().decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if _looks_like_ultrasonic_reading(data):
                         return True
             finally:
                 ser.close()

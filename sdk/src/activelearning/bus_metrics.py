@@ -40,6 +40,7 @@ class EventBusMetrics:
     subscribe_delivery: LatencyStats = field(default_factory=LatencyStats)
     request: LatencyStats = field(default_factory=LatencyStats)
     publish_jetstream_count: int = 0
+    resubscribe_failed_count: int = 0
 
     def record_publish(self, latency_ms: float, *, jetstream: bool = False) -> None:
         self.publish.record(latency_ms)
@@ -52,6 +53,9 @@ class EventBusMetrics:
     def record_request(self, latency_ms: float) -> None:
         self.request.record(latency_ms)
 
+    def record_resubscribe_failed(self) -> None:
+        self.resubscribe_failed_count += 1
+
     def snapshot(self, service_name: str) -> dict[str, Any]:
         """JSON-serializable payload for eventbus.metrics.{service_name}."""
         return {
@@ -63,4 +67,5 @@ class EventBusMetrics:
             },
             "subscribe": self.subscribe_delivery.to_dict(),
             "request": self.request.to_dict(),
+            "resubscribe_failed_count": self.resubscribe_failed_count,
         }

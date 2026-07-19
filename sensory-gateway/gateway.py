@@ -44,11 +44,13 @@ cv2.setNumThreads(2)  # Limit OpenCV parallel_for pool (default = CPU count = 64
 
 from activelearning.nats_client import EventBus  # noqa: E402
 from activelearning.plugins import register_sensor  # noqa: E402
+from activelearning.subjects import Subjects  # noqa: E402
 
 from aggregating_bus import AggregatingEventBus  # noqa: E402
 from dataset_manifest import DatasetManifest  # noqa: E402
 from discovery import KNOWN_DEVICE_TYPES, DiscoveredDevice, discover_all  # noqa: E402
 from queue_state import QueueStateManager  # noqa: E402
+from training_signal import should_publish_training_complete  # noqa: E402
 from video_quality import VideoQualityGate  # noqa: E402
 
 logger = logging.getLogger("sensory-gateway")
@@ -60,6 +62,7 @@ SUBJECT_VIDEO_STATUS = "video.training.status"
 SUBJECT_NEURO_METRICS = "neuromorphic.metrics"
 SUBJECT_DEVICE_UNKNOWN = "device.unknown"
 SUBJECT_DRIVER_READY = "device.driver.ready"
+SUBJECT_TRAINING_SESSION_COMPLETE = Subjects.TRAINING_SESSION_COMPLETE
 
 # Key plastic synapse groups that indicate learning from sensory input
 _LEARNING_SYNAPSE_GROUPS = {
@@ -367,6 +370,7 @@ async def run(args: argparse.Namespace) -> None:
     _queue_runner_task: asyncio.Task | None = None
     _queue_advance_event = asyncio.Event()
     _queue_state = QueueStateManager()
+    _videos_completed_since_drain = 0  # issue #324: gates training.session.complete
     _quality_gate = VideoQualityGate()
     _manifest = DatasetManifest()
     _manifest.start_run(f"run_{int(time.time())}")
@@ -585,11 +589,24 @@ async def run(args: argparse.Namespace) -> None:
 
     async def _queue_runner():
         """Main queue loop: play one video at a time, advance when target loops reached."""
-        nonlocal _queue_active_id
+        nonlocal _queue_active_id, _videos_completed_since_drain
         while True:
             # Wait for something in the queue
             while not video_queue:
                 _queue_active_id = None
+                if should_publish_training_complete(_videos_completed_since_drain):
+                    logger.info(
+                        f"Training queue drained after {_videos_completed_since_drain} "
+                        "video(s) — publishing training.session.complete"
+                    )
+                    await bus.publish(
+                        SUBJECT_TRAINING_SESSION_COMPLETE,
+                        {
+                            "videos_completed": _videos_completed_since_drain,
+                            "timestamp": time.time(),
+                        },
+                    )
+                    _videos_completed_since_drain = 0
                 await bus.publish(
                     SUBJECT_VIDEO_STATUS,
                     {
@@ -761,6 +778,8 @@ async def run(args: argparse.Namespace) -> None:
             # Remove from front of queue and advance
             if video_queue and video_queue[0] == started.session_id:
                 video_queue.pop(0)
+            if started.status == "completed":
+                _videos_completed_since_drain += 1
             _queue_active_id = None
             _save_queue_state()
             await bus.publish(

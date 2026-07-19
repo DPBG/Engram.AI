@@ -8,6 +8,7 @@ import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from activelearning import BaseService
@@ -16,6 +17,7 @@ from activelearning.signing import accept_kernel_decision
 from activelearning.subjects import Subjects
 
 from neuromorphic.auditory_stm import AuditorySTM, AuditorySTMConfig
+from neuromorphic.benchmarks import BenchmarkSuite
 from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.encoding import _resolve_modality
 from neuromorphic.network import NeuromorphicNetwork
@@ -27,6 +29,21 @@ if TYPE_CHECKING:
     from neuromorphic.motor_feedback_adapter import MotorFeedbackAdapter
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_benchmark_dir() -> Path:
+    """Where to save auto-benchmark results (issue #324).
+
+    Honors ``ENGRAM_BENCHMARK_DIR`` — the same env var the dashboard's
+    Learning Evidence panel already checks (``resolve_benchmark_dirs()`` in
+    ``dashboard/src/dashboard/learning_evidence.py``) — so results are picked
+    up with no extra wiring. Falls back to the same ``neuromorphic/benchmarks``
+    directory the manual CLI (``python -m neuromorphic.benchmarks``) defaults to.
+    """
+    env_dir = os.environ.get("ENGRAM_BENCHMARK_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir)
+    return Path(__file__).resolve().parents[2] / "benchmarks"
 
 
 class _SleepGroupAdapter:
@@ -75,6 +92,8 @@ class NeuromorphicService(BaseService):
         self._drive_task: asyncio.Task | None = None
         self._metrics_task: asyncio.Task | None = None
         self._save_task: asyncio.Task | None = None
+        # Auto-benchmark run triggered by training.session.complete (issue #324)
+        self._benchmark_task: asyncio.Task | None = None
 
         # Latest observation per modality — written by _handle_observation,
         # atomically swapped by the simulation loop.  Replaces the old
@@ -232,6 +251,14 @@ class NeuromorphicService(BaseService):
         await self.event_bus.subscribe(
             "cognitive.response.validated", self._handle_cognitive_response
         )
+        # Auto-benchmark after a long training session (issue #324): sensory-gateway
+        # publishes this when its video queue drains after processing at least one
+        # video. Runs against a fresh, checkpoint-restored network — never the live
+        # self._network, whose weights must not be perturbed by synthetic benchmark
+        # stimuli.
+        await self.event_bus.subscribe(
+            Subjects.TRAINING_SESSION_COMPLETE, self._handle_training_session_complete
+        )
         # Motor feedback loop — subscribe to outcome signals from actuators,
         # sensors (IMU, camera, joints), simulators, or human teachers.
         if self._config.motor_feedback.enabled:
@@ -270,7 +297,13 @@ class NeuromorphicService(BaseService):
         self._running = False
 
         # Cancel background tasks
-        for task in [self._sim_task, self._drive_task, self._metrics_task, self._save_task]:
+        for task in [
+            self._sim_task,
+            self._drive_task,
+            self._metrics_task,
+            self._save_task,
+            self._benchmark_task,
+        ]:
             if task and not task.done():
                 task.cancel()
                 try:
@@ -587,6 +620,60 @@ class NeuromorphicService(BaseService):
         )
 
         await self.event_bus.publish("neuromorphic.concept.result", result)
+
+    async def _handle_training_session_complete(self, data: dict[str, Any]) -> None:
+        """React to a completed training session (issue #324) by auto-running
+        the benchmark suite and saving results using the existing CLI convention.
+
+        Guards against overlapping runs — sensory-gateway only publishes this
+        once per queue-drain, but a defensive check keeps a stray duplicate
+        publish from spawning two benchmark runs against the same checkpoint
+        at once.
+        """
+        if self._benchmark_task is not None and not self._benchmark_task.done():
+            self.logger.info("Auto-benchmark already running — skipping duplicate trigger")
+            return
+        self._benchmark_task = asyncio.create_task(self._run_auto_benchmark(data))
+
+    async def _run_auto_benchmark(self, trigger: dict[str, Any]) -> None:
+        """Build a fresh, checkpoint-restored network and run BenchmarkSuite on it.
+
+        Never runs against ``self._network``: BenchmarkSuite's training reps
+        inject synthetic Gaussian-blob/MFCC patterns and drive real STDP
+        updates, which would contaminate the live network's actual trained
+        weights. A separate instance restored from the same checkpoint the
+        live service periodically saves to keeps this read-only with respect
+        to the real brain — the same thing a human running the CLI manually
+        right after training would get.
+        """
+        self.logger.info(
+            f"Training session complete ({trigger.get('videos_completed', '?')} videos) "
+            "— running auto-benchmark"
+        )
+        try:
+            config = NeuromorphicConfig.from_env()
+            network = NeuromorphicNetwork(config)
+            persistence = NeuromorphicPersistence(config.sqlite_path)
+            await persistence.open()
+            try:
+                if await persistence.has_saved_state():
+                    state = await persistence.load_state()
+                    if state:
+                        network.set_state(state)
+            finally:
+                await persistence.close()
+
+            suite = BenchmarkSuite(network)
+            n_patterns = int(os.environ.get("NEURO_AUTO_BENCHMARK_PATTERNS", "20"))
+            training_reps = int(os.environ.get("NEURO_AUTO_BENCHMARK_REPS", "10"))
+            results = await asyncio.to_thread(suite.run_all, n_patterns, training_reps)
+            results["trigger"] = trigger
+            path = suite.save_results(results, str(_resolve_benchmark_dir()))
+            self.logger.info(f"Auto-benchmark complete: {path}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.logger.error(f"Auto-benchmark failed: {e}", exc_info=True)
 
     async def _handle_cognitive_response(self, data: dict[str, Any]) -> None:
         """Re-inject Kernel-validated LLM response as sensory input with boosted gain.
