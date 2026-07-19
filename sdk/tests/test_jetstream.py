@@ -1,6 +1,19 @@
 """Unit tests for JetStream safety-critical routing logic (no live NATS required)."""
 
-from activelearning.nats_client import _SAFETY_STREAM_SUBJECTS, SAFETY_STREAM_NAME, EventBus
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+from nats.js.api import RetentionPolicy, StorageType
+
+from activelearning.nats_client import (
+    _SAFETY_STREAM_SUBJECTS,
+    SAFETY_STREAM_MAX_AGE_SECONDS,
+    SAFETY_STREAM_MAX_MSGS,
+    SAFETY_STREAM_NAME,
+    SAFETY_STREAM_RETENTION,
+    SAFETY_STREAM_STORAGE,
+    EventBus,
+)
 
 
 class TestSafetyStreamConstants:
@@ -17,6 +30,41 @@ class TestSafetyStreamConstants:
             "cognitive.response.>",
         }
         assert required.issubset(set(_SAFETY_STREAM_SUBJECTS))
+
+
+class TestSafetyStreamRetentionConfig:
+    """Regression for issue #247: the safety-critical stream previously ran
+    on undocumented NATS server defaults with no retention/size config."""
+
+    def test_storage_is_file(self):
+        # Kernel-privileged decision/proposal subjects must survive a broker
+        # restart, not live only in memory.
+        assert SAFETY_STREAM_STORAGE == StorageType.FILE
+
+    def test_retention_is_limits(self):
+        assert SAFETY_STREAM_RETENTION == RetentionPolicy.LIMITS
+
+    def test_max_age_is_thirty_days(self):
+        assert SAFETY_STREAM_MAX_AGE_SECONDS == 30 * 24 * 60 * 60
+
+    def test_max_msgs_is_positive_and_bounded(self):
+        assert SAFETY_STREAM_MAX_MSGS == 1_000_000
+
+    def test_ensure_safety_stream_passes_retention_config_to_add_stream(self):
+        bus = EventBus(name="test-retention")
+        mock_js = MagicMock()
+        mock_js.add_stream = AsyncMock()
+        bus._js = mock_js
+
+        asyncio.run(bus._ensure_safety_stream())
+
+        mock_js.add_stream.assert_awaited_once()
+        config = mock_js.add_stream.await_args.args[0]
+        assert config.name == SAFETY_STREAM_NAME
+        assert config.storage == SAFETY_STREAM_STORAGE
+        assert config.retention == SAFETY_STREAM_RETENTION
+        assert config.max_age == SAFETY_STREAM_MAX_AGE_SECONDS
+        assert config.max_msgs == SAFETY_STREAM_MAX_MSGS
 
 
 class TestIsSafetyCritical:
