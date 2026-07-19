@@ -84,6 +84,11 @@ class Subjects:
     # Dead-letter queue (issue #246) — poisoned messages land on dlq.<subject>
     DLQ_WILDCARD = "dlq.>"
 
+    # Training session completion (issue #324) — sensory-gateway publishes this
+    # when its video-training queue drains after processing at least one
+    # video; neuromorphic subscribes and runs an auto-benchmark.
+    TRAINING_SESSION_COMPLETE = "training.session.complete"
+
 
 def decision_subject(trace_id: str) -> str:
     """Per-trace kernel decision subject."""

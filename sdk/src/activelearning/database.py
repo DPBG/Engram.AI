@@ -5,6 +5,7 @@ Provides async SQLite operations with proper schema initialization
 for all ActiveLearningAI tables.
 """
 
+import asyncio
 import logging
 import os
 import sqlite3
@@ -249,14 +250,24 @@ class Database:
 
 # Global database instance
 _db: Database | None = None
+_db_lock = asyncio.Lock()
 
 
 async def get_database() -> Database:
-    """Get or create the global database instance."""
+    """Get or create the global database instance.
+
+    Guarded by a lock so concurrent first-callers during startup can't race
+    past the `_db is None` check and each construct their own instance
+    (issue #254). The unlocked check is a fast path once initialized; the
+    locked re-check handles the narrow window where two coroutines both
+    see `_db is None` before either has finished constructing it.
+    """
     global _db
     if _db is None:
-        _db = Database()
-        await _db.initialize()
+        async with _db_lock:
+            if _db is None:
+                _db = Database()
+                await _db.initialize()
     return _db
 
 

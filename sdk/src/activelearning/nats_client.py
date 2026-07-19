@@ -20,7 +20,14 @@ from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription as NATSSubscription
 from nats.js import JetStreamContext
-from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, StreamConfig
+from nats.js.api import (
+    AckPolicy,
+    ConsumerConfig,
+    DeliverPolicy,
+    RetentionPolicy,
+    StorageType,
+    StreamConfig,
+)
 
 from activelearning.bus_metrics import EventBusMetrics
 from activelearning.connection_logging import (
@@ -33,6 +40,7 @@ from activelearning.connection_logging import (
     TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
     TRANSITION_FORCE_RECONNECT_COMPLETE,
     TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_RETRY,
     TRANSITION_FORCE_RECONNECT_START,
     TRANSITION_RECONNECTED,
     log_connection_event,
@@ -96,6 +104,21 @@ _SAFETY_STREAM_SUBJECTS: list[str] = [
     *_SAFETY_CRITICAL_EXACT,
     *(f"{prefix}>" for prefix in _SAFETY_CRITICAL_PREFIXES),
 ]
+
+# Retention/size policy for the safety-critical stream (M2.24, issue #247):
+# _ensure_safety_stream() previously set no max_age/max_msgs/storage, so this
+# stream -- the one backing decision.>, code.decision.>, proposal.new, and
+# code.proposal -- ran entirely on undocumented, untested NATS server
+# defaults. File storage is required, not optional: these subjects are the
+# Kernel-privileged decision/proposal path (ADR 0001 S3) and must survive a
+# broker restart, not live only in memory. Age and count are two independent
+# backstops -- a burst that outruns the age limit is still caught by the
+# message-count cap, and vice versa.
+SAFETY_STREAM_STORAGE: StorageType = StorageType.FILE
+SAFETY_STREAM_RETENTION: RetentionPolicy = RetentionPolicy.LIMITS
+SAFETY_STREAM_MAX_AGE_SECONDS: float = 30 * 24 * 60 * 60  # 30 days
+SAFETY_STREAM_MAX_MSGS: int = 1_000_000
+
 # Auto-delete idle waiter consumers after this many seconds of inactivity.
 _CONSUMER_INACTIVE_THRESHOLD_S: float = 60.0
 
@@ -375,6 +398,10 @@ class EventBus:
         config = StreamConfig(
             name=SAFETY_STREAM_NAME,
             subjects=_SAFETY_STREAM_SUBJECTS,
+            retention=SAFETY_STREAM_RETENTION,
+            max_age=SAFETY_STREAM_MAX_AGE_SECONDS,
+            max_msgs=SAFETY_STREAM_MAX_MSGS,
+            storage=SAFETY_STREAM_STORAGE,
         )
         await self._js.add_stream(config)
         logger.info("JetStream stream '%s' ready", SAFETY_STREAM_NAME)
@@ -962,33 +989,57 @@ class EventBus:
         # Create fresh connection (preserves nats_creds; also re-ensures the safety stream)
         await self.connect()
 
-        # Re-subscribe all handlers, preserving JS vs core distinction
+        # Re-subscribe all handlers, preserving JS vs core distinction.
+        # Each subject gets a few attempts before being marked failed -- a lone
+        # transient error (e.g. server still settling post-reconnect) shouldn't
+        # permanently deafen a service until the next full restart.
+        resubscribe_attempts = 3
+        resubscribe_retry_delay_s = 0.5
+        failed_subjects: list[str] = []
         for subject, (handler, is_req) in saved_handlers.items():
-            try:
-                if subject in saved_js:
-                    await self.js_subscribe(
-                        subject,
-                        handler,
-                        durable=saved_js[subject],
-                        poison_handler=saved_poison.get(subject),
-                    )
-                else:
-                    await self.subscribe(subject, handler, is_request_handler=is_req)
-            except Exception as e:
-                log_connection_event(
-                    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
-                    client_name=self.name,
-                    nats_url=self.nats_url,
-                    subject=subject,
-                    error=str(e),
-                    level=logging.ERROR,
-                )
+            for attempt in range(1, resubscribe_attempts + 1):
+                try:
+                    if subject in saved_js:
+                        await self.js_subscribe(
+                            subject,
+                            handler,
+                            durable=saved_js[subject],
+                            poison_handler=saved_poison.get(subject),
+                        )
+                    else:
+                        await self.subscribe(subject, handler, is_request_handler=is_req)
+                    break
+                except Exception as e:
+                    if attempt < resubscribe_attempts:
+                        log_connection_event(
+                            TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_RETRY,
+                            client_name=self.name,
+                            nats_url=self.nats_url,
+                            subject=subject,
+                            attempt=attempt,
+                            error=str(e),
+                            level=logging.WARNING,
+                        )
+                        await asyncio.sleep(resubscribe_retry_delay_s)
+                    else:
+                        failed_subjects.append(subject)
+                        self._metrics.record_resubscribe_failed()
+                        log_connection_event(
+                            TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+                            client_name=self.name,
+                            nats_url=self.nats_url,
+                            subject=subject,
+                            attempts=resubscribe_attempts,
+                            error=str(e),
+                            level=logging.ERROR,
+                        )
 
         log_connection_event(
             TRANSITION_FORCE_RECONNECT_COMPLETE,
             client_name=self.name,
             nats_url=self.nats_url,
             subscription_count=len(self._subscriptions),
+            failed_subjects=failed_subjects,
         )
 
     @property
@@ -1089,14 +1140,25 @@ class EventBus:
 
 # Global event bus instance for convenience
 _global_bus: EventBus | None = None
+_global_bus_lock = asyncio.Lock()
 
 
 async def get_event_bus() -> EventBus:
-    """Get or create the global EventBus instance."""
+    """Get or create the global EventBus instance.
+
+    Guarded by a lock so concurrent first-callers during startup can't race
+    past the `_global_bus is None` check and each construct + connect their
+    own instance (issue #254). The unlocked check is a fast path once
+    initialized; the locked re-check handles the narrow window where two
+    coroutines both see `_global_bus is None` before either has finished
+    constructing/connecting it.
+    """
     global _global_bus
     if _global_bus is None:
-        _global_bus = EventBus()
-        await _global_bus.connect()
+        async with _global_bus_lock:
+            if _global_bus is None:
+                _global_bus = EventBus()
+                await _global_bus.connect()
     return _global_bus
 
 

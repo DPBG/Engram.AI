@@ -118,7 +118,7 @@ SVC_SUB[external-api]="external.query,external.status,decision.>,_INBOX.>"
 # in-process under neuromorphic/src/neuromorphic/actuators/), governance
 # proposals, and the memory/beliefs/knowledge-gap side channels.
 SVC_PUB[neuromorphic]="proposal.new,memory.store,neuromorphic.metrics,neuromorphic.concept.result,gateway.restart.request,beliefs.add_node,approval.request,knowledge.gap,safety.watchdog.status,policy.restrict.request,mujoco.body.state,motor.execute.>,motor.outcome.>,neuromod.teach.da,body.posture,observation.visual.body,observation.proprioceptive,observation.pain,teach.progress,actuator.heartbeat.>,outcome.>,_INBOX.>"
-SVC_SUB[neuromorphic]="observation.>,neuromorphic.status,neuromorphic.drives.event,neuromorphic.teach,neuromorphic.train_bulk,neuromorphic.concept.probe,cognitive.response.validated,motor.outcome.>,neuromod.teach.da,body.posture,decision.>,approval.response.>,motor.guidance,actuator.heartbeat.>,_INBOX.>"
+SVC_SUB[neuromorphic]="observation.>,neuromorphic.status,neuromorphic.drives.event,neuromorphic.teach,neuromorphic.train_bulk,neuromorphic.concept.probe,cognitive.response.validated,motor.outcome.>,neuromod.teach.da,body.posture,decision.>,approval.response.>,motor.guidance,actuator.heartbeat.>,training.session.complete,_INBOX.>"
 
 # dashboard — publish surface is the operator's hands (sensory-gateway
 # commands, motor guidance, safety halt/resume); subscribe stays the one
@@ -142,7 +142,7 @@ SVC_SUB[coordinator]="task.request,demo.start,demo.observation,demo.finish,coord
 SVC_PUB[cognitive-bridge]="cognitive.response.validate,_INBOX.>"
 SVC_SUB[cognitive-bridge]="cognitive.execute,cognitive.query,_INBOX.>"
 
-SVC_PUB[sensory-gateway]="observation.>,sensory.gateway.status,video.training.status,device.unknown,_INBOX.>"
+SVC_PUB[sensory-gateway]="observation.>,sensory.gateway.status,video.training.status,training.session.complete,device.unknown,_INBOX.>"
 SVC_SUB[sensory-gateway]="sensory.gateway.command,neuromorphic.metrics,device.driver.ready,_INBOX.>"
 
 # meta-programmer — previously had NO entry here at all (a real gap, not

@@ -21,6 +21,7 @@ TRANSITION_CLOSED = "closed"
 TRANSITION_FORCE_RECONNECT_START = "force_reconnect_start"
 TRANSITION_FORCE_RECONNECT_CLOSE_FAILED = "force_reconnect_close_failed"
 TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED = "force_reconnect_resubscribe_failed"
+TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_RETRY = "force_reconnect_resubscribe_retry"
 TRANSITION_FORCE_RECONNECT_COMPLETE = "force_reconnect_complete"
 
 
