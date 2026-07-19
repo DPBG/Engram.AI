@@ -33,6 +33,7 @@ from activelearning.connection_logging import (
     TRANSITION_FORCE_RECONNECT_CLOSE_FAILED,
     TRANSITION_FORCE_RECONNECT_COMPLETE,
     TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_RETRY,
     TRANSITION_FORCE_RECONNECT_START,
     TRANSITION_RECONNECTED,
     log_connection_event,
@@ -962,33 +963,57 @@ class EventBus:
         # Create fresh connection (preserves nats_creds; also re-ensures the safety stream)
         await self.connect()
 
-        # Re-subscribe all handlers, preserving JS vs core distinction
+        # Re-subscribe all handlers, preserving JS vs core distinction.
+        # Each subject gets a few attempts before being marked failed -- a lone
+        # transient error (e.g. server still settling post-reconnect) shouldn't
+        # permanently deafen a service until the next full restart.
+        resubscribe_attempts = 3
+        resubscribe_retry_delay_s = 0.5
+        failed_subjects: list[str] = []
         for subject, (handler, is_req) in saved_handlers.items():
-            try:
-                if subject in saved_js:
-                    await self.js_subscribe(
-                        subject,
-                        handler,
-                        durable=saved_js[subject],
-                        poison_handler=saved_poison.get(subject),
-                    )
-                else:
-                    await self.subscribe(subject, handler, is_request_handler=is_req)
-            except Exception as e:
-                log_connection_event(
-                    TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
-                    client_name=self.name,
-                    nats_url=self.nats_url,
-                    subject=subject,
-                    error=str(e),
-                    level=logging.ERROR,
-                )
+            for attempt in range(1, resubscribe_attempts + 1):
+                try:
+                    if subject in saved_js:
+                        await self.js_subscribe(
+                            subject,
+                            handler,
+                            durable=saved_js[subject],
+                            poison_handler=saved_poison.get(subject),
+                        )
+                    else:
+                        await self.subscribe(subject, handler, is_request_handler=is_req)
+                    break
+                except Exception as e:
+                    if attempt < resubscribe_attempts:
+                        log_connection_event(
+                            TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_RETRY,
+                            client_name=self.name,
+                            nats_url=self.nats_url,
+                            subject=subject,
+                            attempt=attempt,
+                            error=str(e),
+                            level=logging.WARNING,
+                        )
+                        await asyncio.sleep(resubscribe_retry_delay_s)
+                    else:
+                        failed_subjects.append(subject)
+                        self._metrics.record_resubscribe_failed()
+                        log_connection_event(
+                            TRANSITION_FORCE_RECONNECT_RESUBSCRIBE_FAILED,
+                            client_name=self.name,
+                            nats_url=self.nats_url,
+                            subject=subject,
+                            attempts=resubscribe_attempts,
+                            error=str(e),
+                            level=logging.ERROR,
+                        )
 
         log_connection_event(
             TRANSITION_FORCE_RECONNECT_COMPLETE,
             client_name=self.name,
             nats_url=self.nats_url,
             subscription_count=len(self._subscriptions),
+            failed_subjects=failed_subjects,
         )
 
     @property
