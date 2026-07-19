@@ -14,8 +14,12 @@ globals so no test can leak either singleton into the next one.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from activelearning import database as database_module
+from activelearning import nats_client as nats_client_module
 from activelearning.database import Database, close_database, get_database
 from activelearning.nats_client import EventBus, close_event_bus, get_event_bus
 
@@ -81,3 +85,49 @@ class TestEventBusSingleton:
         bus2 = await get_event_bus()
         assert bus2._connected.is_set()
         await bus2.publish("test.singleton.reopen", {"ok": True})
+
+
+class TestDatabaseSingletonConcurrency:
+    async def test_concurrent_first_calls_construct_only_once(self, tmp_path, monkeypatch):
+        """Regression for issue #254: concurrent first-callers during startup
+        must not each construct their own Database instance."""
+        monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "test.db"))
+
+        construct_count = 0
+        real_database = database_module.Database
+
+        class CountingDatabase(real_database):
+            def __init__(self, *args, **kwargs):
+                nonlocal construct_count
+                construct_count += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(database_module, "Database", CountingDatabase)
+
+        results = await asyncio.gather(*(get_database() for _ in range(10)))
+
+        assert construct_count == 1
+        assert all(db is results[0] for db in results)
+
+
+class TestEventBusSingletonConcurrency:
+    async def test_concurrent_first_calls_construct_only_once(self, nats_url, monkeypatch):
+        """Regression for issue #254: concurrent first-callers during startup
+        must not each construct + connect their own EventBus instance."""
+        monkeypatch.setenv("NATS_URL", nats_url)
+
+        construct_count = 0
+        real_event_bus = nats_client_module.EventBus
+
+        class CountingEventBus(real_event_bus):
+            def __init__(self, *args, **kwargs):
+                nonlocal construct_count
+                construct_count += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(nats_client_module, "EventBus", CountingEventBus)
+
+        results = await asyncio.gather(*(get_event_bus() for _ in range(10)))
+
+        assert construct_count == 1
+        assert all(bus is results[0] for bus in results)
