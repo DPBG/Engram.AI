@@ -987,76 +987,6 @@ class GlobalWorkspaceBroadcastBenchmark:
     A ratio ≈ 1.0 or ignition_events_source == 0 is informative (not a failure):
     the workspace wiring is present but ignition has not yet emerged — a
     structural finding, not a bug.
-# Per-region benchmark: MetaControllerRegion gating (issue #319)
-#
-# Not part of BenchmarkSuite.run_all()'s fixed 6-metric contract (see
-# docs/benchmark-schema.md) — this is a standalone per-region benchmark, one
-# of the items #30-#36 batch referenced in docs/REGION-BENCHMARK-OBSERVABILITY
-# -ALIGNMENT.md, added independently so it doesn't change run_all()'s stable
-# output schema.
-# ---------------------------------------------------------------------------
-def _standardized_nearest_centroid_loo_accuracy(mat: np.ndarray, labels_arr: np.ndarray) -> float:
-    """Leave-one-out nearest-centroid accuracy over z-scored Euclidean features.
-
-    Neuromodulator readouts have different physical ranges (DA in [0.2, 2.5],
-    ACh in [0.3, 2.0], NE in [0.5, 3.0], 5-HT in [0.1, 1.5] by default — see
-    MetaControllerConfig), so a raw Euclidean distance would let NE dominate
-    the classification purely from its wider range. Standardizing each column
-    to zero mean / unit std first (using the full sample; leakage across the
-    2-4 held-out points is negligible relative to the class centroids) puts
-    all four signals on equal footing before distance is computed.
-    """
-    std = mat.std(axis=0)
-    std[std == 0.0] = 1.0
-    z = (mat - mat.mean(axis=0)) / std
-
-    unique_labels = np.unique(labels_arr)
-    n_classes = len(unique_labels)
-    n_features = z.shape[1]
-    class_idx = np.array([int(np.where(unique_labels == lbl)[0][0]) for lbl in labels_arr])
-    class_sums = np.zeros((n_classes, n_features), dtype=np.float64)
-    class_counts = np.zeros(n_classes, dtype=np.int64)
-    for ci, vec in zip(class_idx, z):
-        class_sums[ci] += vec
-        class_counts[ci] += 1
-
-    correct = 0
-    for i in range(len(labels_arr)):
-        ci = class_idx[i]
-        dists = np.empty(n_classes, dtype=np.float64)
-        for j in range(n_classes):
-            raw = class_sums[j] - z[i] if j == ci else class_sums[j]
-            cnt = class_counts[j] - 1 if j == ci else class_counts[j]
-            centroid = raw / max(cnt, 1)
-            dists[j] = np.linalg.norm(z[i] - centroid)
-        if unique_labels[int(np.argmin(dists))] == labels_arr[i]:
-            correct += 1
-    return correct / len(labels_arr)
-
-
-class MetaControllerGatingBenchmark:
-    """Task-switching benchmark for MetaControllerRegion (issue #319).
-
-    ``MetaControllerRegion`` is documented (MetaControllerConfig) as "a
-    neuromodulatory hub for plasticity gating": it monitors network-wide
-    firing statistics and outputs 4 neuromodulatory signals (DA/ACh/NE/5-HT)
-    that gate learning and processing elsewhere in the network. It is not a
-    discrete action-selector — there is no single "gate" output to compare
-    against a hand-labeled correct choice the way, e.g., a motor command
-    would be. What *is* concretely testable against ground truth is whether
-    its neuromodulatory output actually reflects which task context is
-    driving the network right now, i.e. whether the gate is doing anything
-    at all rather than emitting noise indistinguishable across contexts —
-    exactly the blind spot the issue flags ("could be doing nothing useful
-    without anyone noticing").
-
-    This runs a task-switching protocol: a randomized sequence of trials each
-    presenting one of two distinguishable stimulus contexts, and scores
-    leave-one-out nearest-centroid classification accuracy of the *known*
-    active context from ``read_neuromodulators()``'s 4-dim output alone. That
-    accuracy is the ground-truth-checkable "gating decision" — well above
-    chance (0.5 for 2 contexts) means the region's output reliably encodes
-    which context is active; at-chance means it is not gating anything.
     """
 
     def __init__(self, net: NeuromorphicNetwork) -> None:
@@ -1163,6 +1093,85 @@ class MetaControllerGatingBenchmark:
                 "downstream_rate_during_ignition": downstream_mean,
             }
         )
+
+
+# Per-region benchmark: MetaControllerRegion gating (issue #319)
+#
+# Not part of BenchmarkSuite.run_all()'s fixed 6-metric contract (see
+# docs/benchmark-schema.md) — this is a standalone per-region benchmark, one
+# of the items #30-#36 batch referenced in docs/REGION-BENCHMARK-OBSERVABILITY
+# -ALIGNMENT.md, added independently so it doesn't change run_all()'s stable
+# output schema.
+# ---------------------------------------------------------------------------
+def _standardized_nearest_centroid_loo_accuracy(mat: np.ndarray, labels_arr: np.ndarray) -> float:
+    """Leave-one-out nearest-centroid accuracy over z-scored Euclidean features.
+
+    Neuromodulator readouts have different physical ranges (DA in [0.2, 2.5],
+    ACh in [0.3, 2.0], NE in [0.5, 3.0], 5-HT in [0.1, 1.5] by default — see
+    MetaControllerConfig), so a raw Euclidean distance would let NE dominate
+    the classification purely from its wider range. Standardizing each column
+    to zero mean / unit std first (using the full sample; leakage across the
+    2-4 held-out points is negligible relative to the class centroids) puts
+    all four signals on equal footing before distance is computed.
+    """
+    std = mat.std(axis=0)
+    std[std == 0.0] = 1.0
+    z = (mat - mat.mean(axis=0)) / std
+
+    unique_labels = np.unique(labels_arr)
+    n_classes = len(unique_labels)
+    n_features = z.shape[1]
+    class_idx = np.array([int(np.where(unique_labels == lbl)[0][0]) for lbl in labels_arr])
+    class_sums = np.zeros((n_classes, n_features), dtype=np.float64)
+    class_counts = np.zeros(n_classes, dtype=np.int64)
+    for ci, vec in zip(class_idx, z):
+        class_sums[ci] += vec
+        class_counts[ci] += 1
+
+    correct = 0
+    for i in range(len(labels_arr)):
+        ci = class_idx[i]
+        dists = np.empty(n_classes, dtype=np.float64)
+        for j in range(n_classes):
+            raw = class_sums[j] - z[i] if j == ci else class_sums[j]
+            cnt = class_counts[j] - 1 if j == ci else class_counts[j]
+            centroid = raw / max(cnt, 1)
+            dists[j] = np.linalg.norm(z[i] - centroid)
+        if unique_labels[int(np.argmin(dists))] == labels_arr[i]:
+            correct += 1
+    return correct / len(labels_arr)
+
+
+class MetaControllerGatingBenchmark:
+    """Task-switching benchmark for MetaControllerRegion (issue #319).
+
+    ``MetaControllerRegion`` is documented (MetaControllerConfig) as "a
+    neuromodulatory hub for plasticity gating": it monitors network-wide
+    firing statistics and outputs 4 neuromodulatory signals (DA/ACh/NE/5-HT)
+    that gate learning and processing elsewhere in the network. It is not a
+    discrete action-selector — there is no single "gate" output to compare
+    against a hand-labeled correct choice the way, e.g., a motor command
+    would be. What *is* concretely testable against ground truth is whether
+    its neuromodulatory output actually reflects which task context is
+    driving the network right now, i.e. whether the gate is doing anything
+    at all rather than emitting noise indistinguishable across contexts —
+    exactly the blind spot the issue flags ("could be doing nothing useful
+    without anyone noticing").
+
+    This runs a task-switching protocol: a randomized sequence of trials each
+    presenting one of two distinguishable stimulus contexts, and scores
+    leave-one-out nearest-centroid classification accuracy of the *known*
+    active context from ``read_neuromodulators()``'s 4-dim output alone. That
+    accuracy is the ground-truth-checkable "gating decision" — well above
+    chance (0.5 for 2 contexts) means the region's output reliably encodes
+    which context is active; at-chance means it is not gating anything.
+    """
+
+    def __init__(self, net: NeuromorphicNetwork) -> None:
+        self._net = net
+
+    def run(
+        self,
         context_a: dict,
         context_b: dict,
         n_trials: int = 20,
