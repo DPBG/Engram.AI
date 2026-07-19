@@ -16,10 +16,12 @@ from neuromorphic.benchmarks import (
     ConceptSeparabilityBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
+    MetaControllerGatingBenchmark,
     NoveltyDetectionBenchmark,
     RegionQuietFlag,
     _confidence_interval,
     _flatten_numeric,
+    _standardized_nearest_centroid_loo_accuracy,
     _to_native,
     audit_pattern_diversity,
     build_arg_parser,
@@ -682,6 +684,118 @@ class TestConceptSeparabilityBenchmark:
         text = suite.summary(results)
         assert "Concept Separability" in text
         assert "Silhouette score" in text
+
+
+@pytest.fixture
+def network_with_meta_controller():
+    """Small network with an active meta-controller for gating benchmark tests."""
+    cfg = NeuromorphicConfig.from_env()
+    cfg.populations.brainstem = 50
+    cfg.populations.reflex_arc = 30
+    cfg.populations.sensory_cortex = 200
+    cfg.populations.motor_cortex = 100
+    cfg.populations.cerebellum = 50
+    cfg.populations.association_cortex = 150
+    cfg.populations.predictive_layer = 80
+    cfg.populations.working_memory = 40
+    cfg.populations.feature_layer = 0
+    cfg.populations.concept_layer = 0
+    cfg.populations.pattern_separator = 0
+    cfg.populations.meta_controller = 200
+    return NeuromorphicNetwork(cfg)
+
+
+class TestStandardizedNearestCentroidLooAccuracy:
+    def test_perfectly_separated_classes_score_1(self):
+        mat = np.array([[0.0, 0.0], [0.1, 0.1], [10.0, 10.0], [10.1, 9.9]])
+        labels = np.array([0, 0, 1, 1])
+        assert _standardized_nearest_centroid_loo_accuracy(mat, labels) == 1.0
+
+    def test_wide_range_feature_does_not_dominate(self):
+        """A feature with a much wider raw range (e.g. NE's [0.5, 3.0] vs.
+        5-HT's [0.1, 1.5]) must not swamp the classification purely because
+        of scale — z-scoring should put both features on equal footing."""
+        mat = np.array(
+            [
+                [0.0, 100.0],
+                [0.1, 100.1],
+                [10.0, 100.0],
+                [10.1, 99.9],
+            ]
+        )
+        labels = np.array([0, 0, 1, 1])
+        assert _standardized_nearest_centroid_loo_accuracy(mat, labels) == 1.0
+
+
+class TestMetaControllerGatingBenchmark:
+    def test_no_meta_controller_returns_error(self, small_network, patterns):
+        bench = MetaControllerGatingBenchmark(small_network)
+        result = bench.run(patterns[0], patterns[1], n_trials=8, steps_per_trial=3)
+        assert "error" in result
+        assert result["gating_accuracy"] == 0.0
+
+    def test_produces_all_metrics(self, network_with_meta_controller, patterns):
+        bench = MetaControllerGatingBenchmark(network_with_meta_controller)
+        result = bench.run(patterns[0], patterns[1], n_trials=8, steps_per_trial=3, seed=1)
+        assert "error" not in result
+        for key in (
+            "gating_accuracy",
+            "n_trials",
+            "n_samples",
+            "context_switches",
+            "meta_controller_neurons",
+            "mean_da_context_a",
+            "mean_da_context_b",
+            "mean_ach_context_a",
+            "mean_ach_context_b",
+            "mean_ne_context_a",
+            "mean_ne_context_b",
+            "mean_serotonin_context_a",
+            "mean_serotonin_context_b",
+            "steps_per_trial",
+            "fixture_seed",
+        ):
+            assert key in result, f"missing key: {key}"
+
+    def test_gating_accuracy_in_range(self, network_with_meta_controller, patterns):
+        bench = MetaControllerGatingBenchmark(network_with_meta_controller)
+        result = bench.run(patterns[0], patterns[1], n_trials=8, steps_per_trial=3, seed=1)
+        assert "error" not in result
+        assert 0.0 <= result["gating_accuracy"] <= 1.0
+
+    def test_sample_count_matches_trials(self, network_with_meta_controller, patterns):
+        bench = MetaControllerGatingBenchmark(network_with_meta_controller)
+        n_trials = 10
+        result = bench.run(patterns[0], patterns[1], n_trials=n_trials, steps_per_trial=3, seed=2)
+        assert "error" not in result
+        assert result["n_samples"] == n_trials
+        assert result["n_trials"] == n_trials
+
+    def test_meta_controller_neuron_count(self, network_with_meta_controller, patterns):
+        bench = MetaControllerGatingBenchmark(network_with_meta_controller)
+        result = bench.run(patterns[0], patterns[1], n_trials=8, steps_per_trial=3, seed=1)
+        assert "error" not in result
+        assert result["meta_controller_neurons"] == 200  # matches fixture population
+
+    def test_insufficient_trials_returns_error(self, network_with_meta_controller, patterns):
+        bench = MetaControllerGatingBenchmark(network_with_meta_controller)
+        result = bench.run(patterns[0], patterns[1], n_trials=2, steps_per_trial=3)
+        assert "error" in result
+        assert result["gating_accuracy"] == 0.0
+
+    def test_same_seed_is_reproducible(self, network_with_meta_controller, patterns):
+        bench = MetaControllerGatingBenchmark(network_with_meta_controller)
+        result = bench.run(patterns[0], patterns[1], n_trials=6, steps_per_trial=3, seed=0)
+        assert "error" not in result
+        assert result["fixture_seed"] == 0
+
+    def test_not_wired_into_run_all(self, network_with_meta_controller):
+        """MetaControllerGatingBenchmark is a standalone per-region benchmark
+        (issue #319), deliberately not part of run_all()'s fixed 6-metric
+        contract documented in docs/benchmark-schema.md."""
+        suite = BenchmarkSuite(network_with_meta_controller)
+        results = suite.run_all(n_patterns=1, training_reps=1, steps_per_pattern=4)
+        assert "meta_controller_gating" not in results
 
 
 def _cosine_dist(mat: np.ndarray) -> np.ndarray:
