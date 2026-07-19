@@ -119,3 +119,102 @@ def test_service_is_frozen_dataclass():
         assert "frozen" in str(exc).lower() or exc.__class__.__name__ == "FrozenInstanceError"
     else:
         raise AssertionError("Service should be immutable (frozen dataclass)")
+
+
+# ── dependency graph validation (issue #242) ──────────────────────────────────
+
+
+def _svc(name: str, deps: tuple[str, ...] = ()) -> registry.Service:
+    """Minimal Service for dependency-graph unit tests."""
+    return registry.Service(
+        name=name,
+        module=f"{name}.service",
+        src=f"{name}/src",
+        profile="core",
+        deps=deps,
+    )
+
+
+def test_validate_dependency_graph_accepts_static_registry():
+    # The module-level SERVICES list is validated at import; re-check explicitly.
+    registry.validate_dependency_graph(SERVICES)
+    registry.validate_dependency_graph()  # default argument path
+
+
+def test_validate_dependency_graph_accepts_empty_and_leaf_services():
+    registry.validate_dependency_graph([])
+    registry.validate_dependency_graph([_svc("a"), _svc("b")])
+
+
+def test_validate_dependency_graph_accepts_valid_dag():
+    services = [
+        _svc("kernel"),
+        _svc("safety", deps=("kernel",)),
+        _svc("planner", deps=("kernel", "safety")),
+    ]
+    registry.validate_dependency_graph(services)
+
+
+def test_validate_dependency_graph_rejects_unknown_dep():
+    services = [_svc("orphan", deps=("missing-dep",))]
+    try:
+        registry.validate_dependency_graph(services)
+    except registry.DependencyGraphError as exc:
+        msg = str(exc)
+        assert "Unknown service dependency" in msg
+        assert "orphan" in msg
+        assert "missing-dep" in msg
+    else:
+        raise AssertionError("expected DependencyGraphError for unknown dep")
+
+
+def test_validate_dependency_graph_reports_all_unknown_deps():
+    services = [
+        _svc("a", deps=("ghost-1",)),
+        _svc("b", deps=("ghost-2",)),
+    ]
+    try:
+        registry.validate_dependency_graph(services)
+    except registry.DependencyGraphError as exc:
+        msg = str(exc)
+        assert "ghost-1" in msg and "ghost-2" in msg
+    else:
+        raise AssertionError("expected DependencyGraphError listing both missing deps")
+
+
+def test_validate_dependency_graph_rejects_self_cycle():
+    services = [_svc("loop", deps=("loop",))]
+    try:
+        registry.validate_dependency_graph(services)
+    except registry.DependencyGraphError as exc:
+        msg = str(exc)
+        assert "Cyclic service dependency" in msg
+        assert "loop → loop" in msg
+    else:
+        raise AssertionError("expected DependencyGraphError for self-cycle")
+
+
+def test_validate_dependency_graph_rejects_multi_node_cycle():
+    services = [
+        _svc("a", deps=("b",)),
+        _svc("b", deps=("c",)),
+        _svc("c", deps=("a",)),
+    ]
+    try:
+        registry.validate_dependency_graph(services)
+    except registry.DependencyGraphError as exc:
+        msg = str(exc)
+        assert "Cyclic service dependency" in msg
+        # Cycle path must close back on the repeated node.
+        assert " → " in msg
+        assert msg.count("a") >= 2 or msg.count("b") >= 2 or msg.count("c") >= 2
+    else:
+        raise AssertionError("expected DependencyGraphError for multi-node cycle")
+
+
+def test_declared_registry_deps_are_known_services():
+    """Sanity check mirroring validate_dependency_graph for the static list."""
+    names = {s.name for s in SERVICES}
+    for svc in SERVICES:
+        for dep in svc.deps:
+            assert dep in names, f"{svc.name}.deps references unknown {dep!r}"

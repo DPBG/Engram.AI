@@ -9,12 +9,17 @@ by every service and is managed separately by the launcher.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 # Project root = parent of this `launcher/` package.
 ROOT = Path(__file__).resolve().parent.parent
 SDK_SRC = ROOT / "sdk" / "src"
+
+
+class DependencyGraphError(ValueError):
+    """Raised when ``Service.deps`` references a missing name or forms a cycle."""
 
 
 @dataclass(frozen=True)
@@ -213,3 +218,60 @@ def get_service(name: str) -> Service | None:
         if s.name == name:
             return s
     return None
+
+
+def validate_dependency_graph(services: Sequence[Service] | None = None) -> None:
+    """Validate the startup-order dependency graph declared on ``Service.deps``.
+
+    Checks that:
+    1. Every name in ``deps`` refers to a service present in *services*.
+    2. The directed graph has no cycles (which would deadlock readiness waits).
+
+    Args:
+        services: Graph to validate. Defaults to the module-level ``SERVICES``
+            registry. Pass a custom list in tests to exercise failure modes.
+
+    Raises:
+        DependencyGraphError: On unknown dependency names or a cycle.
+    """
+    graph = list(SERVICES if services is None else services)
+    by_name = {svc.name: svc for svc in graph}
+
+    missing: list[tuple[str, str]] = []
+    for svc in graph:
+        for dep in svc.deps:
+            if dep not in by_name:
+                missing.append((svc.name, dep))
+    if missing:
+        details = ", ".join(f"{svc!r} → {dep!r}" for svc, dep in missing)
+        raise DependencyGraphError(
+            f"Unknown service dependency(ies): {details}. "
+            "Every name in Service.deps must match a registered Service.name."
+        )
+
+    # DFS with colors: white=unvisited, gray=on stack, black=done.
+    white, gray, black = 0, 1, 2
+    color = {name: white for name in by_name}
+    stack: list[str] = []
+
+    def visit(name: str) -> None:
+        color[name] = gray
+        stack.append(name)
+        for dep in by_name[name].deps:
+            state = color[dep]
+            if state == gray:
+                cycle_start = stack.index(dep)
+                cycle = stack[cycle_start:] + [dep]
+                raise DependencyGraphError(f"Cyclic service dependency: {' → '.join(cycle)}")
+            if state == white:
+                visit(dep)
+        stack.pop()
+        color[name] = black
+
+    for name in by_name:
+        if color[name] == white:
+            visit(name)
+
+
+# Fail fast on a typo'd or cyclic deps declaration in the static registry.
+validate_dependency_graph(SERVICES)
