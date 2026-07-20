@@ -105,11 +105,12 @@ def test_find_task_no_results_learns():
     }
 
 
-# ── the zero-vector trap fix ────────────────────────────────────────────────
+# ── zero-vector guard (issue #237) ──────────────────────────────────────────
 
 
-def test_find_task_propagates_embedding_failure_without_zero_vector():
-    """A failed embedding must surface, not silently search a zero vector."""
+def test_find_task_propagates_embedding_exception_without_search():
+    """If embed_text somehow raises (secondary defence), the exception surfaces
+    rather than silently querying Qdrant."""
     coord, store, _ = _make(embed_error=RuntimeError("Ollama down"))
 
     try:
@@ -119,7 +120,24 @@ def test_find_task_propagates_embedding_failure_without_zero_vector():
         raised = "Ollama down" in str(e)
 
     assert raised, "find_task should propagate the embedding failure"
-    store.search.assert_not_called()  # never queried with a zero vector
+    store.search.assert_not_called()
+
+
+def test_find_task_zero_vector_returns_learn_without_search():
+    """EmbeddingService returns a zero vector (not raises) when the backend is
+    down.  find_task() must detect the sentinel and skip Qdrant rather than
+    returning unrelated tasks via false cosine similarity."""
+    coord, store, _ = _make(embed=[0.0, 0.0, 0.0])
+
+    result = asyncio.run(coord.find_task("q"))
+
+    assert result == {
+        "found": False,
+        "task_id": None,
+        "confidence": 0.0,
+        "action": "learn",
+    }
+    store.search.assert_not_called()
 
 
 # ── index_task ──────────────────────────────────────────────────────────────
@@ -168,6 +186,19 @@ def test_index_task_embedding_failure_returns_false_without_upsert(tmp_path):
 
     assert ok is False
     store.upsert.assert_not_called()  # no zero-vector point written
+
+
+def test_index_task_zero_vector_returns_false_without_upsert(tmp_path):
+    """EmbeddingService returns a zero vector (not raises) when the backend is
+    down.  index_task() must detect the sentinel and skip the upsert rather
+    than storing a corrupt point that matches every future query."""
+    coord, store, _ = _make(embed=[0.0, 0.0, 0.0], tasks_root=str(tmp_path))
+    _write_task(str(tmp_path), "task-3", {"description": "pour water"})
+
+    ok = asyncio.run(coord.index_task("task-3"))
+
+    assert ok is False
+    store.upsert.assert_not_called()
 
 
 def test_index_task_missing_metadata_returns_false(tmp_path):

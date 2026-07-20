@@ -101,6 +101,17 @@ def test_get_embedding_failure_is_clean_miss_without_search():
     assert cache.get_metrics()["cache_misses"] == 1
 
 
+def test_get_zero_vector_embedding_is_clean_miss_without_search():
+    """EmbeddingService returns a zero vector (not raises) when the backend is down.
+    get() must detect the sentinel and skip Qdrant rather than searching against
+    the origin and returning a false cache hit."""
+    cache, store, _, _ = _make(embed=[0.0, 0.0])
+
+    assert asyncio.run(cache.get("prompt")) is None
+    store.search.assert_not_called()
+    assert cache.get_metrics()["cache_misses"] == 1
+
+
 # ── set ─────────────────────────────────────────────────────────────────────
 
 
@@ -129,6 +140,19 @@ def test_set_embedding_failure_returns_false_without_upsert():
 
     assert ok is False
     store.upsert.assert_not_called()  # no zero-vector entry written
+    db.execute.assert_not_called()
+
+
+def test_set_zero_vector_embedding_returns_false_without_upsert():
+    """EmbeddingService returns a zero vector (not raises) when the backend is down.
+    set() must detect the sentinel and skip the upsert rather than storing a
+    corrupt entry that matches everything via cosine similarity."""
+    cache, store, _, db = _make(embed=[0.0, 0.0])
+
+    ok = asyncio.run(cache.set("prompt", "resp"))
+
+    assert ok is False
+    store.upsert.assert_not_called()
     db.execute.assert_not_called()
 
 
