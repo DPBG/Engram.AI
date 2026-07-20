@@ -218,9 +218,16 @@ class Database:
         columns = ", ".join(data.keys())
         placeholders = ", ".join("?" for _ in data)
         sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
-        await self.execute(sql, tuple(data.values()))
+        cursor = await self.execute(sql, tuple(data.values()))
         await self.commit()
-        return cast(str, data.get("id", ""))
+        # Prefer an explicit caller-supplied id; otherwise return SQLite's
+        # assigned row id (INTEGER PRIMARY KEY / AUTOINCREMENT). Returning the
+        # caller's input alone silently yields "" when id is omitted (#245).
+        supplied = data.get("id")
+        if supplied is not None and supplied != "":
+            return str(supplied)
+        lastrowid = cursor.lastrowid
+        return "" if lastrowid is None else str(lastrowid)
 
     async def update(
         self,
