@@ -158,7 +158,10 @@ cd sdk && python -m pytest tests/ -v
 - **Neuromorphic**: NumPy/SciPy, `float32` throughout, CSR sparse matrices;
   keep hot paths vectorized (no per-neuron Python loops).
 - **Services**: communicate via NATS (`EventBus`), persist to SQLite. Prefer the
-  SDK `BaseService`/`EventBus` over raw `nats.connect()`.
+  SDK `BaseService`/`EventBus` over raw `nats.connect()`. The reviewed list of
+  files exempt from this (and why) lives in
+  [docs/nats-raw-connect-exemptions.md](docs/nats-raw-connect-exemptions.md),
+  enforced by `sdk/tests/test_raw_nats_connect_exemptions.py`.
 - **Dashboard**: standalone FastAPI + vanilla JS (no SDK dependency).
 - **Lint/format/type**: `ruff`, `black` (line length 100), `mypy`. These are
   enforced in CI — run them before pushing.
