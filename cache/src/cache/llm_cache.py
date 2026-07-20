@@ -15,6 +15,7 @@ from activelearning import (
     QdrantStore,
     current_timestamp,
     get_embedding_service,
+    is_zero_vector,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,9 +70,9 @@ class LLMCache:
         self.collection_name = "llm_cache"
 
         # Shared SDK infrastructure (injectable for testing): embeddings via the
-        # EmbeddingService (which raises instead of returning a zero vector that
-        # would corrupt the cache), Qdrant via the shared QdrantStore. The
-        # embedding service is owned and closed by the service.
+        # EmbeddingService (returns a zero vector on failure — guarded below),
+        # Qdrant via the shared QdrantStore. The embedding service is owned and
+        # closed by the service.
         self._qdrant = store if store is not None else QdrantStore(qdrant_url)
         self._embeddings = (
             embedding_service if embedding_service is not None else get_embedding_service()
@@ -116,10 +117,14 @@ class LLMCache:
             Cached response dict if found with high confidence, else None
         """
         try:
-            # Get prompt embedding (raises if the embedding service is down,
-            # which the except below turns into a clean cache miss rather than
-            # searching against a zero vector).
+            # EmbeddingService.embed_text() returns a zero vector (not raises)
+            # when the backend is unavailable — guard here so a zero vector
+            # never reaches Qdrant and produces false similarity scores.
             embedding = await self._embeddings.embed_text(prompt)
+            if is_zero_vector(embedding):
+                logger.warning("Cache lookup skipped: embedding unavailable for prompt")
+                self._cache_misses += 1
+                return None
 
             # Search for similar cached prompts
             results = await self._qdrant.search(self.collection_name, embedding, limit=1)
@@ -184,8 +189,12 @@ class LLMCache:
             # Generate prompt hash for deduplication
             prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
 
-            # Get prompt embedding
+            # Guard: zero vector means the embedding backend is down; storing
+            # it would corrupt the cache with a meaningless similarity anchor.
             embedding = await self._embeddings.embed_text(prompt)
+            if is_zero_vector(embedding):
+                logger.warning("Cache store skipped: embedding unavailable for prompt")
+                return False
 
             # Untagged entries store None so they never match a tag query.
             cache_entry = {

@@ -6,6 +6,8 @@ import logging
 import math
 from typing import Any, Protocol
 
+from activelearning.embeddings import is_zero_vector
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD = 0.75
@@ -26,10 +28,6 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
     return dot / (norm_a * norm_b)
-
-
-def _is_zero_vector(vector: list[float]) -> bool:
-    return bool(vector) and all(v == 0.0 for v in vector)
 
 
 def word_overlap_conflict(
@@ -67,7 +65,7 @@ async def detect_knowledge_conflict(
         try:
             local_vec = await embedding_service.embed_text(local_text)
             external_vec = await embedding_service.embed_text(external_response)
-            if not _is_zero_vector(local_vec) and not _is_zero_vector(external_vec):
+            if not is_zero_vector(local_vec) and not is_zero_vector(external_vec):
                 similarity = cosine_similarity(local_vec, external_vec)
                 return similarity < semantic_threshold
         except Exception as exc:

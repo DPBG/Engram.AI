@@ -18,6 +18,7 @@ from activelearning import (
     QdrantStore,
     generate_trace_id,
     get_embedding_service,
+    is_zero_vector,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,9 +54,9 @@ class TaskCoordinator:
         self._sensor_manager = sensor_manager
 
         # Shared SDK infrastructure (injectable for testing): embeddings via the
-        # EmbeddingService (which raises instead of returning a zero vector that
-        # would silently search against the origin), Qdrant via the shared
-        # QdrantStore. The embedding service is owned and closed by the service.
+        # EmbeddingService (returns a zero vector on failure — guarded below),
+        # Qdrant via the shared QdrantStore. The embedding service is owned and
+        # closed by the service.
         self._qdrant = store if store is not None else QdrantStore(qdrant_url)
         self._embeddings = (
             embedding_service if embedding_service is not None else get_embedding_service()
@@ -87,10 +88,18 @@ class TaskCoordinator:
                 - confidence: float
                 - action: "execute", "adapt", or "learn"
         """
-        # Get query embedding (raises if the embedding service is unavailable —
-        # surfacing the failure instead of silently searching against a zero
-        # vector, which would return unrelated tasks).
+        # EmbeddingService.embed_text() returns a zero vector (not raises) when
+        # the backend is unavailable — guard here so a zero vector never reaches
+        # Qdrant and returns unrelated tasks via false cosine similarity.
         embedding = await self._embeddings.embed_text(query)
+        if is_zero_vector(embedding):
+            logger.warning("Task lookup skipped: embedding unavailable for query")
+            return {
+                "found": False,
+                "task_id": None,
+                "confidence": 0.0,
+                "action": "learn",
+            }
 
         # Search Qdrant for similar tasks
         results = await self._qdrant.search(
@@ -262,9 +271,13 @@ class TaskCoordinator:
             with open(metadata_path) as f:
                 metadata = json.load(f)
 
-            # Get embedding for description
+            # Guard: zero vector means the embedding backend is down; indexing
+            # it would store a meaningless anchor that matches everything.
             description = metadata.get("description", "")
             embedding = await self._embeddings.embed_text(description)
+            if is_zero_vector(embedding):
+                logger.warning("Task indexing skipped: embedding unavailable for task %s", task_id)
+                return False
 
             # Store in Qdrant
             await self._qdrant.upsert(

@@ -27,6 +27,8 @@ from activelearning.embeddings import (
     embed_batch,
     embed_text,
     get_embedding_service,
+    is_zero_vector,
+    zero_vector,
 )
 from activelearning.llm import LLMClient, LLMConfig, LLMError
 from activelearning.messages import (
@@ -101,6 +103,8 @@ __all__ = [
     "get_embedding_service",
     "embed_text",
     "embed_batch",
+    "is_zero_vector",
+    "zero_vector",
     # Vector store
     "QdrantStore",
     "QdrantHit",
