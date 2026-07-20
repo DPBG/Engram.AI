@@ -7,9 +7,7 @@ import tempfile
 
 # Load safety.py directly (pure stdlib) so the test doesn't import the
 # meta_programmer package __init__, which pulls in the `docker` SDK.
-_SAFETY_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "src", "meta_programmer", "safety.py"
-)
+_SAFETY_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "meta_programmer", "safety.py")
 _spec = importlib.util.spec_from_file_location("mp_safety", _SAFETY_PATH)
 _safety = importlib.util.module_from_spec(_spec)
 sys.modules["mp_safety"] = _safety  # needed so @dataclass can resolve annotations
@@ -21,6 +19,7 @@ deploy_atomically = _safety.deploy_atomically
 
 
 # ── full-source AST taint scan (1.5) ─────────────────────────────────────────
+
 
 def test_clean_code_passes():
     assert scan_source("def add(a, b):\n    return a + b\n") == []
@@ -41,6 +40,30 @@ def test_os_system_flagged():
 
 def test_subprocess_call_flagged():
     assert is_dangerous("import subprocess\nsubprocess.run(['ls'])")
+
+
+def test_from_import_sink_call_flagged():
+    # `from os import system; system(...)` is exactly as dangerous as
+    # `os.system(...)` and must not bypass the attribute-form call check.
+    assert is_dangerous("from os import system\nsystem('rm -rf /')")
+    assert is_dangerous("from subprocess import run\nrun(['ls'])")
+    assert is_dangerous("from os import popen\npopen('id')")
+
+
+def test_from_import_sink_aliased_call_flagged():
+    assert is_dangerous("from os import system as s\ns('rm -rf /')")
+    assert is_dangerous("from subprocess import Popen as P\nP(['ls'])")
+
+
+def test_star_import_of_dangerous_module_flagged():
+    assert is_dangerous("from os import *\nsystem('id')")
+    assert is_dangerous("from subprocess import *")
+
+
+def test_from_import_benign_name_not_flagged_until_called():
+    # `from os import getcwd` is a benign sink-free name; importing it (medium at
+    # most) must not be high-severity on its own.
+    assert is_dangerous("from os import getcwd\np = getcwd()") is False
 
 
 def test_socket_import_flagged():
@@ -70,6 +93,7 @@ def test_benign_os_path_is_not_high_severity():
 
 
 # ── deploy-path allowlist + traversal/symlink protection (1.4) ────────────────
+
 
 def test_path_inside_allowlist_accepted():
     with tempfile.TemporaryDirectory() as d:
@@ -103,6 +127,7 @@ def test_empty_path_rejected():
 
 
 # ── atomic deploy with rollback (1.9) ─────────────────────────────────────────
+
 
 def test_deploy_new_valid_file():
     with tempfile.TemporaryDirectory() as d:

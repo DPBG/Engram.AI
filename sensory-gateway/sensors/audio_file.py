@@ -19,14 +19,12 @@ import logging
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
-import threading
-
 import numpy as np
-
-from activelearning.plugins import SensorPlugin, PluginCapability, RiskClass
+from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +50,7 @@ def _compute_mfcc(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> np.ndarr
 
     try:
         from python_speech_features import mfcc
+
         features = mfcc(
             audio,
             samplerate=sample_rate,
@@ -70,7 +69,7 @@ def _compute_mfcc(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> np.ndarr
     spectrum = np.abs(np.fft.rfft(windowed, n=512)) ** 2
     log_spectrum = np.log(spectrum + 1e-10)
     step = max(1, len(log_spectrum) // N_MFCC)
-    features = log_spectrum[:N_MFCC * step:step][:N_MFCC]
+    features = log_spectrum[: N_MFCC * step : step][:N_MFCC]
     return features.astype(np.float32)
 
 
@@ -95,20 +94,29 @@ def _extract_audio(video_path: str) -> np.ndarray:
         with _ffmpeg_semaphore:
             result = subprocess.run(
                 [
-                    "ffmpeg", "-y", "-i", video_path,
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    video_path,
                     "-vn",  # no video
-                    "-acodec", "pcm_s16le",
-                    "-ar", str(SAMPLE_RATE),
-                    "-ac", "1",  # mono
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    str(SAMPLE_RATE),
+                    "-ac",
+                    "1",  # mono
                     tmp_path,
                 ],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {result.stderr[:300]}")
 
         # Read WAV file
         import wave
+
         with wave.open(tmp_path, "rb") as wf:
             n_frames = wf.getnframes()
             raw = wf.readframes(n_frames)
@@ -156,11 +164,13 @@ class AudioFileSensor(SensorPlugin[list]):
         self._start_time: float = 0.0
         self._silent_frames: int = 0
 
-        self.add_capability(PluginCapability(
-            name="audio_file_mfcc",
-            description="Extracts MFCC features from video audio track",
-            parameters={"sample_rate": "16000", "mfcc_coefficients": "13"},
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="audio_file_mfcc",
+                description="Extracts MFCC features from video audio track",
+                parameters={"sample_rate": "16000", "mfcc_coefficients": "13"},
+            )
+        )
 
     @property
     def current_pos_s(self) -> float:
@@ -215,7 +225,7 @@ class AudioFileSensor(SensorPlugin[list]):
             else:
                 return None
 
-        chunk = self._audio[self._position:end]
+        chunk = self._audio[self._position : end]
         self._position = end
 
         features = _compute_mfcc(chunk)
@@ -241,7 +251,11 @@ class AudioFileSensor(SensorPlugin[list]):
                 data = await self.capture()
                 if data is not None:
                     await self.emit(data)
-                elif not self._loop and self._audio is not None and self._position >= len(self._audio):
+                elif (
+                    not self._loop
+                    and self._audio is not None
+                    and self._position >= len(self._audio)
+                ):
                     logger.info(f"Audio sensor {self.sensor_id} finished (no loop)")
                     break
             except asyncio.CancelledError:

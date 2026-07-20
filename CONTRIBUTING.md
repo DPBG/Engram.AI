@@ -72,12 +72,12 @@ cd neuromorphic && uv run --extra dev python -m pytest tests/ -v -p no:anchorpy 
 # SDK suite
 cd sdk && uv run --extra dev python -m pytest tests/ -v && cd ..
 
-# Lint — the BLOCKING "real bug" gate CI enforces (this must be clean)
-uvx ruff check --select E9,F63,F7,F82 .
+# Lint — ALL three gates are blocking in CI
+uvx ruff check --select E9,F63,F7,F82 .  # fast "real bug" gate
+uvx ruff check .                           # full style gate
+uvx black --check --line-length 100 .     # formatting gate
+cd sdk && .venv/bin/mypy src/activelearning/ --ignore-missing-imports  # type gate
 ```
-
-> `ruff check .` (full style), `black --check`, and `mypy` also run in CI but are
-> **advisory** for now — running them is encouraged, not required to merge.
 
 ### 6. Commit
 
@@ -189,12 +189,45 @@ cd neuromorphic && uv run --extra dev python -m pytest tests/ -v -p no:anchorpy
 On every pull request to `dev` (and `main`), the **`Tests`** workflow runs:
 
 - the **neuromorphic** test suite on **Python 3.11 and 3.12**,
+- a **benchmark regression gate** (`neuromorphic/scripts/benchmark_ci_gate.py`) on a small
+  fixed-size network — fails if step timing regresses more than **25%** vs.
+  `neuromorphic/benchmarks/ci_performance_baseline.json` (see
+  [Performance regression gate](#performance-regression-gate)),
 - the **SDK** test suite on **Python 3.11 and 3.12**,
-- a **blocking lint gate** (`ruff --select E9,F63,F7,F82` — catches real bugs like
-  undefined names), and
-- **advisory** full-`ruff`, `black --check`, and `mypy` checks.
+- a **blocking lint gate** (two ruff passes: `--select E9,F63,F7,F82` for real
+  bugs, then the full rule set),
+- a **blocking formatter gate** (`black --check --line-length 100`), and
+- a **blocking type gate** (`mypy` on `sdk/src/activelearning/`).
 
-Your PR can be merged once the blocking jobs are green.
+Your PR can be merged once **all** blocking jobs are green.
+
+### Performance regression gate
+
+PRs run `neuromorphic/scripts/benchmark_ci_gate.py`, which invokes
+`scripts/benchmark.py` on a **small fixed-size network** (not the ~1M-neuron
+production scale). Results are compared to the committed baseline at
+`neuromorphic/benchmarks/ci_performance_baseline.json`.
+
+| Metric | Baseline field | Failure when |
+|--------|----------------|--------------|
+| Simulation throughput | `speed_steps_per_sec` | Drops more than **25%** below baseline |
+| Mean step time | `speed_mean_step_ms` | Exceeds baseline by more than **25%** |
+| Learning throughput | `learning_steps_per_sec` | Drops more than **25%** below baseline |
+
+To reproduce locally:
+
+```bash
+cd neuromorphic && uv run --extra dev python scripts/benchmark_ci_gate.py
+```
+
+To capture fresh metrics after an intentional performance change (maintainers only):
+
+```bash
+cd neuromorphic && uv run --extra dev python scripts/benchmark_ci_gate.py --update-baseline
+```
+
+Update `ci_performance_baseline.json` in a separate commit after reviewing the
+new numbers — do not widen the threshold to make a regression pass silently.
 
 ## Code Standards
 
@@ -230,6 +263,64 @@ before implementing.
 - `brain-viz/` — 3D visualization demos
 - Component services (`coordinator/`, `memory/`, `beliefs/`, etc.)
 - Documentation and examples — always welcome, great for first-time contributors
+
+## Writing a Plugin (Sensor or Actuator)
+
+The SDK ships minimal, fully-commented reference implementations in
+[`sdk/examples/`](sdk/examples/):
+
+| File | What it shows |
+|---|---|
+| [`minimal_sensor.py`](sdk/examples/minimal_sensor.py) | `SensorPlugin` subclass — synthetic temperature/humidity; only `capture()` is required |
+| [`minimal_actuator.py`](sdk/examples/minimal_actuator.py) | `ActuatorPlugin` subclass — synthetic LED strip; only `_do_execute()` is required |
+| [`run_plugin_examples.py`](sdk/examples/run_plugin_examples.py) | Standalone runner; `--live` mode connects to a running NATS stack |
+
+**Quick start (no hardware, no running stack):**
+
+```bash
+# from the repo root
+PYTHONPATH=sdk/src python sdk/examples/minimal_sensor.py
+PYTHONPATH=sdk/src python sdk/examples/minimal_actuator.py
+PYTHONPATH=sdk/src python sdk/examples/run_plugin_examples.py
+```
+
+**End-to-end with a live stack:**
+
+```bash
+# Terminal 1
+python run.py
+
+# Terminal 2
+PYTHONPATH=sdk/src python sdk/examples/run_plugin_examples.py --live
+```
+
+Plain `python run.py` (the default **core** profile) is enough here — it
+already includes the Kernel, so both the sensor's live NATS flow and the
+actuator's Kernel-gated `submit_and_execute()` path work without
+`--profile full` (that profile only adds Qdrant/Ollama-backed services).
+
+The base classes handle rate-limiting, NATS publishing, envelope validation,
+and Kernel approval gating automatically — you only implement `capture()` or
+`_do_execute()`. See [`sdk/src/activelearning/plugins.py`](sdk/src/activelearning/plugins.py)
+for the full interface.
+
+## SDK versioning (`activelearning`)
+
+The SDK is shared by every Engram service, so version bumps must be deliberate.
+See [`sdk/CHANGELOG.md`](sdk/CHANGELOG.md) for the full bump policy and history.
+
+**Quick reference:**
+
+| Type of change | Bump |
+|---|---|
+| New public symbol, module, or backwards-compatible behaviour | **minor** (`0.y.0`) |
+| Bug fix, internal refactor, performance, docs | **patch** (`0.y.z`) |
+| Removed / renamed public API, changed semantics | **minor** while `< 1.0` |
+
+**Checklist for any SDK PR:**
+1. Update `version` in `sdk/pyproject.toml`.
+2. Update `__version__` in `sdk/src/activelearning/__init__.py` to match.
+3. Add a dated `## [X.Y.Z]` section to `sdk/CHANGELOG.md` and move relevant items out of `[Unreleased]`.
 
 ## Changes That Need Extra Review
 

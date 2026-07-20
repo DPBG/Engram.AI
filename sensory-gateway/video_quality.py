@@ -147,13 +147,15 @@ class VideoQualityGate:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        metadata.update({
-            "total_frames": total_frames,
-            "fps": round(fps, 1),
-            "duration_s": round(duration_s, 1),
-            "width": width,
-            "height": height,
-        })
+        metadata.update(
+            {
+                "total_frames": total_frames,
+                "fps": round(fps, 1),
+                "duration_s": round(duration_s, 1),
+                "width": width,
+                "height": height,
+            }
+        )
 
         # Duration check
         if duration_s < self.min_duration_s:
@@ -192,7 +194,9 @@ class VideoQualityGate:
             blank_ratio = blank_count / sampled
             metadata["blank_ratio"] = round(blank_ratio, 2)
             if blank_ratio > self.max_blank_ratio:
-                issues.append(f"Too many blank frames: {blank_ratio:.0%} > {self.max_blank_ratio:.0%}")
+                issues.append(
+                    f"Too many blank frames: {blank_ratio:.0%} > {self.max_blank_ratio:.0%}"
+                )
 
         if corrupt_count > 0 and sampled > 0 and corrupt_count / sampled > 0.5:
             issues.append(f"Corrupt frames: {corrupt_count}/{sampled} unreadable")
@@ -205,11 +209,21 @@ class VideoQualityGate:
 
         # Determine validity: hard failures vs warnings
         hard_fails = [
-            i for i in issues
-            if any(keyword in i.lower() for keyword in [
-                "blacklisted", "cannot open", "empty file", "file not found",
-                "too short", "too few frames", "too many blank", "corrupt",
-            ])
+            i
+            for i in issues
+            if any(
+                keyword in i.lower()
+                for keyword in [
+                    "blacklisted",
+                    "cannot open",
+                    "empty file",
+                    "file not found",
+                    "too short",
+                    "too few frames",
+                    "too many blank",
+                    "corrupt",
+                ]
+            )
         ]
         valid = len(hard_fails) == 0
         metadata["is_duplicate"] = any("duplicate" in i.lower() for i in issues)
@@ -224,13 +238,20 @@ class VideoQualityGate:
         try:
             result = subprocess.run(
                 [
-                    "ffprobe", "-v", "quiet",
-                    "-select_streams", "a",
-                    "-show_entries", "stream=codec_type",
-                    "-of", "csv=p=0",
+                    "ffprobe",
+                    "-v",
+                    "quiet",
+                    "-select_streams",
+                    "a",
+                    "-show_entries",
+                    "stream=codec_type",
+                    "-of",
+                    "csv=p=0",
                     filepath,
                 ],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return "audio" in result.stdout
         except (subprocess.TimeoutExpired, OSError):
@@ -275,19 +296,9 @@ class VideoQualityGate:
 
     def get_blacklist(self) -> list[dict]:
         """Return the current blacklist."""
-        return [
-            {"hash": h, **info}
-            for h, info in self._blacklist.items()
-        ]
+        return [{"hash": h, **info} for h, info in self._blacklist.items()]
 
     def is_blacklisted(self, filepath: str) -> bool:
         """Check if a video is blacklisted."""
         video_hash = self.compute_hash(filepath)
         return video_hash in self._blacklist if video_hash else False
-
-    def is_duplicate(self, filepath: str) -> str | None:
-        """Check if video is a duplicate. Returns the existing identifier or None."""
-        video_hash = self.compute_hash(filepath)
-        if video_hash and video_hash in self._known_hashes:
-            return self._known_hashes[video_hash]
-        return None

@@ -8,9 +8,9 @@ Manages:
 - Knowledge gap detection
 """
 
-from coordinator.service import CoordinatorService
-from coordinator.sensor_manager import SensorManager
 from coordinator.learning_controller import LearningController
+from coordinator.sensor_manager import SensorManager
+from coordinator.service import CoordinatorService
 from coordinator.task_coordinator import TaskCoordinator
 
 __version__ = "0.1.0"

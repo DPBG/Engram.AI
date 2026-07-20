@@ -2,8 +2,8 @@
 Mock sensors and actuators for integration testing.
 """
 
+from .actuators import MockLED, MockMotor, MockServo
 from .sensors import MockCamera, MockGPIO, MockIMU
-from .actuators import MockServo, MockLED, MockMotor
 
 __all__ = [
     "MockCamera",

@@ -5,10 +5,12 @@ import uuid
 
 import pytest
 
-from activelearning.core import generate_trace_id
+from activelearning import nats_client as nats_client_module
+from activelearning.connection_logging import TRANSITION_FORCE_RECONNECT_COMPLETE
+from activelearning.core import current_timestamp, generate_trace_id
 from activelearning.nats_client import EventBus
-from activelearning.signing import DECISION_KEY_ENV, sign_decision
-from activelearning.subjects import Subjects, decision_subject
+from activelearning.signing import DECISION_KEY_ENV, DECISION_KEY_SECONDARY_ENV, sign_decision
+from activelearning.subjects import Subjects, code_decision_subject, decision_subject
 
 
 @pytest.mark.asyncio
@@ -69,6 +71,88 @@ async def test_force_reconnect_restores_handlers(event_bus: EventBus, wait_for_m
 
 
 @pytest.mark.asyncio
+async def test_force_reconnect_retries_transient_resubscribe_failure(
+    event_bus: EventBus, wait_for_message, monkeypatch
+):
+    """A subject that fails to resubscribe once should succeed on retry,
+    not be permanently dropped after a single transient error."""
+    subject = f"test.reconnect.retry.{uuid.uuid4().hex[:8]}"
+    received: list[dict] = []
+
+    async def handler(data: dict) -> None:
+        received.append(data)
+
+    await event_bus.subscribe(subject, handler)
+
+    original_subscribe = event_bus.subscribe
+    call_count = {"n": 0}
+
+    async def flaky_subscribe(subj, hdlr, **kwargs):
+        call_count["n"] += 1
+        if subj == subject and call_count["n"] == 1:
+            raise ConnectionError("simulated transient resubscribe failure")
+        return await original_subscribe(subj, hdlr, **kwargs)
+
+    monkeypatch.setattr(event_bus, "subscribe", flaky_subscribe)
+
+    await event_bus.force_reconnect()
+    assert event_bus.is_connected
+    assert subject in event_bus._handlers
+    assert event_bus._metrics.resubscribe_failed_count == 0
+
+    await event_bus.publish(subject, {"after": "retry"})
+    await wait_for_message(lambda: len(received) == 1)
+    assert received[0]["after"] == "retry"
+
+
+@pytest.mark.asyncio
+async def test_force_reconnect_marks_persistent_resubscribe_failure(
+    event_bus: EventBus, monkeypatch
+):
+    """A subject that keeps failing to resubscribe across all attempts should
+    be reported in the completion event and counted in metrics, instead of
+    disappearing silently with only a log line."""
+    good_subject = f"test.reconnect.ok.{uuid.uuid4().hex[:8]}"
+    bad_subject = f"test.reconnect.bad.{uuid.uuid4().hex[:8]}"
+
+    async def noop_handler(data: dict) -> None:
+        pass
+
+    await event_bus.subscribe(good_subject, noop_handler)
+    await event_bus.subscribe(bad_subject, noop_handler)
+
+    original_subscribe = event_bus.subscribe
+
+    async def selective_subscribe(subj, hdlr, **kwargs):
+        if subj == bad_subject:
+            raise ConnectionError("simulated persistent resubscribe failure")
+        return await original_subscribe(subj, hdlr, **kwargs)
+
+    original_log = nats_client_module.log_connection_event
+    completion_events: list[dict] = []
+
+    def capturing_log(transition, **fields):
+        payload = original_log(transition, **fields)
+        if transition == TRANSITION_FORCE_RECONNECT_COMPLETE:
+            completion_events.append(payload)
+        return payload
+
+    monkeypatch.setattr(event_bus, "subscribe", selective_subscribe)
+    monkeypatch.setattr(nats_client_module, "log_connection_event", capturing_log)
+
+    before_failed_count = event_bus._metrics.resubscribe_failed_count
+    await event_bus.force_reconnect()
+
+    assert event_bus.is_connected
+    assert good_subject in event_bus._handlers
+    assert bad_subject not in event_bus._handlers
+    assert event_bus._metrics.resubscribe_failed_count == before_failed_count + 1
+    assert completion_events
+    assert bad_subject in completion_events[-1]["failed_subjects"]
+    assert good_subject not in completion_events[-1]["failed_subjects"]
+
+
+@pytest.mark.asyncio
 async def test_wait_for_decision_rejects_unsigned_when_signing_enabled(
     event_bus: EventBus,
     monkeypatch,
@@ -119,6 +203,210 @@ async def test_wait_for_decision_accepts_signed_decision(
     assert result["type"] == "ALLOW"
 
 
+# ── key rotation (issue #206) ─────────────────────────────────────────────
+#
+# End-to-end over a real NATS broker: proves the dual-key overlap window
+# documented in docs/DECISION-KEY-ROTATION.md never drops an in-flight
+# decision, and that completing the rotation actually retires the old key
+# rather than trusting it forever.
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_overlap_window_accepts_both_keys(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    """Mid-rotation state: the Kernel has just flipped to the new key, but
+    this waiter (like every verifier during the overlap window) still has
+    the old key configured as its secondary. A decision published with the
+    *old* key — as if it were already in flight when the Kernel flipped —
+    and a decision published with the *new* key must both be accepted."""
+    old_key = "rotation-old-key"
+    new_key = "rotation-new-key"
+    monkeypatch.setenv(DECISION_KEY_ENV, new_key)
+    monkeypatch.setenv(DECISION_KEY_SECONDARY_ENV, old_key)
+
+    in_flight_trace = generate_trace_id()
+    fresh_trace = generate_trace_id()
+
+    async def publish_both():
+        await asyncio.sleep(0.1)
+        in_flight = sign_decision(
+            {
+                "trace_id": in_flight_trace,
+                "type": "ALLOW",
+                "reason": "signed before the Kernel rotated",
+                "risk_score": 0.1,
+            },
+            old_key,
+        )
+        await event_bus.publish(decision_subject(in_flight_trace), in_flight)
+
+        fresh = sign_decision(
+            {
+                "trace_id": fresh_trace,
+                "type": "DENY",
+                "reason": "signed after the Kernel rotated",
+                "risk_score": 0.9,
+            },
+            new_key,
+        )
+        await event_bus.publish(decision_subject(fresh_trace), fresh)
+
+    publish_task = asyncio.create_task(publish_both())
+    in_flight_result = await event_bus.wait_for_decision(in_flight_trace, timeout=2.0)
+    fresh_result = await event_bus.wait_for_decision(fresh_trace, timeout=2.0)
+    await publish_task
+
+    assert in_flight_result["type"] == "ALLOW", "old-key decision dropped during rotation overlap"
+    assert fresh_result["type"] == "DENY"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_retires_old_key_after_rotation_completes(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    """After the overlap window, the secondary key is removed. A decision
+    signed with the now-retired old key must no longer satisfy a waiter —
+    proving rotation actually completes instead of accumulating trusted
+    keys forever."""
+    old_key = "rotation-old-key-2"
+    new_key = "rotation-new-key-2"
+    monkeypatch.setenv(DECISION_KEY_ENV, new_key)
+    monkeypatch.delenv(DECISION_KEY_SECONDARY_ENV, raising=False)
+    trace_id = generate_trace_id()
+
+    stale = sign_decision(
+        {
+            "trace_id": trace_id,
+            "type": "ALLOW",
+            "reason": "signed with a retired key",
+            "risk_score": 0.0,
+        },
+        old_key,
+    )
+    await event_bus.publish(decision_subject(trace_id), stale)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await event_bus.wait_for_decision(trace_id, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_rejects_expired_signed_decision(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    """Issue #190: a validly-signed but expired decision must not be
+    replayable. expires_at is itself a signed field (activelearning.
+    signing.SIGNED_FIELDS), so a captured old ALLOW can't be re-timestamped
+    without invalidating its signature — but nothing checked it at accept
+    time until now."""
+    key = "test-decision-secret-expired"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    expired_allow = sign_decision(
+        {
+            "trace_id": trace_id,
+            "type": "ALLOW",
+            "reason": "stale — captured and replayed",
+            "risk_score": 0.0,
+            "expires_at": current_timestamp() - 1000,
+        },
+        key,
+    )
+    await event_bus.publish(decision_subject(trace_id), expired_allow)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await event_bus.wait_for_decision(trace_id, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_accepts_signed_decision_before_expiry(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    """Companion to the expired-decision test: a signed decision with a
+    future expires_at must still be accepted normally."""
+    key = "test-decision-secret-not-expired"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    async def publish_signed():
+        await asyncio.sleep(0.1)
+        decision = sign_decision(
+            {
+                "trace_id": trace_id,
+                "type": "ALLOW",
+                "reason": "fresh",
+                "risk_score": 0.0,
+                "expires_at": current_timestamp() + 60_000,
+            },
+            key,
+        )
+        await event_bus.publish(decision_subject(trace_id), decision)
+
+    publish_task = asyncio.create_task(publish_signed())
+    result = await event_bus.wait_for_decision(trace_id, timeout=2.0)
+    await publish_task
+    assert result["trace_id"] == trace_id
+    assert result["type"] == "ALLOW"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_code_subject(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    key = "test-decision-secret-code"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    async def publish_signed_code_decision():
+        await asyncio.sleep(0.1)
+        decision = sign_decision(
+            {
+                "trace_id": trace_id,
+                "type": "DENY",
+                "reason": "unsafe code",
+                "risk_score": 0.9,
+            },
+            key,
+        )
+        await event_bus.publish(code_decision_subject(trace_id), decision)
+
+    publish_task = asyncio.create_task(publish_signed_code_decision())
+    result = await event_bus.wait_for_decision(trace_id, timeout=2.0, code=True)
+    await publish_task
+    assert result["trace_id"] == trace_id
+    assert result["type"] == "DENY"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_code_subject_ignores_action_decision(
+    event_bus: EventBus,
+    monkeypatch,
+):
+    key = "test-decision-secret-code-2"
+    monkeypatch.setenv(DECISION_KEY_ENV, key)
+    trace_id = generate_trace_id()
+
+    forged_allow = sign_decision(
+        {
+            "trace_id": trace_id,
+            "type": "ALLOW",
+            "reason": "forged action decision",
+            "risk_score": 0.0,
+        },
+        key,
+    )
+    await event_bus.publish(decision_subject(trace_id), forged_allow)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await event_bus.wait_for_decision(trace_id, timeout=0.5, code=True)
+
+
 @pytest.mark.asyncio
 async def test_js_subscribe_delivers_proposal(event_bus: EventBus, wait_for_message):
     received: list[dict] = []
@@ -135,5 +423,7 @@ async def test_js_subscribe_delivers_proposal(event_bus: EventBus, wait_for_mess
         "provenance": "nats-test",
     }
     await event_bus.publish(Subjects.PROPOSAL_NEW, payload)
-    await wait_for_message(lambda: len(received) == 1)
-    assert received[0]["trace_id"] == payload["trace_id"]
+    # A fresh durable replays the stream's retained history (DeliverPolicy ALL),
+    # so proposal.new messages from earlier tests in the session may arrive too.
+    # Assert OUR message was delivered rather than assuming it is the only one.
+    await wait_for_message(lambda: any(m.get("trace_id") == payload["trace_id"] for m in received))

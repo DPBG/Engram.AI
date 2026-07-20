@@ -6,13 +6,14 @@ confidence updates, contradiction detection, and belief propagation.
 """
 
 import logging
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
 import time
 import uuid
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
+from activelearning import current_timestamp, generate_trace_id
 
 if TYPE_CHECKING:
     from beliefs.profiles import BodyProfile
@@ -28,13 +29,15 @@ VALUE_CONFIDENCE_FLOOR = 0.9
 
 class NodeType(Enum):
     """Types of belief nodes."""
-    VALUE = "value"      # Core values
-    NORM = "norm"        # Behavioral norms
-    FACT = "fact"        # Factual beliefs
+
+    VALUE = "value"  # Core values
+    NORM = "norm"  # Behavioral norms
+    FACT = "fact"  # Factual beliefs
 
 
 class EdgeType(Enum):
     """Types of belief edges."""
+
     SUPPORTS = "supports"
     CONTRADICTS = "contradicts"
     ENTAILS = "entails"
@@ -44,31 +47,36 @@ class EdgeType(Enum):
 @dataclass
 class BeliefNode:
     """A node in the belief graph."""
+
     id: str
     type: NodeType
     content: str
     confidence: float = 1.0
     source: str = "unknown"
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: int = field(default_factory=lambda: int(time.time() * 1000))
-    updated_at: int = field(default_factory=lambda: int(time.time() * 1000))
+    created_at: int = field(default_factory=current_timestamp)
+    updated_at: int = field(default_factory=current_timestamp)
 
 
 @dataclass
 class BeliefEdge:
     """An edge in the belief graph."""
+
     id: str
     type: EdgeType
     source_id: str
     target_id: str
     strength: float = 1.0
-    evidence: Optional[str] = None
+    evidence: str | None = None
     created_at: int = field(default_factory=lambda: int(time.time() * 1000))
+    evidence: str | None = None
+    created_at: int = field(default_factory=current_timestamp)
 
 
 @dataclass
 class BeliefUpdate:
     """A belief update operation."""
+
     node_id: str
     new_confidence: float
     reason: str
@@ -76,8 +84,28 @@ class BeliefUpdate:
 
 
 @dataclass
+class FloorRejectionEvent:
+    """Audit record for a rejected attempt to lower a VALUE's confidence floor.
+
+    Every enforcement site that clamps a VALUE back to ``VALUE_CONFIDENCE_FLOOR``
+    appends one of these so the security signal is never silently discarded
+    (CLAUDE.md §3, issue #191). Call ``drain_floor_rejections()`` to retrieve
+    and clear the pending list for durable persistence.
+    """
+
+    id: str
+    node_id: str
+    attempted_confidence: float
+    enforced_confidence: float
+    path: str  # "add_node" | "update_belief" | "import_from_dict"
+    source: str
+    rejected_at: int  # epoch milliseconds
+
+
+@dataclass
 class Contradiction:
     """A detected contradiction between beliefs."""
+
     node_a_id: str
     node_b_id: str
     edge_id: str
@@ -99,6 +127,7 @@ class BeliefGraph:
     def __init__(self):
         self._graph = nx.DiGraph()
         self._update_history: list[BeliefUpdate] = []
+        self._floor_rejections: list[FloorRejectionEvent] = []
         self._constitutional_seeded: bool = False
 
     def add_node(self, node: BeliefNode) -> str:
@@ -112,7 +141,7 @@ class BeliefGraph:
             Node ID
         """
         if not node.id:
-            node.id = str(uuid.uuid4())
+            node.id = generate_trace_id()
 
         # Enforce the VALUE floor at the single chokepoint every write goes
         # through (NATS add_node, DB load, seeding). NetworkX add_node overwrites
@@ -122,7 +151,20 @@ class BeliefGraph:
         if node.type == NodeType.VALUE and confidence < VALUE_CONFIDENCE_FLOOR:
             logger.warning(
                 "Clamping VALUE %s confidence %.3f up to floor %.2f",
-                node.id, confidence, VALUE_CONFIDENCE_FLOOR,
+                node.id,
+                confidence,
+                VALUE_CONFIDENCE_FLOOR,
+            )
+            self._floor_rejections.append(
+                FloorRejectionEvent(
+                    id=str(uuid.uuid4()),
+                    node_id=node.id,
+                    attempted_confidence=confidence,
+                    enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                    path="add_node",
+                    source=node.source,
+                    rejected_at=int(time.time() * 1000),
+                )
             )
             confidence = VALUE_CONFIDENCE_FLOOR
 
@@ -151,7 +193,7 @@ class BeliefGraph:
             Edge ID
         """
         if not edge.id:
-            edge.id = str(uuid.uuid4())
+            edge.id = generate_trace_id()
 
         if edge.source_id not in self._graph:
             raise ValueError(f"Source node not found: {edge.source_id}")
@@ -171,7 +213,7 @@ class BeliefGraph:
         logger.debug(f"Added belief edge: {edge.source_id} -> {edge.target_id}")
         return edge.id
 
-    def get_node(self, node_id: str) -> Optional[BeliefNode]:
+    def get_node(self, node_id: str) -> BeliefNode | None:
         """Get a belief node by ID."""
         if node_id not in self._graph:
             return None
@@ -230,11 +272,23 @@ class BeliefGraph:
         # This is the constitutional constraint: the brain can learn facts
         # and norms, but cannot learn to override core values.
         if node_data.get("type") == NodeType.VALUE.value:
+            if new_confidence < VALUE_CONFIDENCE_FLOOR:
+                self._floor_rejections.append(
+                    FloorRejectionEvent(
+                        id=str(uuid.uuid4()),
+                        node_id=node_id,
+                        attempted_confidence=new_confidence,
+                        enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                        path="update_belief",
+                        source=source,
+                        rejected_at=int(time.time() * 1000),
+                    )
+                )
             new_confidence = max(new_confidence, VALUE_CONFIDENCE_FLOOR)
 
         # Update node
         self._graph.nodes[node_id]["confidence"] = new_confidence
-        self._graph.nodes[node_id]["updated_at"] = int(time.time() * 1000)
+        self._graph.nodes[node_id]["updated_at"] = current_timestamp()
 
         # Record update
         update = BeliefUpdate(
@@ -371,7 +425,20 @@ class BeliefGraph:
             # Enforce VALUE confidence floor on import — protects against
             # corrupted or tampered persistence data.
             if node.get("type") == NodeType.VALUE.value:
-                node["confidence"] = max(node.get("confidence", 1.0), VALUE_CONFIDENCE_FLOOR)
+                raw_conf = node.get("confidence", 1.0)
+                if raw_conf < VALUE_CONFIDENCE_FLOOR:
+                    self._floor_rejections.append(
+                        FloorRejectionEvent(
+                            id=str(uuid.uuid4()),
+                            node_id=node_id,
+                            attempted_confidence=raw_conf,
+                            enforced_confidence=VALUE_CONFIDENCE_FLOOR,
+                            path="import_from_dict",
+                            source="persistence_import",
+                            rejected_at=int(time.time() * 1000),
+                        )
+                    )
+                node["confidence"] = max(raw_conf, VALUE_CONFIDENCE_FLOOR)
             self._graph.add_node(node_id, **node)
 
         for edge in data.get("edges", []):
@@ -393,6 +460,16 @@ class BeliefGraph:
     def update_history(self) -> list[BeliefUpdate]:
         """Get the history of belief updates."""
         return self._update_history.copy()
+
+    def drain_floor_rejections(self) -> list[FloorRejectionEvent]:
+        """Return and clear all pending floor-rejection audit events.
+
+        The service calls this after each mutating operation to persist the
+        events to the ``audit_entries`` table (SQLite) for durable queryability.
+        The list is cleared atomically so events are never double-reported.
+        """
+        events, self._floor_rejections = self._floor_rejections, []
+        return events
 
     def seed_constitutional_beliefs(self) -> None:
         """Seed the graph with constitutional values and norms.
@@ -496,26 +573,54 @@ class BeliefGraph:
 
         # === EDGES: Values support Norms ===
         edges = [
-            BeliefEdge(id="edge.hs_fl", type=EdgeType.SUPPORTS,
-                       source_id="value.human_safety", target_id="norm.force_limit", strength=0.9),
-            BeliefEdge(id="edge.hs_sn", type=EdgeType.SUPPORTS,
-                       source_id="value.human_safety", target_id="norm.slow_novel", strength=0.8),
-            BeliefEdge(id="edge.hs_cn", type=EdgeType.SUPPORTS,
-                       source_id="value.human_safety", target_id="norm.confirm_novel", strength=0.7),
-            BeliefEdge(id="edge.hw_gm", type=EdgeType.SUPPORTS,
-                       source_id="value.hardware_safety", target_id="norm.gradual_motor", strength=0.85),
-            BeliefEdge(id="edge.mr_cn", type=EdgeType.ENTAILS,
-                       source_id="value.minimize_risk", target_id="norm.confirm_novel", strength=0.9),
-            BeliefEdge(id="edge.oo_nsm", type=EdgeType.SUPPORTS,
-                       source_id="value.operator_obey", target_id="norm.no_self_modify", strength=0.95),
+            BeliefEdge(
+                id="edge.hs_fl",
+                type=EdgeType.SUPPORTS,
+                source_id="value.human_safety",
+                target_id="norm.force_limit",
+                strength=0.9,
+            ),
+            BeliefEdge(
+                id="edge.hs_sn",
+                type=EdgeType.SUPPORTS,
+                source_id="value.human_safety",
+                target_id="norm.slow_novel",
+                strength=0.8,
+            ),
+            BeliefEdge(
+                id="edge.hs_cn",
+                type=EdgeType.SUPPORTS,
+                source_id="value.human_safety",
+                target_id="norm.confirm_novel",
+                strength=0.7,
+            ),
+            BeliefEdge(
+                id="edge.hw_gm",
+                type=EdgeType.SUPPORTS,
+                source_id="value.hardware_safety",
+                target_id="norm.gradual_motor",
+                strength=0.85,
+            ),
+            BeliefEdge(
+                id="edge.mr_cn",
+                type=EdgeType.ENTAILS,
+                source_id="value.minimize_risk",
+                target_id="norm.confirm_novel",
+                strength=0.9,
+            ),
+            BeliefEdge(
+                id="edge.oo_nsm",
+                type=EdgeType.SUPPORTS,
+                source_id="value.operator_obey",
+                target_id="norm.no_self_modify",
+                strength=0.95,
+            ),
         ]
 
         for e in edges:
             self.add_edge(e)
 
-        logger.info(
-            f"Seeded {len(values)} values, {len(norms)} norms, {len(edges)} edges"
-        )
+        logger.info(f"Seeded {len(values)} values, {len(norms)} norms, {len(edges)} edges")
 
     def seed_body_profile(self, profile: "BodyProfile") -> int:
         """Inject body-profile norms into the belief graph.
@@ -535,7 +640,6 @@ class BeliefGraph:
         Returns:
             Number of norms actually inserted (skips duplicates).
         """
-        from beliefs.profiles import BodyProfile  # deferred to avoid circular
 
         inserted = 0
         for pnorm in profile.norms:
@@ -568,7 +672,5 @@ class BeliefGraph:
             inserted += 1
 
         if inserted:
-            logger.info(
-                f"Seeded {inserted} body-profile norms from '{profile.name}'"
-            )
+            logger.info(f"Seeded {inserted} body-profile norms from '{profile.name}'")
         return inserted

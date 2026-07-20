@@ -12,6 +12,18 @@ every micro-service builds on:
 - **Core types** — `Observation`, `ActionProposal`, `KernelDecision`,
   `BeliefNode`, `BeliefEdge`, etc.
 
+## Load test (EventBus / NATS)
+
+Sustained-publish throughput harness (M2.2):
+
+```bash
+cd sdk
+PYTHONPATH=src python scripts/bench_eventbus_publish.py --duration 20
+```
+
+Results and bottleneck analysis: [docs/EVENTBUS-LOAD-TEST.md](../docs/EVENTBUS-LOAD-TEST.md).
+JSON artifacts land in `sdk/benchmarks/`.
+
 ## Install
 
 ```bash

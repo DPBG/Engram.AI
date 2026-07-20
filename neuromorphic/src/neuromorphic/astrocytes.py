@@ -114,12 +114,13 @@ class AstrocyteNetwork:
     def get_metrics(self) -> dict[str, Any]:
         """Return current astrocyte state for monitoring/dashboard."""
         return {
-            "calcium": {name: float(self._calcium[i])
-                        for i, name in enumerate(self._region_names)},
-            "gliotransmitter": {name: float(self._gliotransmitter[i])
-                                for i, name in enumerate(self._region_names)},
-            "plasticity_gates": {name: self.get_plasticity_gate(name)
-                                 for name in self._region_names},
+            "calcium": {name: float(self._calcium[i]) for i, name in enumerate(self._region_names)},
+            "gliotransmitter": {
+                name: float(self._gliotransmitter[i]) for i, name in enumerate(self._region_names)
+            },
+            "plasticity_gates": {
+                name: self.get_plasticity_gate(name) for name in self._region_names
+            },
         }
 
     def get_state(self) -> dict[str, Any]:

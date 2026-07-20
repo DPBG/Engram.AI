@@ -55,25 +55,27 @@ class DatasetManifest:
         elapsed_s: float,
     ) -> None:
         """Record a completed video training entry."""
-        self._entries.append({
-            "session_id": session_id,
-            "filepath": filepath,
-            "title": title,
-            "url": url,
-            "category": category,
-            "video_hash": video_hash,
-            "target_loops": target_loops,
-            "completed_loops": completed_loops,
-            "frames_emitted": frames_emitted,
-            "learning_score": round(learning_score, 6),
-            "avg_learning_rate": round(avg_learning_rate, 6),
-            "duration_s": round(duration_s, 1),
-            "elapsed_s": round(elapsed_s, 1),
-            "status": status,
-            "quality_valid": quality_result.get("valid") if quality_result else None,
-            "quality_issues": quality_result.get("issues") if quality_result else [],
-            "recorded_at": time.time(),
-        })
+        self._entries.append(
+            {
+                "session_id": session_id,
+                "filepath": filepath,
+                "title": title,
+                "url": url,
+                "category": category,
+                "video_hash": video_hash,
+                "target_loops": target_loops,
+                "completed_loops": completed_loops,
+                "frames_emitted": frames_emitted,
+                "learning_score": round(learning_score, 6),
+                "avg_learning_rate": round(avg_learning_rate, 6),
+                "duration_s": round(duration_s, 1),
+                "elapsed_s": round(elapsed_s, 1),
+                "status": status,
+                "quality_valid": quality_result.get("valid") if quality_result else None,
+                "quality_issues": quality_result.get("issues") if quality_result else [],
+                "recorded_at": time.time(),
+            }
+        )
 
     def save(self) -> Path:
         """Save the manifest to disk and return the path."""
@@ -88,12 +90,8 @@ class DatasetManifest:
             "total_videos": len(self._entries),
             "total_loops": sum(e["completed_loops"] for e in self._entries),
             "total_frames": sum(e["frames_emitted"] for e in self._entries),
-            "total_learning_score": round(
-                sum(e["learning_score"] for e in self._entries), 6
-            ),
-            "categories": sorted(set(
-                e["category"] for e in self._entries if e["category"]
-            )),
+            "total_learning_score": round(sum(e["learning_score"] for e in self._entries), 6),
+            "categories": sorted(set(e["category"] for e in self._entries if e["category"])),
             "videos": self._entries,
         }
 
@@ -108,24 +106,16 @@ class DatasetManifest:
         for p in sorted(self._dir.glob("manifest_*.json"), reverse=True):
             try:
                 data = json.loads(p.read_text())
-                runs.append({
-                    "run_id": data.get("run_id", p.stem),
-                    "started_at": data.get("started_at", 0),
-                    "total_videos": data.get("total_videos", 0),
-                    "total_loops": data.get("total_loops", 0),
-                    "total_learning_score": data.get("total_learning_score", 0),
-                    "path": str(p),
-                })
+                runs.append(
+                    {
+                        "run_id": data.get("run_id", p.stem),
+                        "started_at": data.get("started_at", 0),
+                        "total_videos": data.get("total_videos", 0),
+                        "total_loops": data.get("total_loops", 0),
+                        "total_learning_score": data.get("total_learning_score", 0),
+                        "path": str(p),
+                    }
+                )
             except (json.JSONDecodeError, OSError):
                 continue
         return runs
-
-    def load_run(self, run_id: str) -> dict | None:
-        """Load a specific manifest by run_id."""
-        path = self._dir / f"manifest_{run_id}.json"
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return None

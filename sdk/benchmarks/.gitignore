@@ -1,0 +1,3 @@
+# Timestamped local runs from scripts/bench_eventbus_publish.py
+eventbus_publish_*.json
+!eventbus_publish_latest.json

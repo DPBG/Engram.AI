@@ -23,9 +23,7 @@ import logging
 import time
 from pathlib import Path
 
-import numpy as np
-
-from activelearning.plugins import SensorPlugin, PluginCapability, RiskClass
+from activelearning.plugins import PluginCapability, RiskClass, SensorPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +60,13 @@ class TranscriptSensor(SensorPlugin[str]):
         self._segments_emitted: int = 0
         self._audio_duration_s: float = 0.0
 
-        self.add_capability(PluginCapability(
-            name="video_transcription",
-            description="Transcribes video audio and emits text segments",
-            parameters={"model": model_size, "mode": "offline"},
-        ))
+        self.add_capability(
+            PluginCapability(
+                name="video_transcription",
+                description="Transcribes video audio and emits text segments",
+                parameters={"model": model_size, "mode": "offline"},
+            )
+        )
 
     def _cache_path(self) -> Path:
         """Path to cached transcript JSON alongside the video file."""
@@ -96,11 +96,16 @@ class TranscriptSensor(SensorPlugin[str]):
         """Save transcript to cache file for instant loading next time."""
         cache = self._cache_path()
         try:
-            cache.write_text(json.dumps({
-                "model": self._model_size,
-                "audio_duration_s": self._audio_duration_s,
-                "segments": self._segments,
-            }, ensure_ascii=False))
+            cache.write_text(
+                json.dumps(
+                    {
+                        "model": self._model_size,
+                        "audio_duration_s": self._audio_duration_s,
+                        "segments": self._segments,
+                    },
+                    ensure_ascii=False,
+                )
+            )
             logger.info(f"Cached transcript: {cache.name}")
         except OSError as e:
             logger.warning(f"Failed to cache transcript: {e}")
@@ -128,7 +133,9 @@ class TranscriptSensor(SensorPlugin[str]):
                     "Install with: pip install sensory-gateway[stt]"
                 )
 
-            logger.info(f"Transcribing {Path(self._filepath).name} with Whisper {self._model_size}...")
+            logger.info(
+                f"Transcribing {Path(self._filepath).name} with Whisper {self._model_size}..."
+            )
             model = await loop.run_in_executor(
                 None,
                 lambda: WhisperModel(self._model_size, device="cpu", compute_type="int8"),
@@ -142,11 +149,13 @@ class TranscriptSensor(SensorPlugin[str]):
             for seg in segments_iter:
                 text = seg.text.strip()
                 if text:
-                    self._segments.append({
-                        "start": seg.start,
-                        "end": seg.end,
-                        "text": text,
-                    })
+                    self._segments.append(
+                        {
+                            "start": seg.start,
+                            "end": seg.end,
+                            "text": text,
+                        }
+                    )
 
             logger.info(
                 f"Transcription complete: {len(self._segments)} segments, "
@@ -208,7 +217,10 @@ class TranscriptSensor(SensorPlugin[str]):
             return seg["text"]
 
         # Advance past segments we missed (if playback jumped)
-        while self._segment_idx < len(self._segments) and video_time >= self._segments[self._segment_idx]["end"]:
+        while (
+            self._segment_idx < len(self._segments)
+            and video_time >= self._segments[self._segment_idx]["end"]
+        ):
             self._segment_idx += 1
 
         return None

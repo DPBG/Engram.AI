@@ -21,7 +21,7 @@ from activelearning.core import (
     current_timestamp,
     generate_trace_id,
 )
-from activelearning.database import Database, get_database
+from activelearning.database import Database, close_database, get_database
 from activelearning.embeddings import (
     EmbeddingService,
     embed_batch,
@@ -31,17 +31,33 @@ from activelearning.embeddings import (
 from activelearning.llm import LLMClient, LLMConfig, LLMError
 from activelearning.messages import (
     SUBJECT_SCHEMAS,
+    WIRE_SCHEMA_VERSION,
     MessageValidationError,
+    WireModel,
     schema_for_subject,
     validate_payload,
 )
-from activelearning.nats_client import EventBus, get_event_bus
+from activelearning.nats_client import (
+    CONNECTION_DRAIN_TIMEOUT_S,
+    DEFAULT_DECISION_TIMEOUT_S,
+    DEFAULT_REQUEST_TIMEOUT_S,
+    RECONNECT_WAIT_TIMEOUT_S,
+    EventBus,
+    close_event_bus,
+    get_event_bus,
+)
 from activelearning.plugins import ActuatorPlugin, SensorPlugin, register_actuator, register_sensor
+from activelearning.qdrant_store import QdrantHit, QdrantPoint, QdrantStore
 from activelearning.signing import (
     DECISION_KEY_ENV,
+    OPERATOR_KEY_ENV,
+    OPERATOR_TIMESTAMP_TOLERANCE_MS,
+    operator_signing_enabled,
     sign_decision,
+    sign_operator_action,
     signing_enabled,
     verify_decision,
+    verify_operator_action,
 )
 from activelearning.subjects import (
     Subjects,
@@ -50,7 +66,7 @@ from activelearning.subjects import (
     observation_subject,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # Core types
@@ -70,14 +86,25 @@ __all__ = [
     # NATS client
     "EventBus",
     "get_event_bus",
+    "close_event_bus",
+    # EventBus timeout policy (issue #233)
+    "DEFAULT_REQUEST_TIMEOUT_S",
+    "DEFAULT_DECISION_TIMEOUT_S",
+    "RECONNECT_WAIT_TIMEOUT_S",
+    "CONNECTION_DRAIN_TIMEOUT_S",
     # Database
     "Database",
     "get_database",
+    "close_database",
     # Embeddings
     "EmbeddingService",
     "get_embedding_service",
     "embed_text",
     "embed_batch",
+    # Vector store
+    "QdrantStore",
+    "QdrantHit",
+    "QdrantPoint",
     # LLM (text generation / chat)
     "LLMClient",
     "LLMConfig",
@@ -93,9 +120,14 @@ __all__ = [
     "register_actuator",
     # Decision signing (safety gate authentication)
     "sign_decision",
+    "sign_operator_action",
     "verify_decision",
+    "verify_operator_action",
     "signing_enabled",
+    "operator_signing_enabled",
     "DECISION_KEY_ENV",
+    "OPERATOR_KEY_ENV",
+    "OPERATOR_TIMESTAMP_TOLERANCE_MS",
     # NATS subject registry
     "Subjects",
     "decision_subject",
@@ -106,4 +138,6 @@ __all__ = [
     "validate_payload",
     "schema_for_subject",
     "SUBJECT_SCHEMAS",
+    "WireModel",
+    "WIRE_SCHEMA_VERSION",
 ]

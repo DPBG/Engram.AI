@@ -12,13 +12,17 @@ Body-profile integration:
 """
 
 import logging
+import math
 import re
-import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
-import time
+from typing import TYPE_CHECKING, Any, Optional
 
-from activelearning import KernelDecisionType as DecisionType, RiskAnalysis
+from activelearning import KernelDecisionType as DecisionType
+from activelearning import (
+    RiskAnalysis,
+    current_timestamp,
+    generate_trace_id,
+)
 
 if TYPE_CHECKING:
     from beliefs.profiles import BodyProfile
@@ -29,13 +33,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class KernelDecision:
     """A decision from the Kernel."""
+
     trace_id: str
     type: DecisionType
-    reason: Optional[str] = None
-    transformations: Optional[list[dict[str, Any]]] = None
+    reason: str | None = None
+    transformations: list[dict[str, Any]] | None = None
     risk_score: float = 0.0
-    issued_at: int = field(default_factory=lambda: int(time.time() * 1000))
-    expires_at: Optional[int] = None
+    issued_at: int = field(default_factory=current_timestamp)
+    expires_at: int | None = None
 
 
 # Protected paths that cannot be modified
@@ -66,6 +71,33 @@ SELF_REFERENTIAL_PATTERNS = [
     r"safety.?supervisor",
 ]
 
+# Fail-closed when Safety Supervisor is unavailable (timeout, crash, or error).
+_UNAVAILABLE_RISK_SCORE = 1.0
+_UNAVAILABLE_FLAG = "SAFETY_ANALYSIS_UNAVAILABLE"
+
+
+def unavailable_risk_analysis(trace_id: str = "") -> RiskAnalysis:
+    """Return a fail-closed risk analysis when Safety Supervisor cannot run."""
+    return RiskAnalysis(
+        trace_id=trace_id,
+        risk_score=_UNAVAILABLE_RISK_SCORE,
+        flags=[_UNAVAILABLE_FLAG],
+    )
+
+
+_UNAVAILABLE_BELIEFS_NORM_ID = "BELIEFS_UNAVAILABLE"
+
+
+def unavailable_belief_norm_violations(reason: str = "") -> list[dict[str, Any]]:
+    """Return fail-closed norm violations when Beliefs service cannot run."""
+    return [
+        {
+            "norm_id": _UNAVAILABLE_BELIEFS_NORM_ID,
+            "content": reason or "Beliefs service unavailable",
+            "risk_boost": 1.0,
+        }
+    ]
+
 
 class KernelEvaluator:
     """
@@ -90,7 +122,7 @@ class KernelEvaluator:
         # approval consumer must treat the pending proposal as DENY (fail-closed,
         # Phase 1.9) rather than letting it linger indefinitely.
         self.defer_ttl_ms = defer_ttl_ms
-        self._body_profile: Optional["BodyProfile"] = body_profile
+        self._body_profile: BodyProfile | None = body_profile
         # SAFE_HALT kill switch (Phase 1.9). When halted, the Kernel — the sole
         # authority that may approve anything — DENIES every proposal. Because
         # actions, code deployments, and Coordinator task execution all route
@@ -131,11 +163,41 @@ class KernelEvaluator:
         self._body_profile = profile
         logger.info(f"Evaluator loaded body profile: {profile.name}")
 
+    def _risk_from_analysis(
+        self,
+        risk_analysis: RiskAnalysis | None,
+    ) -> tuple[float, list[str]]:
+        """Map Safety Supervisor output to a clamped score and flags.
+
+        Missing analysis is treated as maximum risk so the Kernel fails closed
+        when the safety layer cannot run.
+
+        PR #122 fixed a fail-open path where a missing risk analysis was
+        silently treated as zero risk. This function is the last line of
+        defense against the same class of bug at the value level: a NaN (or
+        +/-inf) ``risk_score`` must never slip through as if it were safe.
+        ``max(0.0, min(nan, 1.0))`` evaluates to ``0.0`` in Python — NaN
+        comparisons are always False, so ``min``/``max`` silently keep their
+        first argument — which would fail OPEN exactly like the original bug.
+        kernel/service.py's ``_get_risk_analysis()`` already rejects a
+        non-finite ``risk_score`` from the wire before constructing a
+        ``RiskAnalysis``, but this method must not depend on every caller
+        having done that: it is public API and any code that constructs a
+        ``RiskAnalysis`` directly and calls ``evaluate_action_proposal``/
+        ``evaluate_code_proposal`` must still be handled fail-closed here.
+        """
+        if risk_analysis is None or not math.isfinite(risk_analysis.risk_score):
+            return _UNAVAILABLE_RISK_SCORE, [_UNAVAILABLE_FLAG]
+        return (
+            max(0.0, min(risk_analysis.risk_score, 1.0)),
+            list(risk_analysis.flags),
+        )
+
     def evaluate_action_proposal(
         self,
         proposal: dict[str, Any],
-        risk_analysis: Optional[RiskAnalysis] = None,
-        norm_violations: Optional[list[dict[str, Any]]] = None,
+        risk_analysis: RiskAnalysis | None = None,
+        norm_violations: list[dict[str, Any]] | None = None,
     ) -> KernelDecision:
         """
         Evaluate an action proposal.
@@ -149,7 +211,7 @@ class KernelEvaluator:
         Returns:
             KernelDecision
         """
-        trace_id = proposal.get("trace_id", str(uuid.uuid4()))
+        trace_id = proposal.get("trace_id", generate_trace_id())
         action = proposal.get("action", {})
 
         # Kill switch: deny everything while halted.
@@ -157,8 +219,7 @@ class KernelEvaluator:
             return self._halt_decision(trace_id)
 
         # Initialize risk score — clamp external input to [0.0, 1.0]
-        risk_score = max(0.0, min(risk_analysis.risk_score, 1.0)) if risk_analysis else 0.0
-        flags = list(risk_analysis.flags) if risk_analysis else []
+        risk_score, flags = self._risk_from_analysis(risk_analysis)
         reason = None
 
         # Apply norm violations from Beliefs system
@@ -177,20 +238,18 @@ class KernelEvaluator:
                 risk_score=1.0,
             )
 
-        # === Body-profile checks (capability markers + motor limits) ===
-        profile_result = self._check_body_profile(action, flags)
-        if profile_result is not None:
+        # === Body-profile hard DENYs (capability markers) ===
+        # Only outright denials run here, *before* the risk thresholds. The
+        # motor-limit clamp is a TRANSFORM and is applied later (after the
+        # DENY/DEFER gates) so a clamp can never short-circuit a high-risk
+        # denial — see _apply_body_profile_clamp below.
+        profile_deny = self._check_body_profile_denials(action, flags)
+        if profile_deny is not None:
             return KernelDecision(
                 trace_id=trace_id,
-                type=profile_result["type"],
-                reason=profile_result["reason"],
-                risk_score=profile_result.get("risk_score", 0.9),
-                transformations=profile_result.get("transformations"),
-                expires_at=(
-                    int(time.time() * 1000) + self.decision_ttl_ms
-                    if profile_result["type"] == DecisionType.TRANSFORM
-                    else None
-                ),
+                type=profile_deny["type"],
+                reason=profile_deny["reason"],
+                risk_score=profile_deny.get("risk_score", 1.0),
             )
 
         # Check action envelope limits
@@ -218,19 +277,34 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Elevated risk ({risk_score:.2f}) - requires human approval",
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
+                expires_at=current_timestamp() + self.defer_ttl_ms,
             )
 
-        # Check for transformable actions
-        transformations = self._generate_transformations(action, flags)
+        # Check for transformable actions. The body-profile motor clamp is
+        # applied here (only after the risk thresholds have cleared the action)
+        # and is composed with any other safety transformations, so a clamp
+        # never bypasses a DENY/DEFER.
+        clamp = self._apply_body_profile_clamp(action, flags)
+        working_action = clamp["transformations"][0] if clamp is not None else action
+
+        transformations = self._generate_transformations(working_action, flags)
+        if transformations is None and clamp is not None:
+            # No further safety transform needed; the clamp itself is the change.
+            transformations = clamp["transformations"]
+
         if transformations:
+            reason = (
+                clamp["reason"]
+                if clamp is not None and transformations is clamp["transformations"]
+                else "Action transformed for safety"
+            )
             return KernelDecision(
                 trace_id=trace_id,
                 type=DecisionType.TRANSFORM,
-                reason="Action transformed for safety",
+                reason=reason,
                 transformations=transformations,
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+                expires_at=current_timestamp() + self.decision_ttl_ms,
             )
 
         # Allow
@@ -238,13 +312,13 @@ class KernelEvaluator:
             trace_id=trace_id,
             type=DecisionType.ALLOW,
             risk_score=risk_score,
-            expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+            expires_at=current_timestamp() + self.decision_ttl_ms,
         )
 
     def evaluate_code_proposal(
         self,
         proposal: dict[str, Any],
-        risk_analysis: Optional[RiskAnalysis] = None,
+        risk_analysis: RiskAnalysis | None = None,
     ) -> KernelDecision:
         """
         Evaluate a code proposal from Meta-Programmer.
@@ -256,7 +330,7 @@ class KernelEvaluator:
         Returns:
             KernelDecision
         """
-        trace_id = proposal.get("trace_id", str(uuid.uuid4()))
+        trace_id = proposal.get("trace_id", generate_trace_id())
         target_path = proposal.get("target_path", "")
         code_preview = proposal.get("code_preview", "")
 
@@ -264,9 +338,8 @@ class KernelEvaluator:
         if self._halted:
             return self._halt_decision(trace_id)
 
-        # Initialize risk analysis
-        risk_score = risk_analysis.risk_score if risk_analysis else 0.0
-        flags = risk_analysis.flags.copy() if risk_analysis else []
+        # Initialize risk analysis — fail closed when Safety Supervisor is down.
+        risk_score, flags = self._risk_from_analysis(risk_analysis)
 
         # Check protected paths (always DENY)
         if self._is_protected_path(target_path):
@@ -312,14 +385,14 @@ class KernelEvaluator:
                 type=DecisionType.DEFER,
                 reason=f"Code requires human review: {', '.join(flags)}",
                 risk_score=risk_score,
-                expires_at=int(time.time() * 1000) + self.defer_ttl_ms,
+                expires_at=current_timestamp() + self.defer_ttl_ms,
             )
 
         return KernelDecision(
             trace_id=trace_id,
             type=DecisionType.ALLOW,
             risk_score=risk_score,
-            expires_at=int(time.time() * 1000) + self.decision_ttl_ms,
+            expires_at=current_timestamp() + self.decision_ttl_ms,
         )
 
     def _is_protected_path(self, path: str) -> bool:
@@ -348,11 +421,15 @@ class KernelEvaluator:
 
     # Valid motor channels from the brain's motor cortex sub-ranges.
     _KNOWN_CHANNELS = {
-        "locomotion", "manipulation", "head",
-        "speech", "expression", "cognitive",
+        "locomotion",
+        "manipulation",
+        "head",
+        "speech",
+        "expression",
+        "cognitive",
     }
 
-    def _check_envelope(self, action: dict[str, Any]) -> Optional[str]:
+    def _check_envelope(self, action: dict[str, Any]) -> str | None:
         """Check if action violates safety envelopes."""
         # Motor command envelope
         if "intensity" in action:
@@ -388,7 +465,7 @@ class KernelEvaluator:
         self,
         action: dict[str, Any],
         flags: list[str],
-    ) -> Optional[list[dict[str, Any]]]:
+    ) -> list[dict[str, Any]] | None:
         """Generate safe transformations for an action."""
         if not flags:
             return None
@@ -430,17 +507,22 @@ class KernelEvaluator:
     # Body-profile enforcement
     # ------------------------------------------------------------------
 
-    def _check_body_profile(
+    def _check_body_profile_denials(
         self,
         action: dict[str, Any],
         flags: list[str],
-    ) -> Optional[dict[str, Any]]:
-        """Check action against body-profile capability markers and motor limits.
+    ) -> dict[str, Any] | None:
+        """Body-profile *hard denials* — capability markers only.
+
+        These are unconditional DENYs (a disabled channel/capability) and are
+        safe to evaluate before the risk thresholds. The motor-limit *clamp*
+        (a TRANSFORM) is intentionally NOT here: it is applied later, after the
+        risk-threshold gates, by :meth:`_apply_body_profile_clamp`, so that a
+        clamp can never short-circuit a high-risk DENY/DEFER.
 
         Returns:
-            None if no profile-level violation.
-            A dict with 'type', 'reason', and optional 'transformations'/'risk_score'
-            if the action should be DENIED or TRANSFORMED.
+            None if no capability is violated.
+            A DENY dict ('type', 'reason', 'risk_score') otherwise.
         """
         # Snapshot profile reference — safe even if set_body_profile() is called
         # between awaits in the Kernel service (asyncio cooperative scheduling).
@@ -449,35 +531,49 @@ class KernelEvaluator:
             return None
 
         channel = action.get("channel", "")
-        intensity = action.get("intensity")
         action_type = action.get("type", "")
 
-        # 1. Channel capability check — hard DENY if channel is disabled
+        # Channel capability check — hard DENY if channel is disabled
         if channel and not profile.is_channel_allowed(channel):
             flags.append(f"PROFILE_DENY:{channel}")
             return {
                 "type": DecisionType.DENY,
-                "reason": (
-                    f"Body profile '{profile.name}' disallows "
-                    f"channel '{channel}'"
-                ),
+                "reason": (f"Body profile '{profile.name}' disallows " f"channel '{channel}'"),
                 "risk_score": 1.0,
             }
 
         # Cognitive channel check (action_type based)
-        if action_type == "cognitive_query":
-            if not profile.is_channel_allowed("cognitive"):
-                flags.append("PROFILE_DENY:cognitive")
-                return {
-                    "type": DecisionType.DENY,
-                    "reason": (
-                        f"Body profile '{profile.name}' disallows "
-                        f"cognitive queries"
-                    ),
-                    "risk_score": 1.0,
-                }
+        if action_type == "cognitive_query" and not profile.is_channel_allowed("cognitive"):
+            flags.append("PROFILE_DENY:cognitive")
+            return {
+                "type": DecisionType.DENY,
+                "reason": (f"Body profile '{profile.name}' disallows " f"cognitive queries"),
+                "risk_score": 1.0,
+            }
 
-        # 2. Motor-limit clamping — TRANSFORM if intensity exceeds profile max
+        return None
+
+    def _apply_body_profile_clamp(
+        self,
+        action: dict[str, Any],
+        flags: list[str],
+    ) -> dict[str, Any] | None:
+        """Body-profile motor-limit clamp — a TRANSFORM, applied *after* the
+        risk thresholds.
+
+        Clamping intensity does not address why an action is high-risk (target,
+        context, norm violation), so this must run only once the DENY/DEFER
+        gates have already cleared the action. Returns a TRANSFORM dict
+        (with the clamped action in 'transformations') or None if no clamp is
+        needed.
+        """
+        profile = self._body_profile
+        if profile is None:
+            return None
+
+        channel = action.get("channel", "")
+        intensity = action.get("intensity")
+
         if channel and isinstance(intensity, (int, float)):
             limit = profile.get_motor_limit(channel)
             if intensity > limit.max_intensity:

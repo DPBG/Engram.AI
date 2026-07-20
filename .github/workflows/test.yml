@@ -14,23 +14,73 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect which areas changed so the heavy suites only run when relevant. The
+  # safety-critical jobs (governance, lint, typecheck) are deliberately NOT gated
+  # below — they always run. A shared set (CI config, constraints) forces the
+  # full matrix so a tooling change can't skip coverage.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      neuromorphic: ${{ steps.filter.outputs.neuromorphic }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+      sandbox: ${{ steps.filter.outputs.sandbox }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Filter paths
+        uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            shared: &shared
+              - 'constraints.txt'
+              - '.github/workflows/test.yml'
+              - '.github/actions/**'
+            neuromorphic:
+              - *shared
+              - 'neuromorphic/**'
+              - 'sdk/**'
+            sdk:
+              - *shared
+              - 'sdk/**'
+            sandbox:
+              - *shared
+              - 'sandbox/**'
+              - 'meta-programmer/**'
+
   neuromorphic:
     name: Neuromorphic test suite
+    needs: changes
+    if: ${{ needs.changes.outputs.neuromorphic == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # PRs get fast feedback on one Python; the full 3.11+3.12 matrix runs
+        # on push to dev/main so both versions are still verified on merge.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv and Python ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
+
+      - name: Run cognitive bridge lifecycle tests
+        working-directory: neuromorphic
+        env:
+          ENGRAM_SKIP_MUJOCO_LOOP: "1"
+        # test_training_session_complete_hook.py also imports neuromorphic.service
+        # (which imports activelearning), so it needs the same --with-editable ../sdk
+        # as the cognitive-bridge tests — the general neuromorphic job below has no
+        # SDK dependency at all.
+        run: uv run --extra dev --with-editable ../sdk python -m pytest tests/test_cognitive_bridge_lifecycle.py tests/test_cognitive_action.py::TestCognitiveBridgeService tests/test_training_session_complete_hook.py -v -p no:anchorpy
 
       - name: Run neuromorphic tests
         working-directory: neuromorphic
@@ -38,40 +88,74 @@ jobs:
         # stepping aborts (SIGABRT) nondeterministically on headless runners.
         env:
           ENGRAM_SKIP_MUJOCO_LOOP: "1"
-        run: uv run --extra dev python -m pytest tests/ -v -p no:anchorpy
+        run: uv run --extra dev python -m pytest tests/ -v -p no:anchorpy --ignore=tests/test_cognitive_bridge_lifecycle.py --ignore=tests/test_training_session_complete_hook.py
+
+  benchmark-regression:
+    name: Neuromorphic benchmark regression gate
+    needs: changes
+    if: ${{ needs.changes.outputs.neuromorphic == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fast small-network profile (~1 min). Gated on neuromorphic changes.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Run benchmark CI performance gate
+        working-directory: neuromorphic
+        env:
+          ENGRAM_SKIP_MUJOCO_LOOP: "1"
+        run: uv run --extra dev python scripts/benchmark_ci_gate.py
+
+      - name: Run benchmark gate unit tests
+        working-directory: neuromorphic
+        run: uv run --extra dev python -m pytest tests/test_benchmark_ci_gate.py -v -p no:anchorpy
 
   sdk:
     name: SDK test suite
+    needs: changes
+    if: ${{ needs.changes.outputs.sdk == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # PRs get fast feedback on one Python; the full 3.11+3.12 matrix runs
+        # on push to dev/main so both versions are still verified on merge.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install uv and Python ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Engram CI env (uv + Python + nats-server)
+        uses: ./.github/actions/setup-engram
         with:
-          enable-cache: true
           python-version: ${{ matrix.python-version }}
-
-      - name: Install nats-server
-        run: |
-          set -euo pipefail
-          VERSION=v2.10.22
-          ASSET="nats-server-${VERSION}-linux-amd64.tar.gz"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/${ASSET}"
-          curl -fsSLO "https://github.com/nats-io/nats-server/releases/download/${VERSION}/SHA256SUMS"
-          grep " ${ASSET}$" SHA256SUMS | sha256sum -c -
-          tar -xzf "${ASSET}"
-          sudo mv "nats-server-${VERSION}-linux-amd64/nats-server" /usr/local/bin/
+          nats: "true"
 
       - name: Run SDK tests with coverage
         working-directory: sdk
-        run: uv run --extra dev python -m pytest tests/ -v --cov=activelearning --cov-report=term-missing
+        run: uv run --extra dev python -m pytest tests/ -v --cov=activelearning --cov-report=term-missing --cov-report=json:coverage.json
+
+      # Non-blocking: publish the SDK coverage percentage to the run summary so
+      # reviewers see the trend on a PR without gating merges. Only the 3.12 leg
+      # writes it, to avoid a duplicate line from the matrix.
+      - name: Coverage summary
+        if: ${{ always() && matrix.python-version == '3.12' }}
+        working-directory: sdk
+        run: |
+          if [ -f coverage.json ]; then
+            pct=$(python -c "import json; print(round(json.load(open('coverage.json'))['totals']['percent_covered'], 1))")
+            echo "### SDK coverage: ${pct}%" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### SDK coverage: report not generated" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   governance:
     name: Governance & safety tests
@@ -80,42 +164,79 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # PRs get fast feedback on one Python; the full 3.11+3.12 matrix runs
+        # on push to dev/main so both versions are still verified on merge.
+        python-version: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install uv and Python ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Engram CI env (uv + Python + nats-server)
+        uses: ./.github/actions/setup-engram
         with:
-          enable-cache: true
           python-version: ${{ matrix.python-version }}
+          nats: "true"
 
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor tests
+      - name: Run NATS authz red-team tests (E1.1.9)
+        # -o addopts="" strips sdk/pyproject.toml's inherited --cov flag: this
+        # step's env has no pytest-cov, so --cov would be an unrecognized option
+        # (pytest usage error, exit 4). The other governance steps already do this.
+        # pytest-timeout honors the suite's `timeout = 120` ini so a hung test
+        # (e.g. an unbounded NATS reconnect) fails fast instead of riding the
+        # job to its 15-minute timeout.
+        run: uv run --no-project --with-editable ./sdk --with pytest --with pytest-asyncio --with pytest-timeout python -m pytest sdk/tests/red_team/ -o addopts="" -v
+
+      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Safety-Supervisor + Launcher tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src
+          PYTHONPATH: .:kernel/src:meta-programmer/src:coordinator/src:dashboard/src:safety-supervisor/src:external-api/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
         # Coordinator gate + dashboard auth tests load their module under test
         # directly (pure stdlib), so they need no extra service deps.
-        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests -o addopts="" -v
-      - name: Run Kernel + Meta-Programmer + Coordinator + Dashboard + Beliefs safety tests
+        # external-api tests inject fake clients; anthropic/openai are not imported.
+        # launcher/tests covers the kernel-loss watchdog (E1.9.3) including the
+        # M2.40 chaos test that needs nats-server (installed above).
+        # --import-mode=importlib: these dirs have no tests/__init__.py, so
+        # pytest's default import mode collides when two services happen to
+        # share a test file basename (e.g. kernel/tests/test_service.py vs
+        # cache/tests/test_service.py) — importlib mode keys each module by
+        # its full file path instead, so same-named files never collide.
+        run: uv run --no-project --with-editable ./sdk --with pytest python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests safety-supervisor/tests external-api/tests launcher/tests -o addopts="" --import-mode=importlib -v
+      - name: Run Kernel + Meta-Programmer + Coordinator + Cache + Dashboard + Beliefs safety tests
         env:
-          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:dashboard/src:beliefs/src
+          PYTHONPATH: kernel/src:meta-programmer/src:coordinator/src:cache/src:dashboard/src:beliefs/src
         # uv run builds an ephemeral env (avoids the runner's externally-managed
         # system Python); --with-editable ./sdk provides activelearning + its deps.
-        # Coordinator gate + dashboard auth tests load their module under test
-        # directly (pure stdlib), so they need no extra service deps. Beliefs
-        # tests need networkx (the belief graph backend).
-        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx python -m pytest kernel/tests meta-programmer/tests coordinator/tests dashboard/tests beliefs/tests -o addopts="" -v
+        # Coordinator/cache tests load their module under test directly and inject
+        # mocks (no Qdrant/Ollama), and drive coroutines with asyncio.run, so no
+        # pytest-asyncio is needed. Beliefs tests need networkx (the belief graph
+        # backend). The dashboard router tests exercise the FastAPI app, so add
+        # fastapi + httpx (its TestClient backend); they self-skip via importorskip
+        # if those are ever absent.
+        # --import-mode=importlib: kernel/tests/test_service.py and
+        # cache/tests/test_service.py collide under pytest's default import
+        # mode ("import file mismatch") since neither dir is a proper
+        # package (no __init__.py) — importlib mode keys each module by its
+        # full file path instead, so same-named files never collide.
+        run: uv run --no-project --with-editable ./sdk --with pytest --with networkx --with fastapi --with httpx python -m pytest kernel/tests meta-programmer/tests coordinator/tests cache/tests dashboard/tests beliefs/tests -o addopts="" --import-mode=importlib -v
 
   sandbox:
-    name: Sandbox image build + smoke
+    name: Sandbox image build + smoke + containment
+    needs: changes
+    if: ${{ needs.changes.outputs.sandbox == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
 
       # Builds activelearning-sandbox:latest via the build-only compose profile,
       # then runs a passing + failing generated test set inside the hardened
@@ -124,16 +245,28 @@ jobs:
       - name: Build sandbox image + run smoke tests
         run: bash sandbox/smoke/run_smoke.sh
 
+      # Adversarial integration tests (E1.3.3): each test proves one containment
+      # property by running the payload both without its guard (baseline) and
+      # with full hardening (guarded). Removing a guard from the guarded run
+      # would break the assertion — confirming the test is sensitive to the guard.
+      - name: Run containment integration tests
+        env:
+          PYTHONPATH: meta-programmer/src
+        run: >-
+          uv run --no-project --with pytest
+          python -m pytest meta-programmer/tests/test_sandbox_containment_integration.py
+          -v -o addopts=""
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       # BLOCKING: the "real bug" subset (syntax errors, undefined names, broken
       # comparisons/f-strings). A clean codebase always passes this; it would
@@ -141,31 +274,56 @@ jobs:
       - name: Ruff (blocking bug gate)
         run: uvx ruff check --select E9,F63,F7,F82 .
 
-      # ADVISORY: full style rule set. Flip to blocking once the backlog is
-      # cleared (ROADMAP.md P5).
-      - name: Ruff (full, advisory)
-        continue-on-error: true
+      # BLOCKING: full style rule set.
+      - name: Ruff (full)
         run: uvx ruff check .
 
-      # ADVISORY: formatting. Flip to blocking after a one-time `black .` pass.
-      - name: Black (advisory)
-        continue-on-error: true
+      # BLOCKING: formatting enforced at line-length 100.
+      - name: Black
         run: uvx black --check --line-length 100 .
 
   typecheck:
-    name: Type check (advisory)
+    name: Type check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
-      # ADVISORY for now: strict mypy has a backlog. Step-level continue-on-error
-      # keeps the job (and its check) green while still surfacing type errors in
-      # the log. Flip to blocking once the backlog is cleared (ROADMAP.md P5).
+      # BLOCKING: all mypy errors in sdk/src/activelearning are resolved.
       - name: Mypy (sdk)
-        continue-on-error: true
         run: uvx mypy --python-version 3.11 --ignore-missing-imports sdk/src/activelearning
+
+  # Single required status check for branch protection. Instead of naming every
+  # job, protect `dev`/`main` on this one. A path-skipped job reports "skipped"
+  # (not "failure"), which counts as a pass here — only real failures/cancels
+  # fail the gate.
+  ci-success:
+    name: CI success
+    if: ${{ always() }}
+    needs:
+      - changes
+      - neuromorphic
+      - benchmark-regression
+      - sdk
+      - governance
+      - sandbox
+      - lint
+      - typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify no required job failed
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "Upstream job results: ${results}"
+          for r in ${results}; do
+            case "${r}" in
+              success|skipped) ;;
+              *) echo "::error::A required job did not succeed (result=${r})"; exit 1 ;;
+            esac
+          done
+          echo "All required jobs passed or were skipped by the path filter."

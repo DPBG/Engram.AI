@@ -8,7 +8,7 @@ It provides risk scores and flags to the Moral Kernel.
 import ast
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from activelearning import RiskAnalysis
 
@@ -54,6 +54,49 @@ PROTECTED_PATHS = [
     r"/meta-programmer/orchestrator",
     r"/meta-programmer/agents",
 ]
+
+# Dangerous builtins detected at the AST level so they cannot be hidden from the
+# regex layer (e.g. parenthesized `(eval)(...)`, or split across whitespace).
+DANGEROUS_BUILTINS = {
+    "eval": ("DYNAMIC_EXECUTION", 0.5),
+    "exec": ("DYNAMIC_EXECUTION", 0.5),
+    "compile": ("DYNAMIC_EXECUTION", 0.4),
+    "__import__": ("DYNAMIC_IMPORT", 0.4),
+}
+
+# getattr/setattr/delattr with a COMPUTED name, or a constant naming one of
+# these, is a classic way to reach a dangerous attribute while evading the
+# regex (e.g. getattr(os, "sys" + "tem"), getattr(__builtins__, "eval")).
+DYNAMIC_ATTR_BUILTINS = {"getattr", "setattr", "delattr"}
+DANGEROUS_ATTR_NAMES = {
+    "system",
+    "popen",
+    "exec",
+    "eval",
+    "compile",
+    "fork",
+    "spawn",
+    "__import__",
+    "__globals__",
+    "__code__",
+    "__dict__",
+    "__subclasses__",
+    "__bases__",
+    "__builtins__",
+    "__class__",
+}
+
+# Importing one of Engram's own safety/governance components from generated code
+# is self-referential / self-modifying — the brain must not edit its own guards.
+SELF_REFERENTIAL_MODULES = {
+    "kernel",
+    "safety_supervisor",
+    "meta_programmer",
+    "beliefs",
+    "overrides",
+    "coordinator",
+    "planner",
+}
 
 
 class RiskAnalyzer:
@@ -271,10 +314,94 @@ class RiskAnalyzer:
                         analysis.flags.append("COMPLEX_COMPREHENSION")
                         analysis.risk_score += 0.1
 
+                # Evasion-resistant detections (the regex layer can be fooled by
+                # parenthesized names, computed attribute strings, or aliases).
+                if isinstance(node, ast.Call):
+                    self._analyze_call_node(node, analysis)
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    self._analyze_import_node(node, analysis)
+
         except SyntaxError:
             analysis.flags.append("SYNTAX_ERROR")
             analysis.risk_score += 0.1
             analysis.recommendations.append("Code has syntax errors")
+
+    def _flag(self, analysis: RiskAnalysis, flag: str, risk: float, rec: str) -> None:
+        """Add a flag once (no duplicate identical flags) and accrue its risk."""
+        if flag not in analysis.flags:
+            analysis.flags.append(flag)
+            analysis.risk_score += risk
+            analysis.recommendations.append(rec)
+
+    def _analyze_call_node(self, node: ast.Call, analysis: RiskAnalysis) -> None:
+        """Flag dangerous builtin calls and dynamic attribute access via AST.
+
+        Catches forms the regex misses: a parenthesized name like ``(eval)(x)``,
+        a call whose name is reached through ``getattr``, or an attribute name
+        built from a string expression.
+        """
+        func = node.func
+        if not isinstance(func, ast.Name):
+            return
+        name = func.id
+
+        if name in DANGEROUS_BUILTINS:
+            flag, risk = DANGEROUS_BUILTINS[name]
+            self._flag(analysis, flag, risk, f"Dangerous builtin call: {name}()")
+            # __import__("subprocess") — surface the concrete module.
+            if name == "__import__" and node.args:
+                arg = node.args[0]
+                if isinstance(arg, ast.Constant) and arg.value in DANGEROUS_IMPORTS:
+                    mod = arg.value
+                    self._flag(
+                        analysis,
+                        f"DANGEROUS_IMPORT:{mod}",
+                        DANGEROUS_IMPORTS[mod],
+                        f"Dangerous dynamic import: {mod}",
+                    )
+            return
+
+        if name in DYNAMIC_ATTR_BUILTINS and len(node.args) >= 2:
+            attr = node.args[1]
+            # A non-constant attribute name is computed at runtime → evasion.
+            if not isinstance(attr, ast.Constant):
+                self._flag(
+                    analysis,
+                    "DYNAMIC_ATTRIBUTE_ACCESS",
+                    0.3,
+                    f"Computed attribute name via {name}()",
+                )
+            # A constant naming a dangerous attribute (e.g. "system", "eval").
+            elif isinstance(attr.value, str) and attr.value in DANGEROUS_ATTR_NAMES:
+                self._flag(
+                    analysis,
+                    "DYNAMIC_ATTRIBUTE_ACCESS",
+                    0.3,
+                    f"{name}() reaches dangerous attribute '{attr.value}'",
+                )
+
+    def _analyze_import_node(self, node: ast.AST, analysis: RiskAnalysis) -> None:
+        """Flag self-referential imports of Engram's own safety components.
+
+        AST-based so it survives aliasing (``import kernel as k``) and
+        submodule/from forms (``from safety_supervisor.analyzer import X``).
+        """
+        roots: list[str] = []
+        if isinstance(node, ast.Import):
+            roots = [alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            # `from . import x` has module=None; only absolute roots matter here.
+            if node.module and node.level == 0:
+                roots = [node.module.split(".")[0]]
+
+        for root in roots:
+            if root in SELF_REFERENTIAL_MODULES:
+                self._flag(
+                    analysis,
+                    "SELF_REFERENTIAL_CODE",
+                    0.6,
+                    f"Self-referential import of safety component: {root}",
+                )
 
     def _is_protected_path(self, path: str) -> bool:
         """Check if path is protected."""

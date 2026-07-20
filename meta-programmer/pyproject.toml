@@ -21,10 +21,11 @@ classifiers = [
 ]
 
 dependencies = [
+    "activelearning-sdk",
     "nats-py>=2.6.0",
     "pydantic>=2.5.0",
     "aiohttp>=3.9.0",
-    "qdrant-client>=1.7.0",
+    "qdrant-client>=1.10.0",
     "aiosqlite>=0.19.0",
     "docker>=7.0.0",
 ]
@@ -45,6 +46,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Ensure local `cd meta-programmer && pytest` resolves the package and the
+# sibling SDK without needing a PYTHONPATH export (CI still uses --with-editable).
+pythonpath = ["src", "../sdk/src"]
 addopts = "-v --cov=meta_programmer --cov-report=term-missing"
 
 [tool.black]
@@ -64,3 +68,6 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[tool.uv.sources]
+activelearning-sdk = { path = "../sdk", editable = true }

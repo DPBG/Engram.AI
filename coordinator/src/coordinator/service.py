@@ -8,19 +8,19 @@ Integrates:
 """
 
 import asyncio
-import uuid
-from typing import Optional
 
-from activelearning import BaseService, get_embedding_service
+from activelearning import BaseService, generate_trace_id, get_embedding_service
+from activelearning.nats_client import serialize_message
 from activelearning.subjects import Subjects
+from nats.aio.msg import Msg
 
-from coordinator.sensor_manager import SensorManager
-from coordinator.learning_controller import LearningController
-from coordinator.task_coordinator import TaskCoordinator
 from coordinator.gate import (
     build_execution_proposal,
     decision_allows,
 )
+from coordinator.learning_controller import LearningController
+from coordinator.sensor_manager import SensorManager
+from coordinator.task_coordinator import TaskCoordinator
 
 
 class CoordinatorService(BaseService):
@@ -33,12 +33,13 @@ class CoordinatorService(BaseService):
 
         self.tasks_root = self.config.tasks_root
         self.qdrant_url = self.config.qdrant_url
-        self.ollama_url = self.config.ollama_url
 
         # Components
-        self._sensor_manager: Optional[SensorManager] = None
-        self._learning_controller: Optional[LearningController] = None
-        self._task_coordinator: Optional[TaskCoordinator] = None
+        self._sensor_manager: SensorManager | None = None
+        self._learning_controller: LearningController | None = None
+        self._task_coordinator: TaskCoordinator | None = None
+        # One shared embedding client per service, injected into the task
+        # coordinator and closed on shutdown.
         self._embedding_service = get_embedding_service()
 
     async def _setup(self) -> None:
@@ -54,14 +55,16 @@ class CoordinatorService(BaseService):
             tasks_root=self.tasks_root,
         )
 
-        # Initialize task coordinator (shares the service's embedding client)
+        # Initialize task coordinator (shares the service's embedding client
+        # and the same SensorManager used by LearningController)
         self._task_coordinator = TaskCoordinator(
             nats_client=self.event_bus._nc,
             qdrant_url=self.qdrant_url,
-            ollama_url=self.ollama_url,
             tasks_root=self.tasks_root,
             embedding_service=self._embedding_service,
+            sensor_manager=self._sensor_manager,
         )
+        await self._task_coordinator.setup()
 
         # Track devices already forwarded to meta-programmer (prevent flooding)
         self._pending_device_gaps: set[str] = set()
@@ -71,13 +74,19 @@ class CoordinatorService(BaseService):
         await self.event_bus.subscribe("demo.start", self._handle_demo_start)
         await self.event_bus.subscribe("demo.observation", self._handle_observation)
         await self.event_bus.subscribe("demo.finish", self._handle_demo_finish)
-        await self.event_bus.subscribe(Subjects.COORDINATOR_STATUS, self._handle_status)
+        await self.event_bus.subscribe(
+            Subjects.COORDINATOR_STATUS,
+            self._handle_status,
+            is_request_handler=True,
+        )
         await self.event_bus.subscribe("device.unknown", self._handle_unknown_device)
 
         self.logger.info("Coordinator setup completed")
 
     async def _cleanup(self) -> None:
         """Cleanup service-specific resources."""
+        if self._task_coordinator:
+            await self._task_coordinator.close()
         await self._embedding_service.close()
 
     async def _handle_task_request(self, data: dict) -> None:
@@ -103,22 +112,23 @@ class CoordinatorService(BaseService):
                 # Gate every execution through the Kernel (Phase 1.6). The task
                 # only runs on an ALLOW/TRANSFORM decision; DENY/DEFER/timeout
                 # fail closed.
-                decision = await self._request_execution_approval(
-                    match["task_id"], parameters
-                )
+                decision = await self._request_execution_approval(match["task_id"], parameters)
                 if not decision_allows(decision):
                     reason = (decision or {}).get("reason", "Kernel did not approve execution")
                     self.logger.warning(
                         f"Task execution blocked by Kernel: {match['task_id']} "
                         f"({(decision or {}).get('type', 'NONE')}: {reason})"
                     )
-                    await self.event_bus.publish(Subjects.TASK_RESULT, {
-                        "success": False,
-                        "blocked": True,
-                        "task_id": match["task_id"],
-                        "decision": (decision or {}).get("type", "NONE"),
-                        "reason": reason,
-                    })
+                    await self.event_bus.publish(
+                        Subjects.TASK_RESULT,
+                        {
+                            "success": False,
+                            "blocked": True,
+                            "task_id": match["task_id"],
+                            "decision": (decision or {}).get("type", "NONE"),
+                            "reason": reason,
+                        },
+                    )
                     return
 
                 # Approved — execute existing task
@@ -139,11 +149,14 @@ class CoordinatorService(BaseService):
                     context={"base_task": match["task_id"], "parameters": parameters},
                 )
 
-                await self.event_bus.publish(Subjects.TASK_RESULT, {
-                    "success": False,
-                    "message": "Task adaptation in progress",
-                    "trace_id": trace_id,
-                })
+                await self.event_bus.publish(
+                    Subjects.TASK_RESULT,
+                    {
+                        "success": False,
+                        "message": "Task adaptation in progress",
+                        "trace_id": trace_id,
+                    },
+                )
 
             elif match["action"] == "learn":
                 # Learn new task
@@ -153,19 +166,34 @@ class CoordinatorService(BaseService):
                     context=parameters,
                 )
 
-                await self.event_bus.publish(Subjects.TASK_RESULT, {
-                    "success": False,
-                    "message": "Task learning in progress. Please demonstrate or describe the task.",
-                    "trace_id": trace_id,
-                })
+                await self.event_bus.publish(
+                    Subjects.TASK_RESULT,
+                    {
+                        "success": False,
+                        "message": "Task learning in progress. Please demonstrate or describe the task.",
+                        "trace_id": trace_id,
+                    },
+                )
 
         except Exception as e:
+            # Surface failures (e.g. the embedding service being down) to the
+            # requester instead of leaving the request unanswered.
             self.logger.error(f"Error handling task request: {e}", exc_info=True)
+            await self.event_bus.publish(
+                Subjects.TASK_RESULT,
+                {
+                    "success": False,
+                    "error": str(e),
+                    # Echo the query so consumers can correlate the failure (no
+                    # task_id/trace_id exists yet when find_task itself fails).
+                    "query": query,
+                },
+            )
 
     async def _request_execution_approval(
         self,
         task_id: str,
-        parameters: Optional[dict],
+        parameters: dict | None,
     ) -> dict:
         """Ask the Kernel to approve executing a task; fail closed on timeout.
 
@@ -173,12 +201,12 @@ class CoordinatorService(BaseService):
         reply. A timeout (or any error) yields a synthetic DENY so the caller
         declines to execute.
         """
-        trace_id = str(uuid.uuid4())
+        trace_id = generate_trace_id()
         proposal = build_execution_proposal(trace_id, task_id, parameters)
         try:
             await self.event_bus.publish(Subjects.PROPOSAL_NEW, proposal)
             return await self.event_bus.wait_for_decision(trace_id, timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.logger.error(f"Kernel decision timeout for task {task_id} (trace={trace_id})")
             return {"type": "DENY", "reason": "Kernel decision timeout"}
         except Exception as e:
@@ -198,11 +226,14 @@ class CoordinatorService(BaseService):
                 description=description,
             )
 
-            await self.event_bus.publish("demo.started", {
-                "success": True,
-                "trace_id": trace_id,
-                "message": "Demonstration started. Begin demonstrating the task.",
-            })
+            await self.event_bus.publish(
+                "demo.started",
+                {
+                    "success": True,
+                    "trace_id": trace_id,
+                    "message": "Demonstration started. Begin demonstrating the task.",
+                },
+            )
 
         except Exception as e:
             self.logger.error(f"Error starting demonstration: {e}", exc_info=True)
@@ -233,18 +264,24 @@ class CoordinatorService(BaseService):
             # Index the task in vector DB
             await self._task_coordinator.index_task(result["task_id"])
 
-            await self.event_bus.publish("demo.finished", {
-                "success": True,
-                "task_id": result["task_id"],
-                "message": f"Task '{result['task_name']}' learned successfully.",
-            })
+            await self.event_bus.publish(
+                "demo.finished",
+                {
+                    "success": True,
+                    "task_id": result["task_id"],
+                    "message": f"Task '{result['task_name']}' learned successfully.",
+                },
+            )
 
         except Exception as e:
             self.logger.error(f"Error finishing demonstration: {e}", exc_info=True)
-            await self.event_bus.publish("demo.failed", {
-                "success": False,
-                "error": str(e),
-            })
+            await self.event_bus.publish(
+                "demo.failed",
+                {
+                    "success": False,
+                    "error": str(e),
+                },
+            )
 
     async def _handle_unknown_device(self, data: dict) -> None:
         """Route unknown device to meta-programmer via knowledge.gap.
@@ -269,8 +306,7 @@ class CoordinatorService(BaseService):
             plugin_type = "actuator"
 
         description = (
-            f"Create a {plugin_type} plugin for: {name} "
-            f"(type={device_type}, id={device_id})"
+            f"Create a {plugin_type} plugin for: {name} " f"(type={device_type}, id={device_id})"
         )
 
         try:
@@ -285,35 +321,29 @@ class CoordinatorService(BaseService):
                     "source": "gateway_device_discovery",
                 },
             )
-            self.logger.info(
-                f"Unknown device → knowledge.gap: {device_id} (trace={trace_id})"
-            )
+            self.logger.info(f"Unknown device → knowledge.gap: {device_id} (trace={trace_id})")
         except Exception as e:
             self.logger.error(f"Failed to route unknown device {device_id}: {e}")
         finally:
             # Allow re-discovery if device is unplugged and re-plugged.
             self._pending_device_gaps.discard(device_id)
 
-    async def _handle_status(self, data: dict) -> None:
-        """Handle status request."""
-        try:
-            status = {
-                "status": "running",
-                "sensors": {
-                    "available": self._sensor_manager.get_sensor_ids(),
-                    "active": [s.sensor_id for s in self._sensor_manager.get_active_sensors()],
-                    "learning_mode": self._sensor_manager.get_learning_mode(),
-                },
-                "learning": {
-                    "active": self._learning_controller.is_learning(),
-                    "phase": self._learning_controller.get_current_phase().value,
-                },
-            }
-
-            await self.event_bus.publish("coordinator.status.result", status)
-
-        except Exception as e:
-            self.logger.error(f"Error getting status: {e}")
+    async def _handle_status(self, _data: dict, msg: Msg) -> None:
+        """Reply to status requests via request-reply."""
+        status = {
+            "status": "running",
+            "sensors": {
+                "available": self._sensor_manager.get_sensor_ids(),
+                "active": [s.sensor_id for s in self._sensor_manager.get_active_sensors()],
+                "learning_mode": self._sensor_manager.get_learning_mode(),
+            },
+            "learning": {
+                "active": self._learning_controller.is_learning(),
+                "phase": self._learning_controller.get_current_phase().value,
+            },
+        }
+        if msg.reply:
+            await msg.respond(serialize_message(status))
 
 
 async def main() -> None:

@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from neuromorphic.config import NeuromorphicConfig, CognitiveActionConfig
+from neuromorphic.config import NeuromorphicConfig
 from neuromorphic.regions import MotorCortex, PredictiveLayer
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,8 @@ class PopulationVectorDecoder:
         return self._enabled
 
     def _build_group_map(
-        self, motor_cortex: MotorCortex,
+        self,
+        motor_cortex: MotorCortex,
     ) -> dict[str, list[tuple[int, int, str]]]:
         """Build neuron-index → actuator mapping for each physical channel.
 
@@ -151,7 +152,7 @@ class SpikeDecoder:
         commands = []
 
         # Skip sub-ranges that have dedicated decoders
-        _DEDICATED_DECODER_RANGES = {"speech", "cognitive"}
+        _DEDICATED_DECODER_RANGES = {"speech", "cognitive"}  # noqa: N806
 
         for sr in motor_cortex.sub_ranges:
             if sr.name in _DEDICATED_DECODER_RANGES:
@@ -177,7 +178,9 @@ class SpikeDecoder:
                 # Per-joint intensities when population vector is enabled
                 if self._pop_vec.enabled:
                     actuator_intensities = self._pop_vec.decode(
-                        motor_cortex, history, sr.name,
+                        motor_cortex,
+                        history,
+                        sr.name,
                     )
                     if actuator_intensities:
                         cmd["actuator_intensities"] = actuator_intensities
@@ -314,15 +317,17 @@ class SpeechDecoder:
         self._cooldown = self._dec.cooldown_steps
         self._output_count += 1
 
-        return [{
-            "channel": "speech",
-            "token_idx": token_idx,
-            "confidence": confidence,
-            "intensity": mean_rate,
-            "peak_neuron": peak_idx,
-            "sub_range_size": sr.size,
-            "output_number": self._output_count,
-        }]
+        return [
+            {
+                "channel": "speech",
+                "token_idx": token_idx,
+                "confidence": confidence,
+                "intensity": mean_rate,
+                "peak_neuron": peak_idx,
+                "sub_range_size": sr.size,
+                "output_number": self._output_count,
+            }
+        ]
 
     def reset(self) -> None:
         self._spike_history.clear()
@@ -425,13 +430,15 @@ class CognitiveDecoder:
         type_idx = min(peak_idx // chunk, n_types - 1)
         action_type = self._cog.action_types[type_idx]
 
-        return [{
-            "type": action_type,
-            "intensity": cog_rate,
-            "prediction_error": mean_error,
-            "query_number": self._query_count,
-            "sub_range_size": sr.size,
-        }]
+        return [
+            {
+                "type": action_type,
+                "intensity": cog_rate,
+                "prediction_error": mean_error,
+                "query_number": self._query_count,
+                "sub_range_size": sr.size,
+            }
+        ]
 
     def get_state(self) -> dict[str, Any]:
         return {"query_count": self._query_count}

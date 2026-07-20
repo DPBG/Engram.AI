@@ -22,6 +22,7 @@ is_review_expired = _staging.is_review_expired
 
 # ── pure expiry predicate ──────────────────────────────────────────────────
 
+
 def test_within_ttl_not_expired():
     assert is_review_expired({"created_at": 1000}, now_ms=1500, ttl_ms=1000) is False
 
@@ -37,12 +38,14 @@ def test_missing_created_at_is_expired_fail_closed():
 
 # ── staging integration ────────────────────────────────────────────────────
 
+
 def _staged_review(d, trace_id, created_at):
     sm = StagingManager(d)
     sm.initialize()
     sm.stage_pending(trace_id, f"/data/plugins/{trace_id}.py", "x = 1\n")
     # Force a known created_at, then move to human_review.
     import json
+
     meta_path = os.path.join(sm.pending_dir, trace_id, "metadata.json")
     with open(meta_path) as f:
         meta = json.load(f)
@@ -74,6 +77,7 @@ def test_expired_reviews_selects_only_aged_items():
         sm = _staged_review(d, "old", created_at=0)
         # Add a fresh one in the same staging root.
         import json
+
         sm.stage_pending("fresh", "/data/plugins/fresh.py", "x = 1\n")
         mp = os.path.join(sm.pending_dir, "fresh", "metadata.json")
         with open(mp) as f:
@@ -84,7 +88,7 @@ def test_expired_reviews_selects_only_aged_items():
         sm.stage_human_review("fresh")
 
         expired = sm.expired_reviews(now_ms=10_000, ttl_ms=1_000)
-        assert "old" in expired       # aged 10_000 >= ttl
+        assert "old" in expired  # aged 10_000 >= ttl
         assert "fresh" not in expired  # aged 500 < ttl
 
 

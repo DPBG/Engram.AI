@@ -7,7 +7,6 @@ Tests basic pub/sub patterns and message routing across services.
 import asyncio
 import json
 import uuid
-from typing import Any
 
 import pytest
 from nats.aio.client import Client as NATSClient
@@ -37,10 +36,7 @@ async def test_basic_pub_sub(nats_client: NATSClient):
     await asyncio.sleep(0.1)
 
     # Publish
-    await nats_client.publish(
-        test_subject,
-        json.dumps(test_message).encode()
-    )
+    await nats_client.publish(test_subject, json.dumps(test_message).encode())
 
     # Wait for message
     await asyncio.sleep(0.2)
@@ -66,10 +62,7 @@ async def test_wildcard_subscription(nats_client: NATSClient):
 
     # Publish to multiple subjects
     for suffix in ["alpha", "beta", "gamma"]:
-        await nats_client.publish(
-            f"{base_subject}.{suffix}",
-            b"test"
-        )
+        await nats_client.publish(f"{base_subject}.{suffix}", b"test")
 
     await asyncio.sleep(0.2)
 
@@ -98,9 +91,7 @@ async def test_request_reply(nats_client: NATSClient):
     # Send request
     request_data = {"action": "test", "id": str(uuid.uuid4())}
     response = await nats_client.request(
-        test_subject,
-        json.dumps(request_data).encode(),
-        timeout=2.0
+        test_subject, json.dumps(request_data).encode(), timeout=2.0
     )
 
     response_data = json.loads(response.data.decode())
@@ -115,10 +106,7 @@ async def test_observation_subject_pattern(nats_client: NATSClient):
 
     async def observation_handler(msg):
         data = json.loads(msg.data.decode())
-        observations_received.append({
-            "subject": msg.subject,
-            "data": data
-        })
+        observations_received.append({"subject": msg.subject, "data": data})
 
     # Subscribe to all observations
     await nats_client.subscribe("observation.*", cb=observation_handler)
@@ -134,13 +122,10 @@ async def test_observation_subject_pattern(nats_client: NATSClient):
         "data": {"motion_detected": True},
         "timestamp": 1234567890,
         "confidence": 0.95,
-        "tags": ["motion"]
+        "tags": ["motion"],
     }
 
-    await nats_client.publish(
-        "observation.camera",
-        json.dumps(observation).encode()
-    )
+    await nats_client.publish("observation.camera", json.dumps(observation).encode())
 
     await asyncio.sleep(0.2)
 
@@ -175,13 +160,10 @@ async def test_decision_trace_id_pattern(nats_client: NATSClient):
         "reason": "Action approved within safety bounds",
         "risk_score": 0.15,
         "issued_at": 1234567890,
-        "expires_at": 1234567950
+        "expires_at": 1234567950,
     }
 
-    await nats_client.publish(
-        decision_subject,
-        json.dumps(decision).encode()
-    )
+    await nats_client.publish(decision_subject, json.dumps(decision).encode())
 
     await asyncio.sleep(0.2)
 

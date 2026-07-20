@@ -9,6 +9,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Developed by Gittensor · Bittensor SN74](https://img.shields.io/badge/Developed%20by-Gittensor%20·%20Bittensor%20SN74-6e40c9.svg)](https://gittensor.io)
+[![Gittensor impact](https://api.gittensor.io/repos/DPBG%2FEngram.AI/badge.svg)](https://gittensor.io/miners/repository?name=DPBG/Engram.AI)
+
+<sub>Contributed & developed by <strong>Gittensor</strong> — <strong>Bittensor Subnet 74</strong>.</sub>
 
 <img src="docs/engram-hero.jpg" alt="Engram — a humanoid body and a ~1M-neuron spiking neural network perceiving, moving, and learning in real time" width="100%" />
 
@@ -151,6 +155,22 @@ SVG ring chart showing knowledge growth by source:
 - 🟢 Observation (NATS messages, system events)
 - 🟠 Deployment (self-generated health check data)
 - 🟣 Simulation (synthetic/test data)
+
+### Learning Evidence
+`BenchmarkSuite` (`neuromorphic/src/neuromorphic/benchmarks.py`) produces 6 quantitative
+benchmarks proving the brain learns, run via `python -m neuromorphic.benchmarks`
+and saved to `neuromorphic/benchmarks/*.json`:
+1. **CrossModalRecall** — inject visual, measure auditory cortex activation (and vice versa)
+2. **NoveltyDetection** — present known vs unknown stimuli, measure response difference
+3. **AssociationStrength** — measure weight changes after paired multi-modal training
+4. **EnergyEfficiency** — compute energy per learned association vs baseline
+5. **ConceptSeparability** — silhouette score + linear-probe accuracy over concept-layer activations
+6. **CrossModalBindingAccuracy** — precision/recall of bound modality pairs vs ground truth
+
+The dashboard's Learning Evidence panel (`/api/learning-evidence`) currently trends
+**ConceptSeparability** and **CrossModalBindingAccuracy** over time; the other 4 are
+computed and saved to the JSON results but not yet plotted (tracked in
+[#307](https://github.com/DPBG/Engram.AI/issues/307)).
 
 ---
 
@@ -530,10 +550,15 @@ python run.py --only dashboard
 
 | Document | Content |
 |----------|---------|
+| [`ROADMAP.md`](ROADMAP.md) | Technical plan & current-state audit — phases M1–M7, tracking issues, status |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full system design, component relationships, NATS message schemas |
 | [`DESIGN-PRINCIPLES.md`](DESIGN-PRINCIPLES.md) | 6 core architecture invariants and implementation file map |
 | [`docs/SENSORY-GATEWAY.md`](docs/SENSORY-GATEWAY.md) | Gateway architecture, sensor types, discovery |
 | [`docs/META-PROGRAMMER.md`](docs/META-PROGRAMMER.md) | Self-evolution agent system |
+| [`docs/KERNEL-CRASH-RECOVERY.md`](docs/KERNEL-CRASH-RECOVERY.md) | Threat model for the Kernel process dying mid-decision, and how callers still fail closed |
+| [`docs/DECISION-KEY-ROTATION.md`](docs/DECISION-KEY-ROTATION.md) | Zero-downtime rotation procedure for the decision-bus signing key |
+| [`docs/benchmark-schema.md`](docs/benchmark-schema.md) | `BenchmarkSuite`'s output JSON schema — guaranteed vs conditional fields, consumed by the dashboard and CI gate |
+| [`docs/MUTATION-TESTING.md`](docs/MUTATION-TESTING.md) | Mutation testing for the Kernel's risk-clamping logic — scope, workflow, enforced kill-rate floor |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, PR process, code standards |
 
 > **Naming:** Engram is the product/brand name and the domain is `engram.ai`. "Engram" was a former brand name and "ActiveLearningAI" is the original project directory name — both are still retained in a few places (the GitHub org/repos, the `activelearning` Python packages, and the legal entity Engram Incorporated). Public-facing materials use Engram.
@@ -555,8 +580,10 @@ Engram is a research system, and we believe in being honest about its current st
   sandbox, but generated drivers are experimental, not production-grade.
 - **Hardware integration.** Built-in sensors cover camera, microphone, and serial
   devices; IMU / depth / real-actuator support is partial or planned.
-- **Some stubs remain.** A few subsystems contain placeholders (see the `TODO`s
-  in the code). Contributions here are especially welcome.
+- **Contribution opportunities.** The `good first issue` backlog (issues labelled
+  [`good first issue`](https://github.com/DPBG/Engram.AI/labels/good%20first%20issue))
+  lists small, well-scoped tasks across `neuromorphic/`, `sdk/`, and
+  `sensory-gateway/`. Contributions are especially welcome.
 
 If something doesn't match the docs, please open an issue — accurate docs are a priority.
 
@@ -572,6 +599,12 @@ Contributions are welcome! A few essentials:
 - Run the tests before pushing — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
   full workflow, code standards, and the architecture invariants in
   [CLAUDE.md](CLAUDE.md).
+
+## Gittensor Driven Development
+
+Engram is developed by **[Gittensor](https://gittensor.io)** — **Bittensor Subnet 74 (SN74)**, a decentralized network that rewards open-source contributions. Its contributors deliver Engram's features and fixes through the [`dev`-branch PR workflow](CONTRIBUTING.md).
+
+**Without Gittensor, this project couldn't have come so far** — its contributor network drives Engram's development forward.
 
 ## License
 
