@@ -117,7 +117,7 @@ class Database:
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
 
-        last_error: Optional[sqlite3.OperationalError] = None
+        last_error: sqlite3.OperationalError | None = None
         for attempt in range(_INIT_RETRY_ATTEMPTS):
             try:
                 # Connect and create schema
@@ -129,8 +129,10 @@ class Database:
                 await self._connection.execute("PRAGMA synchronous=NORMAL")
                 await self._connection.execute("PRAGMA busy_timeout=5000")
 
-                # Create schema
+                # Bring an older database up to date, then (re)create the schema
+                await self._migrate()
                 await self._connection.executescript(SCHEMA_SQL)
+                await self._connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 await self._connection.commit()
 
                 logger.info(f"Database initialized at {self.db_path}")
@@ -154,21 +156,6 @@ class Database:
 
         assert last_error is not None
         raise last_error
-        # Connect and create schema
-        self._connection = await aiosqlite.connect(self.db_path)
-        self._connection.row_factory = aiosqlite.Row
-
-        # Enable WAL mode for better concurrency
-        await self._connection.execute("PRAGMA journal_mode=WAL")
-        await self._connection.execute("PRAGMA synchronous=NORMAL")
-
-        # Bring an older database up to date, then (re)create the schema
-        await self._migrate()
-        await self._connection.executescript(SCHEMA_SQL)
-        await self._connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        await self._connection.commit()
-
-        logger.info(f"Database initialized at {self.db_path}")
 
     async def _migrate(self) -> None:
         """Run pending migrations so existing databases adopt schema changes.
