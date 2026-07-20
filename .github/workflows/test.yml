@@ -117,6 +117,22 @@ jobs:
         working-directory: neuromorphic
         run: uv run --extra dev python -m pytest tests/test_benchmark_ci_gate.py -v -p no:anchorpy
 
+      # Longitudinal learning-evidence regression gate (issue #286) -- separate
+      # from the perf gate above: runs BenchmarkSuite's 6-metric investor schema
+      # (not scripts/benchmark.py's speed/learning schema) through the same
+      # dashboard.learning_evidence read path the Learning Evidence panel uses,
+      # and compares against a rolling window of prior runs rather than one
+      # fixed baseline.
+      - name: Run learning-evidence CI regression gate
+        working-directory: neuromorphic
+        env:
+          ENGRAM_SKIP_MUJOCO_LOOP: "1"
+        run: uv run --extra dev python scripts/learning_evidence_ci_gate.py
+
+      - name: Run learning-evidence gate unit tests
+        working-directory: neuromorphic
+        run: uv run --extra dev python -m pytest tests/test_learning_evidence_ci_gate.py -v -p no:anchorpy
+
   sdk:
     name: SDK test suite
     needs: changes

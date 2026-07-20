@@ -1,0 +1,65 @@
+{
+  "description": "Rolling-window baseline for BenchmarkSuite's 6-metric learning-evidence schema (issue #286). Small fixed CI network -- not production scale. History entries accumulate via --update-baseline; see scripts/learning_evidence_ci_gate.py. concept_separability sits at a reproducible 0.0 floor at this CI scale (100-neuron concept layer, 4 patterns, few reps has too little capacity/training to separate classes) -- not a bug; regression on it means it went negative, i.e. worse than random. benchmark_args.seed (pattern/fixture generation) and network_seed (weight-init, issue #322's two-seeds distinction) are both fixed so the actual gate run is fully deterministic -- no flakiness from OS-entropy weight init. The 3 history entries below instead vary network_seed only, capturing the genuine spread across different (but equally valid) initializations so the threshold reflects real acceptable variance rather than one arbitrary snapshot.",
+  "window_size": 5,
+  "regression_threshold_pct": 40,
+  "benchmark_args": {
+    "n_patterns": 4,
+    "training_reps": 3,
+    "steps_per_pattern": 6,
+    "seed": 42,
+    "network_seed": 1234,
+    "concept_k_winners": 10
+  },
+  "env": {
+    "NEURO_BRAINSTEM_N": "50",
+    "NEURO_REFLEX_N": "30",
+    "NEURO_SENSORY_N": "200",
+    "NEURO_MOTOR_N": "100",
+    "NEURO_CEREBELLUM_N": "50",
+    "NEURO_ASSOCIATION_N": "150",
+    "NEURO_PREDICTIVE_N": "80",
+    "NEURO_WORKING_MEM_N": "40",
+    "NEURO_FEATURE_N": "0",
+    "NEURO_CONCEPT_N": "100",
+    "NEURO_DG_N": "0",
+    "NEURO_META_N": "0",
+    "NEURO_WORKSPACE_N": "0",
+    "NEURO_DENDRITES": "0",
+    "ENGRAM_SKIP_MUJOCO_LOOP": "1"
+  },
+  "history": [
+    {
+      "metrics": {
+        "concept_separability": 0.0,
+        "binding_accuracy": 0.25,
+        "binding_precision": 0.25,
+        "binding_recall": 0.25,
+        "binding_matched_decoy_ratio": 0.8385,
+        "step_count": 486,
+        "total_neurons": 800
+      }
+    },
+    {
+      "metrics": {
+        "concept_separability": 0.0,
+        "binding_accuracy": 0.0,
+        "binding_precision": 0.0,
+        "binding_recall": 0.0,
+        "binding_matched_decoy_ratio": 0.9234,
+        "step_count": 486,
+        "total_neurons": 800
+      }
+    },
+    {
+      "metrics": {
+        "concept_separability": 0.0,
+        "binding_accuracy": 0.5,
+        "binding_precision": 0.5,
+        "binding_recall": 0.5,
+        "binding_matched_decoy_ratio": 1.097,
+        "step_count": 486,
+        "total_neurons": 800
+      }
+    }
+  ]
+}
