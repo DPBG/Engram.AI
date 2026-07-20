@@ -691,6 +691,9 @@ class TestConceptSeparabilityBenchmark:
 # Issue #329: Benchmark flakiness audit across all test classes
 # ---------------------------------------------------------------------------
 def _make_small_network() -> NeuromorphicNetwork:
+    return _build_small_network()
+
+
 @pytest.fixture
 def network_with_meta_controller():
     """Small network with an active meta-controller for gating benchmark tests."""
@@ -705,7 +708,8 @@ def network_with_meta_controller():
     cfg.populations.working_memory = 40
     cfg.populations.feature_layer = 0
     cfg.populations.concept_layer = 0
-    cfg.populations.meta_controller = 0
+    cfg.populations.pattern_separator = 0
+    cfg.populations.meta_controller = 200
     return NeuromorphicNetwork(cfg)
 
 
@@ -857,9 +861,6 @@ class TestBenchmarkFlakiness:
             flat = _flatten_numeric(results)
             bad = {k: v for k, v in flat.items() if not math.isfinite(v)}
             assert not bad, f"seed={seed}: non-finite metrics found: {bad}"
-    cfg.populations.pattern_separator = 0
-    cfg.populations.meta_controller = 200
-    return NeuromorphicNetwork(cfg)
 
 
 class TestStandardizedNearestCentroidLooAccuracy:
