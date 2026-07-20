@@ -967,6 +967,134 @@ class CrossModalBindingAccuracyBenchmark:
 
 
 # ---------------------------------------------------------------------------
+# Benchmark 7: Global Workspace Broadcast
+# ---------------------------------------------------------------------------
+class GlobalWorkspaceBroadcastBenchmark:
+    """Measure whether GlobalWorkspace integrates and broadcasts from connected regions.
+
+    Protocol (issue #318):
+      1. Inject a sustained random current into association_cortex (architecturally
+         wired to workspace via association_workspace synapse) and record workspace
+         firing rate per step.
+      2. Inject an equal-amplitude current into cerebellum (no direct path to
+         workspace) and record workspace firing rate per step.
+      3. workspace_response_ratio (source / control) > 1.0 confirms the workspace
+         responds specifically to its wired afferents rather than to general noise.
+      4. Also records ignition events and downstream broadcast rates
+         (predictive_layer, working_memory) during source injection to verify
+         the broadcast signal actually reaches efferent regions.
+
+    A ratio ≈ 1.0 or ignition_events_source == 0 is informative (not a failure):
+    the workspace wiring is present but ignition has not yet emerged — a
+    structural finding, not a bug.
+    """
+
+    def __init__(self, net: NeuromorphicNetwork) -> None:
+        self._net = net
+
+    def run(
+        self,
+        inject_steps: int = 40,
+        warmup_steps: int = 10,
+        signal_amplitude: float = 3.0,
+        seed: int = 42,
+    ) -> dict[str, Any]:
+        net = self._net
+
+        if net.workspace is None:
+            return {
+                "global_workspace_enabled": False,
+                "skipped": True,
+                "reason": (
+                    "global_workspace population is 0; enable with "
+                    "cfg.populations.global_workspace > 0"
+                ),
+            }
+
+        rng = np.random.default_rng(seed)
+        empty = np.zeros(net.sensory.n, dtype=np.float32)
+
+        # Warm up: let the network reach a resting steady state
+        for _ in range(warmup_steps):
+            net.step(empty)
+
+        # Baseline: workspace rate with no injection
+        baseline_rates: list[float] = []
+        for _ in range(inject_steps):
+            net.step(empty)
+            baseline_rates.append(float(net.workspace.spikes.mean()))
+
+        # Source phase: inject into association_cortex (wired to workspace via
+        # association_workspace synapse — see network._create_synapses)
+        src_signal = rng.standard_normal(net.association.n).astype(np.float32).clip(
+            0.0, None
+        ) * np.float32(signal_amplitude)
+        source_ws_rates: list[float] = []
+        ignition_source: int = 0
+        downstream_during_ignition: dict[str, list[float]] = {
+            "predictive_layer": [],
+            "working_memory": [],
+        }
+        for _ in range(inject_steps):
+            net.association.inject_current(src_signal)
+            net.step(empty)
+            source_ws_rates.append(float(net.workspace.spikes.mean()))
+            if net.workspace.ignition_active:
+                ignition_source += 1
+                downstream_during_ignition["predictive_layer"].append(
+                    float(net.predictive.spikes.mean())
+                )
+                downstream_during_ignition["working_memory"].append(
+                    float(net.working_mem.spikes.mean())
+                )
+
+        # Brief recovery between phases
+        for _ in range(warmup_steps):
+            net.step(empty)
+
+        # Control phase: inject into cerebellum (no direct path to workspace)
+        ctrl_signal = rng.standard_normal(net.cerebellum.n).astype(np.float32).clip(
+            0.0, None
+        ) * np.float32(signal_amplitude)
+        control_ws_rates: list[float] = []
+        ignition_control: int = 0
+        for _ in range(inject_steps):
+            net.cerebellum.inject_current(ctrl_signal)
+            net.step(empty)
+            control_ws_rates.append(float(net.workspace.spikes.mean()))
+            if net.workspace.ignition_active:
+                ignition_control += 1
+
+        source_mean = float(np.mean(source_ws_rates))
+        control_mean = float(np.mean(control_ws_rates))
+        baseline_mean = float(np.mean(baseline_rates))
+        ratio = source_mean / (control_mean + 1e-9)
+
+        downstream_mean = {
+            k: round(float(np.mean(v)), 6) if v else 0.0
+            for k, v in downstream_during_ignition.items()
+        }
+
+        return _to_native(
+            {
+                "global_workspace_enabled": True,
+                "skipped": False,
+                "source_region": "association_cortex",
+                "control_region": "cerebellum",
+                "inject_steps": inject_steps,
+                "signal_amplitude": signal_amplitude,
+                "baseline_workspace_rate": round(baseline_mean, 6),
+                "source_workspace_rate": round(source_mean, 6),
+                "control_workspace_rate": round(control_mean, 6),
+                "workspace_response_ratio": round(ratio, 4),
+                "ignition_events_source": ignition_source,
+                "ignition_events_control": ignition_control,
+                "broadcast_detected": ignition_source > 0,
+                "downstream_rate_during_ignition": downstream_mean,
+            }
+        )
+
+
 # Per-region benchmark: MetaControllerRegion gating (issue #319)
 #
 # Not part of BenchmarkSuite.run_all()'s fixed 6-metric contract (see
@@ -1162,6 +1290,12 @@ class BenchmarkSuite:
             steps_per_pair=steps_per_pattern,
             seed=seed,
         )
+        logger.info("Benchmark 7/7: GlobalWorkspaceBroadcast")
+        gw = GlobalWorkspaceBroadcastBenchmark(self.network).run(
+            inject_steps=steps_per_pattern,
+            warmup_steps=max(5, steps_per_pattern // 4),
+            seed=seed,
+        )
         return _to_native(
             {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1174,6 +1308,7 @@ class BenchmarkSuite:
                 "energy_efficiency": en,
                 "concept_separability": cs,
                 "cross_modal_binding_accuracy": ba,
+                "global_workspace_broadcast": gw,
             }
         )
 
@@ -1320,6 +1455,23 @@ class BenchmarkSuite:
             f"   Matched/decoy ratio: {ba.get('matched_to_decoy_ratio', 0):.2f}x",
             "",
         ]
+        gw = results.get("global_workspace_broadcast", {})
+        if gw:
+            if gw.get("skipped"):
+                lines += ["7. Global Workspace Broadcast", "   (skipped — workspace disabled)", ""]
+            else:
+                lines += [
+                    "7. Global Workspace Broadcast",
+                    f"   Baseline rate:  {gw.get('baseline_workspace_rate', 0):.6f}",
+                    f"   Source rate:    {gw.get('source_workspace_rate', 0):.6f}",
+                    f"   Control rate:   {gw.get('control_workspace_rate', 0):.6f}",
+                    f"   Response ratio: {gw.get('workspace_response_ratio', 0):.4f}x",
+                    f"   Ignitions (src/ctrl): "
+                    f"{gw.get('ignition_events_source', 0)} / "
+                    f"{gw.get('ignition_events_control', 0)}",
+                    f"   Broadcast detected: {gw.get('broadcast_detected', False)}",
+                    "",
+                ]
         lines.append("=" * 35)
         return "\n".join(lines)
 
