@@ -45,12 +45,18 @@ APPROVED_RAW_CONNECT_FILES = frozenset(
         "sdk/src/activelearning/nats_client.py",
         "sdk/tests/test_event_bus_validation.py",
         "sdk/tests/conftest.py",
-        "neuromorphic/src/neuromorphic/cognitive_bridge.py",
+        "sdk/tests/test_base_service_migration.py",
+        "sdk/scripts/bench_eventbus_publish.py",
+        "sdk/tests/red_team/test_broker_authz.py",
         "neuromorphic/scripts/train_pump.py",
         "dashboard/src/dashboard/api.py",
+        "dashboard/src/dashboard/nats_stream.py",
         "deploy/gateway_restart_listener.py",
+        "launcher/watchdog.py",
+        "launcher/tests/test_watchdog_chaos.py",
         "test-runner/src/test_runner/tests/conftest.py",
         "test-runner/src/test_runner/tests/test_jetstream_durability.py",
+        "tests/red_team/test_broker_rejects_privileged_publish.py",
     }
 )
 
