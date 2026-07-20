@@ -180,13 +180,20 @@ class Database:
                 try:
                     await conn.execute(statement)
                 except sqlite3.OperationalError as exc:
+                    msg = str(exc).lower()
+                    is_alter_table = statement.strip().upper().startswith("ALTER TABLE")
                     # ALTER TABLE on a missing table is safe to skip on a fresh
                     # database: executescript creates the table (with all current
                     # columns already in schema.sql) immediately after _migrate()
-                    # returns, so the column will exist regardless.
-                    if "no such table" in str(exc) and statement.strip().upper().startswith(
-                        "ALTER TABLE"
-                    ):
+                    # returns, so the column will exist regardless. "duplicate
+                    # column" means this exact ALTER already landed -- e.g. from
+                    # an earlier initialize() attempt whose executescript()
+                    # committed (each statement in a script autocommits; it is
+                    # not one transaction) before a *later* statement in that
+                    # same attempt hit contention and got retried from scratch
+                    # (issue #231's concurrent-initialize retry). Either way the
+                    # target state already exists; nothing to do.
+                    if is_alter_table and ("no such table" in msg or "duplicate column" in msg):
                         continue
                     raise
 
