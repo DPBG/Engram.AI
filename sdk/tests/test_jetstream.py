@@ -7,12 +7,16 @@ from nats.js.api import RetentionPolicy, StorageType
 
 from activelearning.nats_client import (
     _SAFETY_STREAM_SUBJECTS,
+    DEFAULT_MAX_DELIVER,
+    DEFAULT_REDELIVERY_BACKOFF,
+    DLQ_SUBJECT_PREFIX,
     SAFETY_STREAM_MAX_AGE_SECONDS,
     SAFETY_STREAM_MAX_MSGS,
     SAFETY_STREAM_NAME,
     SAFETY_STREAM_RETENTION,
     SAFETY_STREAM_STORAGE,
     EventBus,
+    poison_subject,
 )
 
 
@@ -147,3 +151,83 @@ class TestEventBusInit:
     def test_js_durables_starts_empty(self):
         bus = EventBus()
         assert bus._js_durables == {}
+
+
+# ── DLQ / poison-message regression tests (issue #228) ──────────────────────
+
+
+class TestDlqConstants:
+    """Regression for issue #228: verify the DLQ subject prefix and bounded-
+    redelivery defaults are stable so a refactor cannot silently break the
+    contract that repeatedly-failing messages route to ``dlq.<subject>`` after
+    at most ``DEFAULT_MAX_DELIVER`` attempts.
+    """
+
+    def test_dlq_prefix_is_dlq_dot(self):
+        assert DLQ_SUBJECT_PREFIX == "dlq."
+
+    def test_default_max_deliver_is_five(self):
+        # Safety-critical consumers must not redeliver indefinitely; five
+        # attempts (initial + four retries) is the committed default.
+        assert DEFAULT_MAX_DELIVER == 5
+
+    def test_default_redelivery_backoff_has_four_entries(self):
+        # One entry per retry (after the first delivery); four entries for five
+        # total attempts.  Changing the length silently changes how many
+        # attempts occur before a message is dead-lettered.
+        assert len(DEFAULT_REDELIVERY_BACKOFF) == 4
+
+    def test_default_redelivery_backoff_values_are_increasing(self):
+        # The backoff must grow (or at least not shrink) so a flapping consumer
+        # does not hammer the broker at a constant high rate.
+        b = DEFAULT_REDELIVERY_BACKOFF
+        assert all(b[i] <= b[i + 1] for i in range(len(b) - 1))
+
+    def test_default_redelivery_backoff_are_floats(self):
+        assert all(isinstance(v, float) for v in DEFAULT_REDELIVERY_BACKOFF)
+
+
+class TestPoisonSubject:
+    """Regression for issue #228: ``poison_subject()`` must always produce
+    ``dlq.<original>`` so consumers can subscribe to the dead-letter feed."""
+
+    def test_simple_subject(self):
+        assert poison_subject("proposal.new") == "dlq.proposal.new"
+
+    def test_decision_subject(self):
+        assert poison_subject("decision.abc123") == "dlq.decision.abc123"
+
+    def test_preserves_multi_level_subject(self):
+        assert poison_subject("code.decision.trace-1") == "dlq.code.decision.trace-1"
+
+    def test_prefix_matches_dlq_subject_prefix_constant(self):
+        subject = "policy.restrict"
+        assert poison_subject(subject).startswith(DLQ_SUBJECT_PREFIX)
+
+    def test_suffix_is_original_subject(self):
+        subject = "cognitive.response.validated"
+        result = poison_subject(subject)
+        assert result[len(DLQ_SUBJECT_PREFIX) :] == subject
+
+
+class TestNumDelivered:
+    """Regression for issue #228: ``_num_delivered`` must read the JetStream
+    metadata correctly so the max_deliver boundary is enforced on the right
+    attempt number, not off by one."""
+
+    def test_reads_metadata_num_delivered(self):
+        msg = MagicMock()
+        msg.metadata.num_delivered = 3
+        assert EventBus._num_delivered(msg) == 3
+
+    def test_returns_one_when_metadata_unavailable(self):
+        # Fallback: treat a message with no metadata as first delivery so it
+        # gets a chance to be processed (not immediately poisoned).
+        msg = MagicMock()
+        msg.metadata.num_delivered = MagicMock(side_effect=AttributeError)
+        # _num_delivered swallows ALL exceptions and returns 1
+        assert EventBus._num_delivered(msg) == 1
+
+    def test_returns_one_on_any_metadata_error(self):
+        msg = MagicMock(spec=[])  # no attributes at all
+        assert EventBus._num_delivered(msg) == 1
