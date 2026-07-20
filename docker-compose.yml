@@ -30,7 +30,8 @@ x-service-defaults: &service-defaults
     # when the files are absent so plain `docker compose up` still works.
     - ./secrets:/run/secrets:ro
   depends_on:
-    - nats
+    nats:
+      condition: service_healthy
 
 services:
   # --- message bus (always on) ------------------------------------------------
@@ -44,6 +45,12 @@ services:
     volumes:
       - nats-data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   # --- core: governance -------------------------------------------------------
   kernel:
@@ -139,8 +146,10 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - nats
-      - neuromorphic
+      nats:
+        condition: service_healthy
+      neuromorphic:
+        condition: service_started
 
   # --- full: vector DB + LLM + dependent services -----------------------------
   qdrant:
@@ -174,8 +183,10 @@ services:
       <<: *common-env
       NATS_CREDS: /run/secrets/memory.creds
     depends_on:
-      - nats
-      - qdrant
+      nats:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
 
   cache:
     <<: *service-defaults
@@ -188,9 +199,12 @@ services:
       <<: *common-env
       NATS_CREDS: /run/secrets/cache.creds
     depends_on:
-      - nats
-      - qdrant
-      - ollama
+      nats:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      ollama:
+        condition: service_started
 
   coordinator:
     <<: *service-defaults
@@ -203,8 +217,10 @@ services:
       <<: *common-env
       NATS_CREDS: /run/secrets/coordinator.creds
     depends_on:
-      - nats
-      - qdrant
+      nats:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
 
   cognitive-bridge:
     container_name: activelearning-cognitive-bridge
@@ -220,9 +236,12 @@ services:
       - ./secrets:/run/secrets:ro
     restart: unless-stopped
     depends_on:
-      - nats
-      - ollama
-      - neuromorphic
+      nats:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      neuromorphic:
+        condition: service_started
 
   # --- extra: hardware / self-evolution (opt-in) ------------------------------
   sensory-gateway:
@@ -245,7 +264,8 @@ services:
       - ./secrets:/run/secrets:ro
     restart: unless-stopped
     depends_on:
-      - nats
+      nats:
+        condition: service_healthy
 
   overrides:
     container_name: activelearning-overrides
@@ -264,7 +284,8 @@ services:
       - ./secrets:/run/secrets:ro
     restart: unless-stopped
     depends_on:
-      - nats
+      nats:
+        condition: service_healthy
 
   meta-programmer:
     container_name: activelearning-meta-programmer
@@ -280,8 +301,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     depends_on:
-      - nats
-      - kernel
+      nats:
+        condition: service_healthy
+      kernel:
+        condition: service_started
 
   # --- build-only: the sandbox image used by meta-programmer -------------------
   sandbox-base:
