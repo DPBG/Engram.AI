@@ -76,12 +76,11 @@ jobs:
         working-directory: neuromorphic
         env:
           ENGRAM_SKIP_MUJOCO_LOOP: "1"
-        # test_training_session_complete_hook.py and
-        # test_motor_proposal_decision_ordering.py also import neuromorphic.service
-        # (which imports activelearning), so they need the same --with-editable ../sdk
+        # test_training_session_complete_hook.py also imports neuromorphic.service
+        # (which imports activelearning), so it needs the same --with-editable ../sdk
         # as the cognitive-bridge tests — the general neuromorphic job below has no
         # SDK dependency at all.
-        run: uv run --extra dev --with-editable ../sdk python -m pytest tests/test_cognitive_bridge_lifecycle.py tests/test_cognitive_action.py::TestCognitiveBridgeService tests/test_training_session_complete_hook.py tests/test_motor_proposal_decision_ordering.py -v -p no:anchorpy
+        run: uv run --extra dev --with-editable ../sdk python -m pytest tests/test_cognitive_bridge_lifecycle.py tests/test_cognitive_action.py::TestCognitiveBridgeService tests/test_training_session_complete_hook.py -v -p no:anchorpy
 
       - name: Run neuromorphic tests
         working-directory: neuromorphic
@@ -89,7 +88,7 @@ jobs:
         # stepping aborts (SIGABRT) nondeterministically on headless runners.
         env:
           ENGRAM_SKIP_MUJOCO_LOOP: "1"
-        run: uv run --extra dev python -m pytest tests/ -v -p no:anchorpy --ignore=tests/test_cognitive_bridge_lifecycle.py --ignore=tests/test_training_session_complete_hook.py --ignore=tests/test_motor_proposal_decision_ordering.py
+        run: uv run --extra dev python -m pytest tests/ -v -p no:anchorpy --ignore=tests/test_cognitive_bridge_lifecycle.py --ignore=tests/test_training_session_complete_hook.py
 
   benchmark-regression:
     name: Neuromorphic benchmark regression gate
