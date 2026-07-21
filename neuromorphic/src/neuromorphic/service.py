@@ -1334,19 +1334,26 @@ class NeuromorphicService(BaseService):
                 self.logger.warning("Pending decisions at capacity (500) — dropping proposal")
                 return
 
-            # Publish first; only register Future if publish succeeds.
-            # This avoids cleanup races in the exception handler.
-            await self.event_bus.publish("proposal.new", proposal)
-
-            # Safety gate ON — register a Future so the decision handler can
-            # resolve it.  The sim loop does NOT block; a background task
-            # handles the decision asynchronously.
+            # Register the Future BEFORE publishing. Publish awaits network I/O;
+            # a fast local Kernel can reply on decision.<trace_id> during that
+            # await. If the Future is not registered yet, _handle_kernel_decision
+            # drops the reply as "stale" and the command times out — losing a
+            # real ALLOW. Planner already registers-before-publish for the same
+            # reason; keep this path consistent.
             loop = asyncio.get_running_loop()
             fut: asyncio.Future = loop.create_future()
             self._pending_decisions[trace_id] = fut
             self._pending_proposals[trace_id] = proposal
 
-            # Track the task so _cleanup can cancel it on shutdown
+            try:
+                await self.event_bus.publish("proposal.new", proposal)
+            except Exception:
+                self._pending_decisions.pop(trace_id, None)
+                self._pending_proposals.pop(trace_id, None)
+                raise
+
+            # Safety gate ON — background task awaits the Kernel decision.
+            # The sim loop does NOT block.
             task = asyncio.create_task(self._await_safety_decision(trace_id, fut, cmd))
             self._decision_tasks.add(task)
             task.add_done_callback(self._decision_tasks.discard)
