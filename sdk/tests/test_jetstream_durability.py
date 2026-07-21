@@ -127,3 +127,57 @@ async def test_poison_after_max_deliver(event_bus: EventBus, wait_for_message) -
     # The dead-letter subject received the envelope (observable, not dropped).
     await wait_for_message(lambda: len(dlq_msgs) == 1, timeout=3.0)
     assert dlq_msgs[0]["original_subject"] == subject
+
+
+@pytest.mark.asyncio
+async def test_raising_poison_handler_does_not_crash_consumer(
+    event_bus: EventBus, wait_for_message
+) -> None:
+    """A poison_handler that raises must not kill the JetStream consumer loop.
+
+    Issue #258: ``_route_to_poison`` wraps the handler in try/except — prove it
+    with a real raising handler, then confirm a subsequent good message on the
+    *same* durable subscription is still delivered and acked.
+    """
+    import asyncio
+
+    subject = _decision_subject()
+    max_deliver = 3
+    poison_calls: list[dict] = []
+    fail_attempts = 0
+    good_msgs: list[dict] = []
+
+    async def flaky_then_ok(data: dict) -> None:
+        nonlocal fail_attempts
+        # First message always fails until poisoned; later messages succeed.
+        if data.get("trace_id") == "poison-boom":
+            fail_attempts += 1
+            raise RuntimeError("force poison")
+        good_msgs.append(data)
+
+    async def boom_poison(envelope: dict) -> None:
+        poison_calls.append(envelope)
+        raise RuntimeError("poison handler exploded")
+
+    await event_bus.js_subscribe(
+        subject,
+        flaky_then_ok,
+        durable=f"d-{uuid.uuid4().hex[:8]}",
+        max_deliver=max_deliver,
+        backoff=[0.3, 0.3],
+        poison_handler=boom_poison,
+    )
+    await event_bus.publish(subject, _decision_payload("poison-boom"))
+
+    await wait_for_message(lambda: len(poison_calls) == 1, timeout=8.0)
+    assert poison_calls[0]["original_subject"] == subject
+    assert fail_attempts == max_deliver
+
+    # Same consumer callback must still be running after the raising poison handler.
+    await event_bus.publish(subject, _decision_payload("after-poison"))
+    await wait_for_message(lambda: len(good_msgs) == 1, timeout=5.0)
+    assert good_msgs[0]["trace_id"] == "after-poison"
+
+    await asyncio.sleep(1.0)
+    assert len(good_msgs) == 1
+    assert len(poison_calls) == 1
