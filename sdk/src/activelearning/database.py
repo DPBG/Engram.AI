@@ -8,6 +8,7 @@ for all ActiveLearningAI tables.
 import asyncio
 import logging
 import os
+import random
 import sqlite3
 import sys
 from pathlib import Path
@@ -16,6 +17,15 @@ from typing import Any, cast
 import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+# Several services share one SQLite file (see CLAUDE.md: unified.db). The
+# first WAL-mode switch + schema creation on a brand-new file needs an
+# exclusive lock that isn't always retried through SQLite's normal busy
+# handler, so concurrent first-time initialize() calls can intermittently
+# raise sqlite3.OperationalError ("database is locked" / "disk I/O error")
+# -- see docs/sqlite-wal-concurrency.md for the measured failure rate.
+_INIT_RETRY_ATTEMPTS = 5
+_INIT_RETRY_BASE_DELAY = 0.05  # seconds
 
 
 def default_sqlite_path(db_name: str = "unified.db") -> str:
@@ -94,26 +104,58 @@ class Database:
         self._connection: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
-        """Initialize the database and create schema."""
+        """Initialize the database and create schema.
+
+        Retries on ``sqlite3.OperationalError`` with backoff: when multiple
+        services start up concurrently against the same shared SQLite file,
+        the first WAL-mode switch + schema creation can transiently collide
+        (see the module-level comment on ``_INIT_RETRY_ATTEMPTS``). A single
+        service starting alone never hits this path -- there is no
+        contention, so no retry, so no added latency.
+        """
         # Ensure directory exists
         db_dir = Path(self.db_path).parent
         db_dir.mkdir(parents=True, exist_ok=True)
 
-        # Connect and create schema
-        self._connection = await aiosqlite.connect(self.db_path)
-        self._connection.row_factory = aiosqlite.Row
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(_INIT_RETRY_ATTEMPTS):
+            try:
+                # Connect and create schema
+                self._connection = await aiosqlite.connect(self.db_path)
+                self._connection.row_factory = aiosqlite.Row
 
-        # Enable WAL mode for better concurrency
-        await self._connection.execute("PRAGMA journal_mode=WAL")
-        await self._connection.execute("PRAGMA synchronous=NORMAL")
+                # Enable WAL mode for better concurrency
+                await self._connection.execute("PRAGMA journal_mode=WAL")
+                await self._connection.execute("PRAGMA synchronous=NORMAL")
+                await self._connection.execute("PRAGMA busy_timeout=5000")
 
-        # Bring an older database up to date, then (re)create the schema
-        await self._migrate()
-        await self._connection.executescript(SCHEMA_SQL)
-        await self._connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        await self._connection.commit()
+                # Bring an older database up to date, then (re)create the schema
+                await self._migrate()
+                await self._connection.executescript(SCHEMA_SQL)
+                await self._connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                await self._connection.commit()
 
-        logger.info(f"Database initialized at {self.db_path}")
+                logger.info(f"Database initialized at {self.db_path}")
+                return
+            except sqlite3.OperationalError as e:
+                last_error = e
+                if self._connection is not None:
+                    await self._connection.close()
+                    self._connection = None
+                if attempt == _INIT_RETRY_ATTEMPTS - 1:
+                    break
+                delay = _INIT_RETRY_BASE_DELAY * (2**attempt) + random.uniform(
+                    0, _INIT_RETRY_BASE_DELAY
+                )
+                logger.warning(
+                    f"Database init contention at {self.db_path} "
+                    f"(attempt {attempt + 1}/{_INIT_RETRY_ATTEMPTS}): {e}. "
+                    f"Retrying in {delay:.2f}s."
+                )
+                await asyncio.sleep(delay)
+
+        assert last_error is not None
+        raise last_error
 
     async def _migrate(self) -> None:
         """Run pending migrations so existing databases adopt schema changes.
@@ -138,13 +180,20 @@ class Database:
                 try:
                     await conn.execute(statement)
                 except sqlite3.OperationalError as exc:
+                    msg = str(exc).lower()
+                    is_alter_table = statement.strip().upper().startswith("ALTER TABLE")
                     # ALTER TABLE on a missing table is safe to skip on a fresh
                     # database: executescript creates the table (with all current
                     # columns already in schema.sql) immediately after _migrate()
-                    # returns, so the column will exist regardless.
-                    if "no such table" in str(exc) and statement.strip().upper().startswith(
-                        "ALTER TABLE"
-                    ):
+                    # returns, so the column will exist regardless. "duplicate
+                    # column" means this exact ALTER already landed -- e.g. from
+                    # an earlier initialize() attempt whose executescript()
+                    # committed (each statement in a script autocommits; it is
+                    # not one transaction) before a *later* statement in that
+                    # same attempt hit contention and got retried from scratch
+                    # (issue #231's concurrent-initialize retry). Either way the
+                    # target state already exists; nothing to do.
+                    if is_alter_table and ("no such table" in msg or "duplicate column" in msg):
                         continue
                     raise
 
