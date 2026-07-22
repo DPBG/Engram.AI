@@ -127,9 +127,22 @@ def scan_source(code: str) -> list[Finding]:
     # ``from os import system``) is exactly as dangerous as ``os.system(...)``
     # and must be flagged the same way — otherwise the ``from``-import form is a
     # trivial bypass of the attribute-only call check below.
+    #
+    # Also resolve module aliases bound by ``import <module> as <alias>``. The
+    # attribute-form call check below matches the receiver name literally against
+    # ``_DANGEROUS_MODULES``, so ``import os as o; o.system(...)`` (or
+    # ``import subprocess as sp; sp.run(...)``) would otherwise slip through as a
+    # mere medium ``dangerous_import`` — an equally trivial bypass of the same
+    # check. Mapping the alias back to its real module closes that gap.
     dangerous_local_names: dict[str, str] = {}
+    module_aliases: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                bound = alias.asname or top
+                module_aliases[bound] = top
+        elif isinstance(node, ast.ImportFrom):
             top = (node.module or "").split(".")[0]
             allowed = _DANGEROUS_MODULES.get(top, "MISS")
             if allowed == "MISS":
@@ -162,7 +175,10 @@ def scan_source(code: str) -> list[Finding]:
                                 Finding("high", "dynamic_attr", f"{fn.id}(..., {arg.value!r})")
                             )
             elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
-                mod, attr = fn.value.id, fn.attr
+                # Resolve ``import os as o`` style aliases back to the real module
+                # so ``o.system(...)`` is checked as ``os.system(...)``.
+                mod = module_aliases.get(fn.value.id, fn.value.id)
+                attr = fn.attr
                 allowed = _DANGEROUS_MODULES.get(mod, "MISS")
                 if allowed != "MISS" and (allowed is None or attr in allowed):
                     findings.append(Finding("high", "dangerous_call", f"{mod}.{attr}()"))
