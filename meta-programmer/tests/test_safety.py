@@ -55,6 +55,22 @@ def test_from_import_sink_aliased_call_flagged():
     assert is_dangerous("from subprocess import Popen as P\nP(['ls'])")
 
 
+def test_import_module_aliased_call_flagged():
+    # `import os as o; o.system(...)` is exactly as dangerous as `os.system(...)`
+    # and must not bypass the attribute-form call check via the module alias.
+    assert is_dangerous("import os as o\no.system('rm -rf /')")
+    assert is_dangerous("import subprocess as sp\nsp.run(['ls'])")
+    assert is_dangerous("import os as o\no.remove('/etc/passwd')")
+    # importlib flags any attribute (value=None in _DANGEROUS_MODULES).
+    assert is_dangerous("import importlib as il\nil.import_module('os')")
+
+
+def test_import_module_aliased_benign_attr_not_flagged():
+    # A benign attribute on an aliased module (os.getcwd is sink-free) stays
+    # below high severity — the alias resolution must not over-flag.
+    assert is_dangerous("import os as o\np = o.getcwd()") is False
+
+
 def test_star_import_of_dangerous_module_flagged():
     assert is_dangerous("from os import *\nsystem('id')")
     assert is_dangerous("from subprocess import *")
