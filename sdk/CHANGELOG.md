@@ -27,6 +27,12 @@ Apply these rules whenever you change `sdk/`:
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-22
+
+### Fixed
+
+- **JetStream consumers no longer silently drop undecodable messages** (`nats_client.py`): the durable `js_subscribe` callback and the `wait_for_decision` waiter parse each message with `deserialize_message()` before schema validation, but their `except` caught only `MessageValidationError`. Malformed JSON (`json.JSONDecodeError`) and non-UTF-8 bytes (`UnicodeDecodeError`) escaped the parse block, so a corrupt safety-critical message was never dead-lettered or `term()`-ed - it redelivered up to `max_deliver` and then stuck un-acked, violating the "never silently dropped" guarantee. Both parse blocks now treat a decode failure as structurally unprocessable: `js_subscribe` poisons + `term()`s it, and `wait_for_decision` acks (drops) it and keeps waiting so the caller fails closed on timeout.
+
 ## [0.2.0] — 2026-07-16
 
 ### Added

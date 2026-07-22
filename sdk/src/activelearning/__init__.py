@@ -68,7 +68,7 @@ from activelearning.subjects import (
     observation_subject,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     # Core types
