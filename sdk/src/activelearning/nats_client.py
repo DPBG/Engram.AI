@@ -702,7 +702,15 @@ class EventBus:
                             f"expected JSON object, got {type(data).__name__}",
                         )
                     data = validate_payload(subject, data, wire_model)
-                except MessageValidationError as e:
+                except (MessageValidationError, json.JSONDecodeError, UnicodeDecodeError) as e:
+                    # Undecodable bytes (non-UTF-8) or malformed JSON are just as
+                    # structurally unprocessable as a schema violation — they can
+                    # never succeed on retry. deserialize_message() raises these
+                    # *before* validate_payload runs, so they must be poisoned here
+                    # too; otherwise they escape this block, skip term()/dead-letter
+                    # entirely, and the safety-critical message is silently dropped
+                    # (redelivered until max_deliver, then stuck un-acked) instead of
+                    # honoring the "never silently dropped" guarantee above.
                     logger.error("Poisoning unprocessable message on %s: %s", subject, e)
                     await self._route_to_poison(subject, msg, f"validation_error: {e}")
                     await msg.term()
@@ -917,7 +925,13 @@ class EventBus:
                 result = data
                 decision_received.set()
                 await msg.ack()
-            except MessageValidationError as e:
+            except (MessageValidationError, json.JSONDecodeError, UnicodeDecodeError) as e:
+                # A malformed/undecodable decision can never become valid on
+                # retry — ack it to drop it from the stream (same as an invalid
+                # signature or expired decision above) and keep waiting. Without
+                # catching the decode errors here they escape un-acked, so the
+                # broker redelivers the same garbage to this ephemeral waiter
+                # until it is torn down at timeout.
                 logger.error(str(e))
                 await msg.ack()
             finally:
