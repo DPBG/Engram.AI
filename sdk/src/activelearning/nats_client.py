@@ -128,9 +128,22 @@ _CONSUMER_INACTIVE_THRESHOLD_S: float = 60.0
 # poison/dead-letter path instead of redelivering forever or being dropped.
 DEFAULT_ACK_WAIT_SECONDS: float = 30.0
 DEFAULT_MAX_DELIVER: int = 5
-# Backoff between redeliveries (seconds); length should be MAX_DELIVER - 1 so
-# every retry has its own interval. The server uses backoff[0] as the ack-wait.
-DEFAULT_REDELIVERY_BACKOFF: list[float] = [1.0, 5.0, 15.0, 30.0]
+# Per-delivery ack-wait schedule (seconds), length MAX_DELIVER - 1 (one entry
+# per retry). NATS derives the ack deadline for delivery attempt N from
+# backoff[N-1], so backoff[0] governs the *first* delivery of a healthy message
+# — not just retries. If backoff[0] is shorter than a handler's worst-case
+# runtime, the server assumes the delivery failed and redelivers while the
+# handler is still running, re-invoking it concurrently. On the safety-critical
+# streams these consumers serve (proposal.new, code.proposal, decision.*,
+# policy.*) that means a single Kernel-gated action is evaluated and forwarded
+# 2–MAX_DELIVER times: duplicate motor/speech/cognitive execution, a corrupted
+# M1.14 rate-limit window, and duplicated audit rows. The Kernel's own
+# evaluation budget is up to ~7s (5s Safety-Supervisor request + 2s Beliefs
+# norm check), so backoff[0] must be at least DEFAULT_ACK_WAIT_SECONDS; later
+# attempts back off further so a genuinely stuck consumer does not hammer the
+# broker. (Handlers that *raise* nak immediately, so this longer window does not
+# slow down the fail-fast retry path — it only covers slow-but-healthy work.)
+DEFAULT_REDELIVERY_BACKOFF: list[float] = [DEFAULT_ACK_WAIT_SECONDS, 60.0, 120.0, 300.0]
 # Exhausted or unprocessable messages are republished here (core NATS, not the
 # JetStream-backed safety stream) so they are observable, never silently dropped.
 DLQ_SUBJECT_PREFIX: str = "dlq."

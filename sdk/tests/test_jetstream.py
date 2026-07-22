@@ -7,6 +7,7 @@ from nats.js.api import RetentionPolicy, StorageType
 
 from activelearning.nats_client import (
     _SAFETY_STREAM_SUBJECTS,
+    DEFAULT_ACK_WAIT_SECONDS,
     DEFAULT_MAX_DELIVER,
     DEFAULT_REDELIVERY_BACKOFF,
     DLQ_SUBJECT_PREFIX,
@@ -185,6 +186,18 @@ class TestDlqConstants:
 
     def test_default_redelivery_backoff_are_floats(self):
         assert all(isinstance(v, float) for v in DEFAULT_REDELIVERY_BACKOFF)
+
+    def test_default_backoff_first_entry_covers_ack_wait(self):
+        # NATS derives the ack deadline for delivery attempt N from backoff[N-1],
+        # so backoff[0] is the ack-wait for the FIRST (healthy) delivery, not just
+        # for retries. If it is shorter than a handler's runtime, the broker
+        # redelivers a still-in-flight message and the handler runs again
+        # concurrently -- double-processing every safety-critical proposal/decision
+        # whose handler takes longer than backoff[0]. The Kernel's evaluation
+        # budget alone is up to ~7s (5s Safety-Supervisor + 2s Beliefs), so the
+        # first-delivery ack-wait must be at least the intended DEFAULT_ACK_WAIT.
+        # Regression guard against the previous 1.0s value.
+        assert DEFAULT_REDELIVERY_BACKOFF[0] >= DEFAULT_ACK_WAIT_SECONDS
 
 
 class TestPoisonSubject:
