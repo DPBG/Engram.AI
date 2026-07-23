@@ -157,7 +157,7 @@ SVG ring chart showing knowledge growth by source:
 - 🟣 Simulation (synthetic/test data)
 
 ### Learning Evidence
-`BenchmarkSuite` (`neuromorphic/src/neuromorphic/benchmarks.py`) produces 6 quantitative
+`BenchmarkSuite` (`neuromorphic/src/neuromorphic/benchmarks.py`) produces quantitative
 benchmarks proving the brain learns, run via `python -m neuromorphic.benchmarks`
 and saved to `neuromorphic/benchmarks/*.json`:
 1. **CrossModalRecall** — inject visual, measure auditory cortex activation (and vice versa)
@@ -166,10 +166,12 @@ and saved to `neuromorphic/benchmarks/*.json`:
 4. **EnergyEfficiency** — compute energy per learned association vs baseline
 5. **ConceptSeparability** — silhouette score + linear-probe accuracy over concept-layer activations
 6. **CrossModalBindingAccuracy** — precision/recall of bound modality pairs vs ground truth
+7. **GlobalWorkspaceBroadcast** — workspace ignition to a source vs control region
+8. **CatastrophicForgetting** — train A → train B → re-probe A (`separation_ratio` retention; issue [#289](https://github.com/DPBG/Engram.AI/issues/289))
 
 The dashboard's Learning Evidence panel (`/api/learning-evidence`) currently trends
-**ConceptSeparability** and **CrossModalBindingAccuracy** over time; the other 4 are
-computed and saved to the JSON results but not yet plotted (tracked in
+**ConceptSeparability** and **CrossModalBindingAccuracy** over time; the other
+benchmarks are computed and saved to the JSON results but not yet plotted (tracked in
 [#307](https://github.com/DPBG/Engram.AI/issues/307)).
 
 ---

@@ -14,6 +14,7 @@ from neuromorphic.benchmarks import (
     INTENTIONALLY_SPARSE_REGIONS,
     AssociationStrengthBenchmark,
     BenchmarkSuite,
+    CatastrophicForgettingBenchmark,
     ConceptSeparabilityBenchmark,
     CrossModalRecallBenchmark,
     EnergyEfficiencyBenchmark,
@@ -352,6 +353,7 @@ class TestBenchmarkSuite:
         assert "energy_efficiency" in results
         assert "concept_separability" in results
         assert "cross_modal_binding_accuracy" in results
+        assert "catastrophic_forgetting" in results
         assert "timestamp" in results
         assert results["total_neurons"] > 0
 
@@ -365,6 +367,7 @@ class TestBenchmarkSuite:
         assert "Energy Efficiency" in text
         assert "Concept Separability" in text
         assert "Cross-Modal Binding Accuracy" in text
+        assert "Catastrophic Forgetting" in text
 
     def test_summary_includes_per_region_quiet_report(self, small_network):
         """issue #331: the summary cross-references quiet regions automatically."""
@@ -685,6 +688,75 @@ class TestConceptSeparabilityBenchmark:
         text = suite.summary(results)
         assert "Concept Separability" in text
         assert "Silhouette score" in text
+
+
+class TestCatastrophicForgettingBenchmark:
+    """Issue #289: train-A → train-B → re-test-A retention protocol."""
+
+    @pytest.fixture
+    def patterns_a(self):
+        return generate_test_patterns(3, np.random.default_rng(11))
+
+    @pytest.fixture
+    def patterns_b(self):
+        return generate_test_patterns(3, np.random.default_rng(22))
+
+    def test_no_concept_layer_returns_error(self, small_network, patterns_a, patterns_b):
+        bench = CatastrophicForgettingBenchmark(small_network)
+        result = bench.run(patterns_a, patterns_b, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" in result
+        assert result["retention_ratio"] == 0.0
+
+    def test_insufficient_patterns_returns_error(self, network_with_concept):
+        bench = CatastrophicForgettingBenchmark(network_with_concept)
+        single = generate_test_patterns(1, np.random.default_rng(0))
+        result = bench.run(single, single, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert result["error"] == "insufficient patterns for forgetting protocol"
+
+    def test_produces_retention_metrics(self, network_with_concept, patterns_a, patterns_b):
+        bench = CatastrophicForgettingBenchmark(network_with_concept)
+        result = bench.run(patterns_a, patterns_b, training_reps=1, probe_reps=2, steps_per_rep=3)
+        assert "error" not in result
+        for key in (
+            "separation_ratio_after_a",
+            "separation_ratio_a_after_b",
+            "retention_ratio",
+            "silhouette_after_a",
+            "silhouette_a_after_b",
+            "linear_probe_after_a",
+            "linear_probe_a_after_b",
+            "checkpoint_keys",
+            "n_patterns_a",
+            "n_patterns_b",
+            "protocol",
+        ):
+            assert key in result, f"missing key: {key}"
+        assert result["protocol"] == "train_a→train_b→reprobe_a"
+        assert result["n_patterns_a"] == 3
+        assert result["n_patterns_b"] == 3
+        assert result["retention_ratio"] >= 0.0
+        assert result["separation_ratio_after_a"] >= 0.0
+        assert result["separation_ratio_a_after_b"] >= 0.0
+        # Checkpoint reuses the same state-dict keys persistence would save.
+        assert "synapses" in result["checkpoint_keys"]
+        assert "regions" in result["checkpoint_keys"]
+
+    def test_run_all_includes_catastrophic_forgetting(self, network_with_concept):
+        suite = BenchmarkSuite(network_with_concept)
+        results = suite.run_all(n_patterns=3, training_reps=1, steps_per_pattern=4)
+        assert "catastrophic_forgetting" in results
+        cf = results["catastrophic_forgetting"]
+        assert "error" not in cf
+        assert "retention_ratio" in cf
+        text = suite.summary(results)
+        assert "Catastrophic Forgetting" in text
+        assert "Retention ratio" in text
+
+    def test_small_network_suite_includes_skipped_shape(self, small_network):
+        suite = BenchmarkSuite(small_network)
+        results = suite.run_all(n_patterns=2, training_reps=1, steps_per_pattern=4)
+        cf = results["catastrophic_forgetting"]
+        assert "error" in cf
 
 
 # ---------------------------------------------------------------------------
