@@ -1,13 +1,15 @@
 """
 Structured benchmarking framework for investor-ready metrics.
 
-Provides 6 benchmark tests that produce quantitative proof the brain learns:
+Provides benchmark tests that produce quantitative proof the brain learns:
 1. CrossModalRecall — inject visual, measure auditory cortex activation (and vice versa)
 2. NoveltyDetection — present known vs unknown stimuli, measure response difference
 3. AssociationStrength — measure weight changes after paired multi-modal training
 4. EnergyEfficiency — compute energy per learned association vs baseline
 5. ConceptSeparability — silhouette score + linear-probe accuracy over concept-layer activations
 6. CrossModalBindingAccuracy — precision/recall of bound modality pairs vs ground truth
+7. GlobalWorkspaceBroadcast — workspace ignition to a source vs control region
+8. CatastrophicForgetting — train A, train B, re-probe A (Invariant 6 retention)
 
 Usage:
     from neuromorphic.benchmarks import BenchmarkSuite
@@ -667,6 +669,33 @@ def nearest_centroid_loo_accuracy(
     return loo_correct / n_samples
 
 
+def _expose_patterns(
+    net: NeuromorphicNetwork,
+    patterns: list[dict],
+    training_reps: int,
+    steps_per_rep: int,
+) -> None:
+    """Drive STDP by repeatedly injecting each pattern's visual stream.
+
+    Shared by ConceptSeparabilityBenchmark and CatastrophicForgettingBenchmark
+    so train-A / train-B phases stay identical to the separability training loop.
+    """
+    for _ in range(training_reps):
+        for pat in patterns:
+            c = net.inject_observation(pat["visual"], provenance="sensor.videofile.bench")
+            for _ in range(steps_per_rep):
+                net.step(c)
+                c = c * np.float32(0.97)
+
+
+def _sensory_association_weights(net: NeuromorphicNetwork) -> np.ndarray | None:
+    """Flat copy of sensory→association weights, or None if the group is absent."""
+    syn = net.synapses.get("sensory_association")
+    if syn is None or getattr(syn.weights, "data", np.array([])).size == 0:
+        return None
+    return syn.weights.data.copy()
+
+
 class ConceptSeparabilityBenchmark:
     """Score how well concept-layer activations separate distinct stimuli.
 
@@ -679,6 +708,9 @@ class ConceptSeparabilityBenchmark:
     - linear_probe_accuracy nearest-centroid accuracy in [0, 1]
     - mean_intra_class_distance / mean_inter_class_distance (cosine)
     - separation_ratio      mean_inter / (mean_intra + 1e-8)
+
+    Pass ``training_reps=0`` to probe/score without further training — used by
+    CatastrophicForgettingBenchmark to re-test set A after set B is trained.
     """
 
     def __init__(self, net: NeuromorphicNetwork) -> None:
@@ -701,12 +733,7 @@ class ConceptSeparabilityBenchmark:
             }
 
         # Training phase — expose each pattern so STDP builds concept codes
-        for _ in range(training_reps):
-            for pat in patterns:
-                c = net.inject_observation(pat["visual"], provenance="sensor.videofile.bench")
-                for _ in range(steps_per_rep):
-                    net.step(c)
-                    c = c * np.float32(0.97)
+        _expose_patterns(net, patterns, training_reps, steps_per_rep)
 
         # Probe phase — collect spike-count vectors, one per (pattern, rep)
         labels: list[int] = []
@@ -794,6 +821,134 @@ class ConceptSeparabilityBenchmark:
             "top_neurons_per_pattern": top_neurons,
             "training_reps": training_reps,
             "probe_reps": probe_reps,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Benchmark 8: Catastrophic Forgetting (Invariant 6 retention)
+# ---------------------------------------------------------------------------
+class CatastrophicForgettingBenchmark:
+    """Train stimulus set A, then B, then re-probe A — catch silent forgetting.
+
+    Invariant 6 claims homeostatic scaling prevents catastrophic forgetting.
+    Short-horizon unit tests (`TestContinualLearning.test_pattern_retention`)
+    only check weight correlation; none of the suite's other benchmarks run
+    a train-A → train-B → re-test-A protocol. This one does, measuring
+    retention via ``ConceptSeparabilityBenchmark``'s ``separation_ratio`` on
+    A's stimuli after B has been trained (issue #289).
+
+    Mid-protocol checkpoint: after A, captures ``net.get_state()`` — the same
+    state dict ``NeuromorphicPersistence.save_state`` persists — so the phase
+    boundary reuses the existing checkpoint machinery without restoring it
+    before the A re-test (restoring would undo B and hide forgetting).
+    """
+
+    def __init__(self, net: NeuromorphicNetwork) -> None:
+        self._net = net
+
+    def run(
+        self,
+        patterns_a: list[dict],
+        patterns_b: list[dict],
+        training_reps: int = 5,
+        probe_reps: int = 3,
+        steps_per_rep: int = 10,
+    ) -> dict[str, Any]:
+        net = self._net
+        n_a, n_b = len(patterns_a), len(patterns_b)
+        if net.concept is None:
+            return {
+                "error": "no concept layer",
+                "separation_ratio_after_a": 0.0,
+                "separation_ratio_a_after_b": 0.0,
+                "retention_ratio": 0.0,
+                "n_patterns_a": n_a,
+                "n_patterns_b": n_b,
+            }
+        if n_a < 2 or n_b < 2:
+            return {
+                "error": "insufficient patterns for forgetting protocol",
+                "separation_ratio_after_a": 0.0,
+                "separation_ratio_a_after_b": 0.0,
+                "retention_ratio": 0.0,
+                "n_patterns_a": n_a,
+                "n_patterns_b": n_b,
+            }
+
+        cs = ConceptSeparabilityBenchmark(net)
+
+        # Phase 1 — train + score A
+        after_a = cs.run(
+            patterns_a,
+            training_reps=training_reps,
+            probe_reps=probe_reps,
+            steps_per_rep=steps_per_rep,
+        )
+        if "error" in after_a:
+            return {
+                "error": after_a["error"],
+                "separation_ratio_after_a": 0.0,
+                "separation_ratio_a_after_b": 0.0,
+                "retention_ratio": 0.0,
+                "n_patterns_a": n_a,
+                "n_patterns_b": n_b,
+            }
+
+        # Phase boundary checkpoint (same dict persistence.save_state writes).
+        # Kept in-memory; do NOT set_state before re-testing A.
+        checkpoint = net.get_state()
+        weights_after_a = _sensory_association_weights(net)
+
+        # Phase 2 — train B only (no score needed; probe would just burn steps)
+        _expose_patterns(net, patterns_b, training_reps, steps_per_rep)
+        weights_after_b = _sensory_association_weights(net)
+
+        # Phase 3 — re-probe A with no further A training
+        after_ab = cs.run(
+            patterns_a,
+            training_reps=0,
+            probe_reps=probe_reps,
+            steps_per_rep=steps_per_rep,
+        )
+        if "error" in after_ab:
+            return {
+                "error": after_ab["error"],
+                "separation_ratio_after_a": after_a["separation_ratio"],
+                "separation_ratio_a_after_b": 0.0,
+                "retention_ratio": 0.0,
+                "n_patterns_a": n_a,
+                "n_patterns_b": n_b,
+            }
+
+        sep_a = float(after_a["separation_ratio"])
+        sep_ab = float(after_ab["separation_ratio"])
+        retention = round(sep_ab / (sep_a + 1e-8), 4)
+
+        weight_corr: float | None = None
+        if (
+            weights_after_a is not None
+            and weights_after_b is not None
+            and weights_after_a.size == weights_after_b.size
+            and weights_after_a.size > 0
+            and float(weights_after_a.std()) > 0.0
+        ):
+            weight_corr = round(float(np.corrcoef(weights_after_a, weights_after_b)[0, 1]), 4)
+
+        return {
+            "separation_ratio_after_a": sep_a,
+            "separation_ratio_a_after_b": sep_ab,
+            "retention_ratio": retention,
+            "silhouette_after_a": after_a["silhouette_score"],
+            "silhouette_a_after_b": after_ab["silhouette_score"],
+            "linear_probe_after_a": after_a["linear_probe_accuracy"],
+            "linear_probe_a_after_b": after_ab["linear_probe_accuracy"],
+            "weight_correlation_a_to_b": weight_corr,
+            "checkpoint_keys": sorted(checkpoint.keys()),
+            "n_patterns_a": n_a,
+            "n_patterns_b": n_b,
+            "training_reps": training_reps,
+            "probe_reps": probe_reps,
+            "protocol": "train_a→train_b→reprobe_a",
         }
 
 
@@ -1247,7 +1402,7 @@ class MetaControllerGatingBenchmark:
 # Suite
 # ---------------------------------------------------------------------------
 class BenchmarkSuite:
-    """Runs all 6 benchmarks and produces a unified results dict."""
+    """Runs all suite benchmarks and produces a unified results dict."""
 
     def __init__(self, network: NeuromorphicNetwork) -> None:
         self.network = network
@@ -1263,38 +1418,53 @@ class BenchmarkSuite:
         patterns = generate_test_patterns(n_patterns, rng)
         t0 = time.perf_counter()
         logger.info(
-            "Benchmark 1/6: CrossModalRecall (%d patterns x %d reps)", n_patterns, training_reps
+            "Benchmark 1/8: CrossModalRecall (%d patterns x %d reps)", n_patterns, training_reps
         )
         cm = CrossModalRecallBenchmark(self.network).run(patterns, training_reps, steps_per_pattern)
-        logger.info("Benchmark 2/6: NoveltyDetection")
+        logger.info("Benchmark 2/8: NoveltyDetection")
         nd = NoveltyDetectionBenchmark(self.network).run(
             patterns[0],
             generate_test_patterns(1, np.random.default_rng(seed + 999))[0],
             training_reps,
             steps_per_pattern,
         )
-        logger.info("Benchmark 3/6: AssociationStrength")
+        logger.info("Benchmark 3/8: AssociationStrength")
         ass = AssociationStrengthBenchmark(self.network).run(
             patterns, training_reps, steps_per_pattern
         )
-        logger.info("Benchmark 4/6: EnergyEfficiency")
+        logger.info("Benchmark 4/8: EnergyEfficiency")
         en = EnergyEfficiencyBenchmark(self.network).run(patterns, steps_per_pattern)
-        logger.info("Benchmark 5/6: ConceptSeparability")
+        logger.info("Benchmark 5/8: ConceptSeparability")
         cs = ConceptSeparabilityBenchmark(self.network).run(
             patterns, training_reps=training_reps, steps_per_rep=steps_per_pattern
         )
-        logger.info("Benchmark 6/6: CrossModalBindingAccuracy")
+        logger.info("Benchmark 6/8: CrossModalBindingAccuracy")
         ba = CrossModalBindingAccuracyBenchmark(self.network).run(
             n_pairs=max(2, min(n_patterns, 8)),
             training_reps=training_reps,
             steps_per_pair=steps_per_pattern,
             seed=seed,
         )
-        logger.info("Benchmark 7/7: GlobalWorkspaceBroadcast")
+        logger.info("Benchmark 7/8: GlobalWorkspaceBroadcast")
         gw = GlobalWorkspaceBroadcastBenchmark(self.network).run(
             inject_steps=steps_per_pattern,
             warmup_steps=max(5, steps_per_pattern // 4),
             seed=seed,
+        )
+        # Dedicated disjoint A/B sets so CI's n_patterns=2 still has ≥2 per task.
+        n_task = max(2, n_patterns // 2)
+        patterns_a = generate_test_patterns(n_task, np.random.default_rng(seed + 10_001))
+        patterns_b = generate_test_patterns(n_task, np.random.default_rng(seed + 10_002))
+        logger.info(
+            "Benchmark 8/8: CatastrophicForgetting (A=%d patterns, B=%d patterns)",
+            len(patterns_a),
+            len(patterns_b),
+        )
+        cf = CatastrophicForgettingBenchmark(self.network).run(
+            patterns_a,
+            patterns_b,
+            training_reps=training_reps,
+            steps_per_rep=steps_per_pattern,
         )
         return _to_native(
             {
@@ -1309,6 +1479,7 @@ class BenchmarkSuite:
                 "concept_separability": cs,
                 "cross_modal_binding_accuracy": ba,
                 "global_workspace_broadcast": gw,
+                "catastrophic_forgetting": cf,
             }
         )
 
@@ -1472,6 +1643,26 @@ class BenchmarkSuite:
                     f"   Broadcast detected: {gw.get('broadcast_detected', False)}",
                     "",
                 ]
+        cf = results.get("catastrophic_forgetting", {})
+        if cf:
+            if "error" not in cf:
+                lines += [
+                    "8. Catastrophic Forgetting",
+                    f"   Sep ratio after A:     {cf.get('separation_ratio_after_a', 0):.4f}",
+                    f"   Sep ratio A after B:   {cf.get('separation_ratio_a_after_b', 0):.4f}",
+                    f"   Retention ratio:       {cf.get('retention_ratio', 0):.4f}",
+                ]
+                if cf.get("weight_correlation_a_to_b") is not None:
+                    lines.append(
+                        f"   Weight corr A→B:       {cf['weight_correlation_a_to_b']:.4f}"
+                    )
+                lines.append("")
+            else:
+                lines += [
+                    "8. Catastrophic Forgetting",
+                    f"   (skipped — {cf['error']})",
+                    "",
+                ]
         lines.append("=" * 35)
         return "\n".join(lines)
 
@@ -1493,6 +1684,8 @@ class BenchmarkSuite:
             "novelty_detection.discrimination_ratio",
             "association_strength.concept_count",
             "energy_efficiency.global_firing_rate",
+            "catastrophic_forgetting.retention_ratio",
+            "catastrophic_forgetting.separation_ratio_a_after_b",
         ]
         for name in headline_metrics:
             stat = agg.get(name)

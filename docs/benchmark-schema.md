@@ -18,7 +18,7 @@ person who reads it.
 
 | Producer | Filename pattern | Top-level keys |
 |---|---|---|
-| `BenchmarkSuite.save_results()` (this doc) | `benchmarks_YYYYMMDD_HHMMSS.json` (plural) | `timestamp`, `step_count`, `total_neurons`, `elapsed_s`, `cross_modal_recall`, `novelty_detection`, `association_strength`, `energy_efficiency`, `concept_separability`, `cross_modal_binding_accuracy` |
+| `BenchmarkSuite.save_results()` (this doc) | `benchmarks_YYYYMMDD_HHMMSS.json` (plural) | `timestamp`, `step_count`, `total_neurons`, `elapsed_s`, `cross_modal_recall`, `novelty_detection`, `association_strength`, `energy_efficiency`, `concept_separability`, `cross_modal_binding_accuracy`, `global_workspace_broadcast`, `catastrophic_forgetting` |
 | `scripts/benchmark.py` (a separate step-timing/speed benchmark, unrelated to `BenchmarkSuite`) | `benchmark_YYYYMMDD_HHMMSS.json` (singular) | `timestamp`, `system`, `config`, `init`, `speed`, `learning`, `memory`, `final_state` |
 
 `dashboard/src/dashboard/learning_evidence.py`'s `is_benchmark_result_file()`
@@ -59,12 +59,15 @@ Always present, regardless of any individual benchmark's internal state:
 | `energy_efficiency` | `dict` | Benchmark 4 — see below. Always full shape. |
 | `concept_separability` | `dict` | Benchmark 5 — see below. **Two distinct shapes** — see its section. |
 | `cross_modal_binding_accuracy` | `dict` | Benchmark 6 — see below. Always full shape. |
+| `global_workspace_broadcast` | `dict` | Benchmark 7 — may include `skipped: true`. |
+| `catastrophic_forgetting` | `dict` | Benchmark 8 — **two shapes** like concept_separability; see below. |
 
-Five of the six per-benchmark dicts (1–4, 6) **always** return their full,
+Five of the original six per-benchmark dicts (1–4, 6) **always** return their full,
 fixed key set — a degenerate input (empty patterns, no plastic synapses,
 etc.) produces zero/default-valued fields, never a reduced shape and never
-an `error` key. **Benchmark 5 (`concept_separability`) is the one exception**
-and is the specific ambiguity issue #308 (item #23) flags — see its section.
+an `error` key. **Benchmark 5 (`concept_separability`) and benchmark 8
+(`catastrophic_forgetting`) are the exceptions** that carry an `error` key —
+see their sections.
 
 ### 1. `cross_modal_recall` (`CrossModalRecallBenchmark`)
 
@@ -210,6 +213,47 @@ Always this exact key set (no error path):
 | `training_reps` | `int` |
 | `fixture_seed` | `int` |
 | `coupling_matrix` | `list[list[float]]`, `n_pairs × n_pairs` |
+
+### 8. `catastrophic_forgetting` (`CatastrophicForgettingBenchmark`) — two shapes
+
+Issue [#289](https://github.com/DPBG/Engram.AI/issues/289) (M3.4). Protocol:
+train stimulus set A → train set B → re-probe A with `training_reps=0`.
+Retention is measured by re-running concept `separation_ratio` on A's
+stimuli after B. Mid-protocol captures `network.get_state()` (the same dict
+`NeuromorphicPersistence.save_state` writes) but does **not** restore it
+before the A re-test — restoring would undo B and hide forgetting.
+
+**Error shape** — no concept layer, or fewer than 2 patterns in A or B:
+
+| Key | Type | Value |
+|---|---|---|
+| `error` | `str` | `"no concept layer"` or `"insufficient patterns for forgetting protocol"` (or a propagated ConceptSeparability error) |
+| `separation_ratio_after_a` | `float` | `0.0` placeholder |
+| `separation_ratio_a_after_b` | `float` | `0.0` placeholder |
+| `retention_ratio` | `float` | `0.0` placeholder |
+| `n_patterns_a` | `int` | |
+| `n_patterns_b` | `int` | |
+
+**Success shape** — no `error` key:
+
+| Key | Type |
+|---|---|
+| `separation_ratio_after_a` | `float`, `>= 0` |
+| `separation_ratio_a_after_b` | `float`, `>= 0` |
+| `retention_ratio` | `float`, `>= 0` — `sep_a_after_b / (sep_after_a + 1e-8)` |
+| `silhouette_after_a` | `float` |
+| `silhouette_a_after_b` | `float` |
+| `linear_probe_after_a` | `float` |
+| `linear_probe_a_after_b` | `float` |
+| `weight_correlation_a_to_b` | `float \| null` — sensory→association weight corr after A vs after B |
+| `checkpoint_keys` | `list[str]` — keys of the post-A `get_state()` dict |
+| `n_patterns_a` | `int` |
+| `n_patterns_b` | `int` |
+| `training_reps` | `int` |
+| `probe_reps` | `int` |
+| `protocol` | `str` — always `"train_a→train_b→reprobe_a"` |
+
+Contract: check `"error" in result` first (same as `concept_separability`).
 
 ## What each real consumer actually reads today
 
