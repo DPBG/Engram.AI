@@ -213,7 +213,7 @@ class MetaProgrammerService(BaseService):
                 return
 
             # Write to staging/pending
-            staged_path = self._staging_manager.stage_pending(
+            self._staging_manager.stage_pending(
                 trace_id=trace_id,
                 target_path=target_path,
                 code=code_content,
@@ -258,12 +258,21 @@ class MetaProgrammerService(BaseService):
             self.logger.info(f"Kernel approved, moving to testing: {trace_id}")
             self._staging_manager.stage_testing(trace_id)
 
+            # stage_testing() moved the staged files from pending/ into testing/,
+            # so the path stage_pending() returned no longer exists. Recompute
+            # from testing_dir before running the sandbox — mirrors the
+            # human-approval path in approval_consumer.py. Without this the
+            # sandbox mounts a vanished directory, pytest collects nothing, and
+            # every ALLOW/TRANSFORM proposal "fails" its tests and is never
+            # deployed.
+            testing_stage = os.path.join(self._staging_manager.testing_dir, trace_id)
+            code_path = os.path.join(testing_stage, "code.py")
+            tests_path = os.path.join(testing_stage, "tests.py")
+
             # Run tests in sandbox
             test_result = await self._sandbox_manager.run_tests(
-                code_path=staged_path,
-                test_path=(
-                    os.path.join(os.path.dirname(staged_path), "tests.py") if test_content else None
-                ),
+                code_path=code_path,
+                test_path=tests_path if os.path.exists(tests_path) else None,
             )
 
             # Fail closed: if containment itself could not run (no Docker daemon,

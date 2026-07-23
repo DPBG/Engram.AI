@@ -286,6 +286,9 @@ def test_all_unavailable_paths_carry_remediation():
 class _FakeStaging:
     def __init__(self):
         self.rejected = []
+        # The real StagingManager exposes testing_dir; the service recomputes the
+        # sandbox path from it after stage_testing() moves the files.
+        self.testing_dir = "/data/staging/testing"
 
     def stage_testing(self, _trace_id):
         pass
