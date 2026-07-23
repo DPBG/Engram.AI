@@ -39,9 +39,13 @@ services:
     image: nats:2.10-alpine
     container_name: activelearning-nats
     command: ["-js", "-sd", "/data", "-m", "8222"]
+    # Default: loopback only. The stock image has no auth, and ENGRAM_DECISION_KEY
+    # is unset in this compose file — binding 0.0.0.0 would let any network peer
+    # forge decision.* ALLOW payloads and bypass the Kernel gate. Override for
+    # remote sensors with NATS_HOST_BIND=0.0.0.0 (and enable broker auth / signing).
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "${NATS_HOST_BIND:-127.0.0.1}:4222:4222"
+      - "${NATS_HOST_BIND:-127.0.0.1}:8222:8222"
     volumes:
       - nats-data:/data
     restart: unless-stopped

@@ -84,9 +84,13 @@ def extract_learning_metrics(raw: dict[str, Any]) -> dict[str, float | int | Non
     # "concept_separability" section. Reading silhouette_score unconditionally
     # here means a degenerate run currently plots as a real zero score rather
     # than being excluded; fixing that is tracked by issue #308, not this one.
+    #
+    # Issue #287: surface linear_probe_accuracy as its own reported metric
+    # (independent clustering cross-check), not only as a silhouette fallback.
     concept_sep = _safe_float(concept_sep_block.get("silhouette_score"))
+    linear_probe = _safe_float(concept_sep_block.get("linear_probe_accuracy"))
     if concept_sep is None:
-        concept_sep = _safe_float(concept_sep_block.get("linear_probe_accuracy"))
+        concept_sep = linear_probe
     if concept_sep is None:
         concept_sep = assoc.get("concept_count")
     if concept_sep is None:
@@ -109,6 +113,7 @@ def extract_learning_metrics(raw: dict[str, Any]) -> dict[str, float | int | Non
 
     return {
         "concept_separability": _safe_float(concept_sep),
+        "linear_probe_accuracy": linear_probe,
         "binding_accuracy": _safe_float(binding_f1),
         "binding_precision": _safe_float(binding_acc.get("precision")),
         "binding_recall": _safe_float(binding_acc.get("recall")),
@@ -173,6 +178,7 @@ def build_learning_evidence_series(
     entries, error = load_benchmark_files(limit=limit, benchmark_dirs=benchmark_dirs)
     series = {
         "concept_separability": [],
+        "linear_probe_accuracy": [],
         "binding_accuracy": [],
     }
     for entry in entries:
@@ -183,6 +189,13 @@ def build_learning_evidence_series(
                 {
                     **point_base,
                     "value": m["concept_separability"],
+                }
+            )
+        if m.get("linear_probe_accuracy") is not None:
+            series["linear_probe_accuracy"].append(
+                {
+                    **point_base,
+                    "value": m["linear_probe_accuracy"],
                 }
             )
         if m.get("binding_accuracy") is not None:
