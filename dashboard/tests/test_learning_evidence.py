@@ -53,6 +53,7 @@ def test_extract_metrics_prefers_silhouette_over_concept_count():
     assert m["concept_separability"] == 0.42
     assert m["linear_probe_accuracy"] is None
 
+
 def test_extract_metrics_binding_matched_decoy_ratio():
     raw = {
         "cross_modal_binding_accuracy": {
