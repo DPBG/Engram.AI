@@ -715,9 +715,7 @@ class TestCatastrophicForgettingBenchmark:
 
     def test_produces_retention_metrics(self, network_with_concept, patterns_a, patterns_b):
         bench = CatastrophicForgettingBenchmark(network_with_concept)
-        result = bench.run(
-            patterns_a, patterns_b, training_reps=1, probe_reps=2, steps_per_rep=3
-        )
+        result = bench.run(patterns_a, patterns_b, training_reps=1, probe_reps=2, steps_per_rep=3)
         assert "error" not in result
         for key in (
             "separation_ratio_after_a",

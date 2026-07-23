@@ -1653,9 +1653,7 @@ class BenchmarkSuite:
                     f"   Retention ratio:       {cf.get('retention_ratio', 0):.4f}",
                 ]
                 if cf.get("weight_correlation_a_to_b") is not None:
-                    lines.append(
-                        f"   Weight corr A→B:       {cf['weight_correlation_a_to_b']:.4f}"
-                    )
+                    lines.append(f"   Weight corr A→B:       {cf['weight_correlation_a_to_b']:.4f}")
                 lines.append("")
             else:
                 lines += [
