@@ -29,8 +29,19 @@ def test_extract_metrics_from_benchmark_suite_format():
     }
     m = learning_evidence.extract_learning_metrics(raw)
     assert m["concept_separability"] == 0.61
+    assert m["linear_probe_accuracy"] == 0.75
     assert m["binding_accuracy"] == 0.42
     assert m["binding_precision"] == 0.5
+
+
+def test_extract_metrics_surfaces_linear_probe_independently():
+    """Issue #287: linear_probe_accuracy is a reported metric, not only a fallback."""
+    raw = {
+        "concept_separability": {"silhouette_score": 0.42, "linear_probe_accuracy": 0.88},
+    }
+    m = learning_evidence.extract_learning_metrics(raw)
+    assert m["concept_separability"] == 0.42
+    assert m["linear_probe_accuracy"] == 0.88
 
 
 def test_extract_metrics_prefers_silhouette_over_concept_count():
@@ -40,6 +51,7 @@ def test_extract_metrics_prefers_silhouette_over_concept_count():
     }
     m = learning_evidence.extract_learning_metrics(raw)
     assert m["concept_separability"] == 0.42
+    assert m["linear_probe_accuracy"] is None
 
 
 def test_extract_metrics_binding_matched_decoy_ratio():
@@ -112,6 +124,7 @@ def test_build_learning_evidence_series(tmp_path):
         tmp_path / "benchmarks_20260101_120000.json",
         {
             "association_strength": {"concept_count": 2},
+            "concept_separability": {"silhouette_score": 0.55, "linear_probe_accuracy": 0.8},
             "cross_modal_binding_accuracy": {"f1": 0.5},
         },
     )
@@ -120,8 +133,11 @@ def test_build_learning_evidence_series(tmp_path):
     )
     assert payload["count"] == 1
     assert len(payload["series"]["concept_separability"]) == 1
+    assert len(payload["series"]["linear_probe_accuracy"]) == 1
+    assert payload["series"]["linear_probe_accuracy"][0]["value"] == 0.8
     assert len(payload["series"]["binding_accuracy"]) == 1
     assert payload["latest"]["metrics"]["binding_accuracy"] == 0.5
+    assert payload["latest"]["metrics"]["linear_probe_accuracy"] == 0.8
 
 
 def test_repo_benchmark_sample_readable():

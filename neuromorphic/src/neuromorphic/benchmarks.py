@@ -1493,6 +1493,9 @@ class BenchmarkSuite:
             "novelty_detection.discrimination_ratio",
             "association_strength.concept_count",
             "energy_efficiency.global_firing_rate",
+            "concept_separability.silhouette_score",
+            "concept_separability.linear_probe_accuracy",
+            "concept_separability.separation_ratio",
         ]
         for name in headline_metrics:
             stat = agg.get(name)

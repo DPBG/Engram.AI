@@ -685,6 +685,71 @@ class TestConceptSeparabilityBenchmark:
         text = suite.summary(results)
         assert "Concept Separability" in text
         assert "Silhouette score" in text
+        assert "Linear-probe acc" in text
+        assert "Separation ratio" in text
+
+
+class TestConceptSeparabilityMetricAgreement:
+    """Issue #287: silhouette and linear-probe agree on directionality.
+
+    A single clustering metric can look favorable by coincidence; these
+    fixtures confirm the two independently-computed metrics move the same
+    way on a known-good (well-separated) vs known-degenerate (overlapping)
+    activation matrix — the exact cross-check the issue asks for.
+    """
+
+    @staticmethod
+    def _scores(mat: np.ndarray, labels: np.ndarray) -> tuple[float, float]:
+        dist, unit = _cosine_dist(mat)
+        silhouette = float(np.mean(silhouette_scores_from_distance_matrix(dist, labels)))
+        probe = float(nearest_centroid_loo_accuracy(unit, labels))
+        return silhouette, probe
+
+    @staticmethod
+    def _make_clusters(
+        rng: np.random.Generator,
+        *,
+        separation: float,
+        n_per_class: int = 8,
+        n_features: int = 16,
+        n_classes: int = 3,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rows: list[np.ndarray] = []
+        labels: list[int] = []
+        for class_id in range(n_classes):
+            centroid = rng.normal(size=n_features) * separation
+            noise = rng.normal(scale=1.0, size=(n_per_class, n_features))
+            rows.append(centroid + noise)
+            labels.extend([class_id] * n_per_class)
+        return np.concatenate(rows, axis=0), np.array(labels, dtype=np.int32)
+
+    def test_known_good_fixture_both_metrics_high(self):
+        rng = np.random.default_rng(7)
+        mat, labels = self._make_clusters(rng, separation=8.0)
+        silhouette, probe = self._scores(mat, labels)
+        assert silhouette > 0.5
+        assert probe > 0.8
+
+    def test_known_degenerate_fixture_both_metrics_near_chance(self):
+        rng = np.random.default_rng(7)
+        # separation=0 collapses class centroids; classes differ only by noise.
+        mat, labels = self._make_clusters(rng, separation=0.0)
+        silhouette, probe = self._scores(mat, labels)
+        n_classes = len(np.unique(labels))
+        assert silhouette < 0.2
+        # Leave-one-out nearest-centroid should be near chance, not perfect.
+        assert probe < 0.5 + 0.15  # generous noise band around 1/n_classes
+        assert probe < 1.0 / n_classes + 0.25
+
+    def test_directionality_good_beats_degenerate_on_both_metrics(self):
+        rng_good = np.random.default_rng(11)
+        rng_bad = np.random.default_rng(11)
+        good_mat, good_labels = self._make_clusters(rng_good, separation=8.0)
+        bad_mat, bad_labels = self._make_clusters(rng_bad, separation=0.0)
+        sil_good, probe_good = self._scores(good_mat, good_labels)
+        sil_bad, probe_bad = self._scores(bad_mat, bad_labels)
+        assert sil_good > sil_bad
+        assert probe_good > probe_bad
 
 
 # ---------------------------------------------------------------------------

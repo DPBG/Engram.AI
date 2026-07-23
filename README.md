@@ -168,9 +168,10 @@ and saved to `neuromorphic/benchmarks/*.json`:
 6. **CrossModalBindingAccuracy** — precision/recall of bound modality pairs vs ground truth
 
 The dashboard's Learning Evidence panel (`/api/learning-evidence`) currently trends
-**ConceptSeparability** and **CrossModalBindingAccuracy** over time; the other 4 are
-computed and saved to the JSON results but not yet plotted (tracked in
-[#307](https://github.com/DPBG/Engram.AI/issues/307)).
+**ConceptSeparability** (silhouette + linear-probe accuracy — issue
+[#287](https://github.com/DPBG/Engram.AI/issues/287)) and **CrossModalBindingAccuracy**
+over time; the other 4 are computed and saved to the JSON results but not yet
+plotted (tracked in [#307](https://github.com/DPBG/Engram.AI/issues/307)).
 
 ---
 

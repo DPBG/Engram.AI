@@ -318,6 +318,7 @@ class ActiveLearningAI {
             summary.innerHTML = `<div class="le-empty">${this._esc(data.error)}</div>`;
             if (meta) meta.textContent = '';
             this._drawTrendChart('le-chart-concept', [], '#5ea4f5');
+            this._drawTrendChart('le-chart-probe', [], '#c9a227');
             this._drawTrendChart('le-chart-binding', [], '#38d97a');
             return;
         }
@@ -325,12 +326,17 @@ class ActiveLearningAI {
         const latest = data.latest;
         const lm = latest?.metrics || {};
         const conceptVal = lm.concept_separability;
+        const probeVal = lm.linear_probe_accuracy;
         const bindVal = lm.binding_accuracy;
         summary.innerHTML = `
             <div class="le-stat-grid">
                 <div class="le-stat">
-                    <span class="le-stat-label">Separability</span>
+                    <span class="le-stat-label">Silhouette</span>
                     <span class="le-stat-val">${conceptVal != null ? Number(conceptVal).toFixed(3) : '—'}</span>
+                </div>
+                <div class="le-stat">
+                    <span class="le-stat-label">Linear probe</span>
+                    <span class="le-stat-val">${probeVal != null ? Number(probeVal).toFixed(3) : '—'}</span>
                 </div>
                 <div class="le-stat">
                     <span class="le-stat-label">Binding F1</span>
@@ -348,8 +354,10 @@ class ActiveLearningAI {
         }
 
         const conceptSeries = data.series?.concept_separability || [];
+        const probeSeries = data.series?.linear_probe_accuracy || [];
         const bindingSeries = data.series?.binding_accuracy || [];
         this._drawTrendChart('le-chart-concept', conceptSeries, '#5ea4f5');
+        this._drawTrendChart('le-chart-probe', probeSeries, '#c9a227');
         this._drawTrendChart('le-chart-binding', bindingSeries, '#38d97a');
     }
 

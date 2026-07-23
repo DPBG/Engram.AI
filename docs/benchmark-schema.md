@@ -222,9 +222,20 @@ binding_strength_after,binding_strength_delta}`,
 top-level `step_count`/`total_neurons`. It also reads `scripts/benchmark.py`'s
 `learning.concept_count`, `final_state.step_count`, `config.total_neurons` as
 fallbacks for files from that other producer — see the two-schemas section
-above. **It does not currently apply the `concept_separability` error-shape
-contract above** (it calls `.get("silhouette_score")` unconditionally,
-which is `0.0` in both shapes) — worth fixing separately if
+above.
+
+`silhouette_score` is mapped to the dashboard scalar `concept_separability`
+(trend series + summary stat). As of issue
+[#287](https://github.com/DPBG/Engram.AI/issues/287), `linear_probe_accuracy`
+is also surfaced as its own reported scalar / trend series
+(`linear_probe_accuracy`) — an independent nearest-centroid clustering
+cross-check, not only a fallback when silhouette is absent.
+`BenchmarkSuite.summary()` already printed both; the dashboard gap was the
+missing second series.
+
+**It does not currently apply the `concept_separability` error-shape
+contract above** (it calls `.get("silhouette_score")` / `.get("linear_probe_accuracy")`
+unconditionally, which are `0.0` in both shapes) — worth fixing separately if
 issue [#308](https://github.com/DPBG/Engram.AI/issues/308) lands, since a
 degenerate run would otherwise plot as a real zero score on the dashboard's
 trend line.

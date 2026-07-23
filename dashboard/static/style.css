@@ -848,7 +848,7 @@ html, body {
 
 /* ─── Learning Evidence panel ───────────────────────────────────── */
 .le-summary { margin-bottom: 10px; }
-.le-stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.le-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .le-stat {
     background: var(--bg-3); border: 1px solid var(--border);
     border-radius: var(--radius-sm); padding: 6px 8px; text-align: center;
