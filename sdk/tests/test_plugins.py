@@ -1,8 +1,10 @@
 """Tests for plugin interfaces."""
 
+from typing import Any
+
 import pytest
 
-from activelearning.core import ActionProposal
+from activelearning.core import ActionProposal, KernelDecisionType
 from activelearning.plugins import (
     ActuatorPlugin,
     PluginCapability,
@@ -49,6 +51,28 @@ class MockActuator(ActuatorPlugin[dict]):
     async def _do_execute(self, action: dict) -> bool:
         self.executed_actions.append(action)
         return True
+
+
+class RaisingActuator(MockActuator):
+    """Actuator whose hardware call raises, to exercise execute()'s error path."""
+
+    async def _do_execute(self, action: dict) -> bool:
+        raise RuntimeError("hardware fault")
+
+
+class RecordingBus:
+    """Minimal EventBus double that records publishes (no NATS broker needed).
+
+    ``ActuatorPlugin.execute`` only calls ``bus.publish``, so a start()-free
+    double lets the outcome-publishing and error paths be unit-tested without a
+    live broker.
+    """
+
+    def __init__(self) -> None:
+        self.published: list[tuple[str, Any]] = []
+
+    async def publish(self, subject: str, data: Any) -> None:
+        self.published.append((subject, data))
 
 
 class TestPluginCapability:
@@ -141,6 +165,67 @@ class TestActuatorPlugin:
         )
         with pytest.raises(RuntimeError, match="not started"):
             await actuator.execute(proposal)
+
+
+class TestActuatorExecute:
+    """Tests for ActuatorPlugin.execute()'s success, envelope-deny, and error paths."""
+
+    @pytest.mark.asyncio
+    async def test_execute_success_publishes_allow_outcome(self):
+        actuator = MockActuator()
+        actuator._bus = RecordingBus()
+        proposal = ActionProposal(
+            trace_id="trace-ok",
+            provenance="test",
+            action={"speed": 50.0, "angle": 90.0},
+        )
+
+        outcome = await actuator.execute(proposal)
+
+        assert outcome.success is True
+        assert outcome.decision.type == KernelDecisionType.ALLOW
+        assert outcome.error is None
+        assert actuator.executed_actions == [{"speed": 50.0, "angle": 90.0}]
+        # The outcome is broadcast so downstream subscribers observe it.
+        assert actuator._bus.published == [("outcome.trace-ok", outcome)]
+
+    @pytest.mark.asyncio
+    async def test_execute_out_of_envelope_denies_without_running_hardware(self):
+        actuator = MockActuator()
+        actuator._bus = RecordingBus()
+        proposal = ActionProposal(
+            trace_id="trace-envelope",
+            provenance="test",
+            action={"speed": 150.0},
+        )
+
+        outcome = await actuator.execute(proposal)
+
+        assert outcome.success is False
+        assert outcome.decision.type == KernelDecisionType.DENY
+        assert "outside range" in outcome.error
+        # Envelope rejection is a pre-execution guard: the hardware call never runs.
+        assert actuator.executed_actions == []
+
+    @pytest.mark.asyncio
+    async def test_execute_catches_hardware_error_and_publishes_deny_outcome(self):
+        actuator = RaisingActuator()
+        actuator._bus = RecordingBus()
+        proposal = ActionProposal(
+            trace_id="trace-fault",
+            provenance="test",
+            action={"speed": 50.0},
+        )
+
+        # A raising _do_execute must be caught, not propagated.
+        outcome = await actuator.execute(proposal)
+
+        assert outcome.success is False
+        assert outcome.decision.type == KernelDecisionType.DENY
+        assert outcome.error == "hardware fault"
+        assert outcome.decision.reason == "hardware fault"
+        # The failure outcome is still published so the trace isn't dropped.
+        assert actuator._bus.published == [("outcome.trace-fault", outcome)]
 
 
 class TestPluginRegistry:
