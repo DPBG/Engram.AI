@@ -71,6 +71,17 @@ class SleepPhaseManager:
         self._config = config
         self._clock = clock  # injected for tests
         self._state = _SleepState()
+        # Anchor the first-sleep countdown to construction time. The default
+        # ``_now()`` is ``time.monotonic()``, which returns seconds since an
+        # arbitrary epoch (system boot on Linux), so leaving
+        # ``last_sleep_end_mono`` at its 0.0 sentinel makes the very first
+        # ``maybe_tick`` see ``monotonic() - 0.0`` -- a value larger than
+        # ``interval_s`` on any host with more than a few hours of uptime --
+        # and drop straight into a sleep window on the first brain step.
+        # Measuring the interval from when the manager starts fixes that: at
+        # startup there is no prior sleep, so the first window is due one full
+        # ``interval_s`` later.
+        self._state.last_sleep_end_mono = self._now()
 
     def _now(self) -> float:
         if self._clock is not None:

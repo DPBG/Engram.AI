@@ -46,6 +46,39 @@ def test_enters_and_exits_on_schedule():
     assert mgr.in_sleep is False
 
 
+def test_first_sleep_measured_from_construction_not_monotonic_epoch():
+    """Regression: the first sleep must be scheduled relative to construction.
+
+    In production the manager is built with ``clock=None`` (service.py), so
+    ``_now()`` is ``time.monotonic()`` -- seconds since system boot, typically
+    a large number. If ``last_sleep_end_mono`` stays at its 0.0 sentinel, the
+    first ``maybe_tick`` computes ``monotonic() - 0.0``, which exceeds
+    ``interval_s`` on any host with more than a few hours of uptime, so the
+    brain would drop into a consolidation window on its very first step.
+
+    Simulate that by starting the injected clock far above ``interval_s``: the
+    manager must still wait a full ``interval_s`` after construction before the
+    first entry.
+    """
+    t = {"now": 1_000_000.0}  # e.g. ~11.5 days of uptime, >> interval_s
+    cfg = SleepPhaseConfig(enabled=True, interval_s=100.0, duration_s=10.0)
+    mgr = SleepPhaseManager(cfg, clock=lambda: t["now"])
+
+    # First tick right after construction: no interval has elapsed yet.
+    assert mgr.maybe_tick() is None
+    assert mgr.in_sleep is False
+
+    # Just under the interval, measured from construction -- still awake.
+    t["now"] += 99.0
+    assert mgr.maybe_tick() is None
+    assert mgr.in_sleep is False
+
+    # Crossing interval_s since construction -- only now does it enter.
+    t["now"] += 1.0
+    assert mgr.maybe_tick() == "entered"
+    assert mgr.in_sleep is True
+
+
 def test_capped_replay_boosts_toward_eligibility_and_clips_to_w_max():
     cfg = SleepPhaseConfig(enabled=True, boost_factor=1.2)
     mgr = SleepPhaseManager(cfg)
