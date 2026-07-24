@@ -27,7 +27,14 @@ import os
 import pstats
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource exists on Linux/macOS CI
+    resource = None
 
 # Population sizes launcher/registry.py's _NEURO_SMALL uses for the
 # default `python run.py` core profile — the actual scale a contributor
@@ -48,6 +55,59 @@ _DEV_SCALE_ENV = {
 }
 
 
+@dataclass(frozen=True)
+class MemorySnapshots:
+    before_build_mb: float | None
+    after_build_mb: float | None
+    after_warmup_mb: float | None
+    after_profile_mb: float | None
+
+
+def _get_peak_rss_mb() -> float | None:
+    """Return this process's peak resident-set size in MiB."""
+    if resource is None:
+        return None
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+    except (OSError, ValueError):
+        return None
+    divisor = 1024 * 1024 if sys.platform == "darwin" else 1024
+    return float(usage.ru_maxrss) / divisor
+
+
+def _format_memory_summary(snapshots: MemorySnapshots) -> str:
+    """Format absolute peak RSS snapshots and non-negative phase deltas."""
+    values = (
+        snapshots.before_build_mb,
+        snapshots.after_build_mb,
+        snapshots.after_warmup_mb,
+        snapshots.after_profile_mb,
+    )
+    header = "=== MEMORY HIGH-WATER MARKS ==="
+    if any(value is None for value in values):
+        return f"{header}\nPeak RSS unavailable on this platform."
+
+    before, after_build, after_warmup, after_profile = values
+    assert before is not None
+    assert after_build is not None
+    assert after_warmup is not None
+    assert after_profile is not None
+    build_delta = max(0.0, after_build - before)
+    warmup_delta = max(0.0, after_warmup - after_build)
+    profile_delta = max(0.0, after_profile - after_warmup)
+    total_delta = max(0.0, after_profile - before)
+    return "\n".join(
+        [
+            header,
+            f"Before network: {before:10.1f} MiB",
+            f"After network:  {after_build:10.1f} MiB  (+{build_delta:.1f} MiB)",
+            f"After warmup:   {after_warmup:10.1f} MiB  (+{warmup_delta:.1f} MiB)",
+            f"After profile:  {after_profile:10.1f} MiB  (+{profile_delta:.1f} MiB)",
+            f"Total observed:                    +{total_delta:.1f} MiB",
+        ]
+    )
+
+
 def _build_network(threads: str | None = None):
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     env = dict(_DEV_SCALE_ENV)
@@ -62,7 +122,13 @@ def _build_network(threads: str | None = None):
     return NeuromorphicNetwork(config, seed=42), config
 
 
-def _run_steps(net, n_steps: int, warmup: int = 20) -> float:
+def _run_steps(
+    net,
+    n_steps: int,
+    warmup: int = 20,
+    *,
+    after_warmup: Callable[[], None] | None = None,
+) -> float:
     import numpy as np
 
     rng = np.random.default_rng(0)
@@ -70,43 +136,59 @@ def _run_steps(net, n_steps: int, warmup: int = 20) -> float:
     aud = rng.random(1500).astype(np.float32)
 
     for _ in range(warmup):
-        c = net.inject_multimodal(
+        current = net.inject_multimodal(
             {
                 "sensor.videofile.profile": vis,
                 "sensor.audiofile.profile": aud,
             }
         )
-        net.step(c)
+        net.step(current)
+
+    if after_warmup is not None:
+        after_warmup()
 
     t0 = time.perf_counter()
     for _ in range(n_steps):
-        c = net.inject_multimodal(
+        current = net.inject_multimodal(
             {
                 "sensor.videofile.profile": vis,
                 "sensor.audiofile.profile": aud,
             }
         )
-        net.step(c)
+        net.step(current)
     return time.perf_counter() - t0
 
 
 def profile(steps: int, top: int, output: str | None) -> None:
+    before_build_mb = _get_peak_rss_mb()
     net, config = _build_network()
+    after_build_mb = _get_peak_rss_mb()
+    after_warmup_mb: float | None = None
     print(f"Total neurons: {config.populations.total:,}")
 
-    def _run():
-        _run_steps(net, steps, warmup=20)
+    def _capture_after_warmup() -> None:
+        nonlocal after_warmup_mb
+        after_warmup_mb = _get_peak_rss_mb()
 
     profiler = cProfile.Profile()
     t0 = time.perf_counter()
     profiler.enable()
-    _run()
+    _run_steps(net, steps, warmup=20, after_warmup=_capture_after_warmup)
     profiler.disable()
     elapsed = time.perf_counter() - t0
+    after_profile_mb = _get_peak_rss_mb()
     print(
         f"\n{steps} steps in {elapsed:.2f}s = {elapsed / steps * 1000:.2f} ms/step, "
         f"{steps / elapsed:.2f} steps/sec\n"
     )
+    snapshots = MemorySnapshots(
+        before_build_mb=before_build_mb,
+        after_build_mb=after_build_mb,
+        after_warmup_mb=after_warmup_mb,
+        after_profile_mb=after_profile_mb,
+    )
+    print(_format_memory_summary(snapshots))
+    print()
 
     stats = pstats.Stats(profiler)
     if output:
