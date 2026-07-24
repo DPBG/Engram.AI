@@ -27,6 +27,7 @@ import os
 import pstats
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,7 +122,13 @@ def _build_network(threads: str | None = None):
     return NeuromorphicNetwork(config, seed=42), config
 
 
-def _run_steps(net, n_steps: int, warmup: int = 20) -> float:
+def _run_steps(
+    net,
+    n_steps: int,
+    warmup: int = 20,
+    *,
+    after_warmup: Callable[[], None] | None = None,
+) -> float:
     import numpy as np
 
     rng = np.random.default_rng(0)
@@ -129,43 +136,59 @@ def _run_steps(net, n_steps: int, warmup: int = 20) -> float:
     aud = rng.random(1500).astype(np.float32)
 
     for _ in range(warmup):
-        c = net.inject_multimodal(
+        current = net.inject_multimodal(
             {
                 "sensor.videofile.profile": vis,
                 "sensor.audiofile.profile": aud,
             }
         )
-        net.step(c)
+        net.step(current)
+
+    if after_warmup is not None:
+        after_warmup()
 
     t0 = time.perf_counter()
     for _ in range(n_steps):
-        c = net.inject_multimodal(
+        current = net.inject_multimodal(
             {
                 "sensor.videofile.profile": vis,
                 "sensor.audiofile.profile": aud,
             }
         )
-        net.step(c)
+        net.step(current)
     return time.perf_counter() - t0
 
 
 def profile(steps: int, top: int, output: str | None) -> None:
+    before_build_mb = _get_peak_rss_mb()
     net, config = _build_network()
+    after_build_mb = _get_peak_rss_mb()
+    after_warmup_mb: float | None = None
     print(f"Total neurons: {config.populations.total:,}")
 
-    def _run():
-        _run_steps(net, steps, warmup=20)
+    def _capture_after_warmup() -> None:
+        nonlocal after_warmup_mb
+        after_warmup_mb = _get_peak_rss_mb()
 
     profiler = cProfile.Profile()
     t0 = time.perf_counter()
     profiler.enable()
-    _run()
+    _run_steps(net, steps, warmup=20, after_warmup=_capture_after_warmup)
     profiler.disable()
     elapsed = time.perf_counter() - t0
+    after_profile_mb = _get_peak_rss_mb()
     print(
         f"\n{steps} steps in {elapsed:.2f}s = {elapsed / steps * 1000:.2f} ms/step, "
         f"{steps / elapsed:.2f} steps/sec\n"
     )
+    snapshots = MemorySnapshots(
+        before_build_mb=before_build_mb,
+        after_build_mb=after_build_mb,
+        after_warmup_mb=after_warmup_mb,
+        after_profile_mb=after_profile_mb,
+    )
+    print(_format_memory_summary(snapshots))
+    print()
 
     stats = pstats.Stats(profiler)
     if output:
