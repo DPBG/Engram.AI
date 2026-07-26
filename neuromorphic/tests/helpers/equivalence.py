@@ -50,5 +50,9 @@ def assert_kernel_equivalent(
     comparison with hand-picked tolerance constants repeated at each call site.
     """
     np.testing.assert_allclose(
-        compiled_output, reference_output, rtol=rtol, atol=atol, err_msg=err_msg,
+        compiled_output,
+        reference_output,
+        rtol=rtol,
+        atol=atol,
+        err_msg=err_msg,
     )
