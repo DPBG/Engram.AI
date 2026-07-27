@@ -8,6 +8,9 @@ import numpy as np
 from scipy import sparse
 
 from neuromorphic.compiled_kernels import (
+    dedup_indices as _compiled_dedup_indices,
+)
+from neuromorphic.compiled_kernels import (
     neuromod_decay_full as _compiled_neuromod_decay_full,
 )
 from neuromorphic.compiled_kernels import (
@@ -376,13 +379,19 @@ class SynapseGroup:
                 # Map CSC positions to CSR data positions
                 csr_indices_pre = self._csc_to_csr_perm[csc_flat]
 
-        # Union of both sets (deduplicated)
+        # Union of both sets (deduplicated). dedup_indices (issue #435,
+        # ADR 0002 bottleneck #5) replaces np.unique here -- O(n) expected
+        # time via an open-addressing hash set vs. np.unique's O(n log n)
+        # sort. Result order is not sorted (scan order instead); every
+        # caller of this method uses the result purely as a fancy-index
+        # array, never relying on order (see compiled_kernels.dedup_indices
+        # docstring and test_compiled_dedup.py).
         if len(csr_indices_post) == 0:
-            return np.unique(csr_indices_pre)
+            return _compiled_dedup_indices(csr_indices_pre)
         if len(csr_indices_pre) == 0:
-            return np.unique(csr_indices_post)
+            return _compiled_dedup_indices(csr_indices_post)
         combined = np.concatenate([csr_indices_post, csr_indices_pre])
-        return np.unique(combined)
+        return _compiled_dedup_indices(combined)
 
     def update_weights_stdp(
         self,

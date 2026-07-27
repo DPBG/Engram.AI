@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from helpers.equivalence import assert_kernel_equivalent, compiled_only_mark
 
 import neuromorphic.compiled_kernels as _ck_mod
 from neuromorphic.compiled_kernels import (
@@ -30,8 +31,8 @@ from neuromorphic.compiled_kernels import (
 
 # Applied at class level to tests that require the Numba path to be active.
 # The NumPy-fallback tests (TestNumPyFallbackKernels) carry no such mark.
-_COMPILED_ONLY = pytest.mark.skipif(
-    not COMPILED_STDP_ENABLED,
+_COMPILED_ONLY = compiled_only_mark(
+    COMPILED_STDP_ENABLED,
     reason="Numba not installed or NEURO_COMPILED_STDP=0 — compiled kernel tests skipped",
 )
 
@@ -67,32 +68,26 @@ class TestCompiledStdpDelta:
     @pytest.mark.parametrize("n", [1, 100, 10_000])
     def test_ltp_only(self, n):
         dt = _RNG.uniform(1.0, 50.0, size=n).astype(np.float32)
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             stdp_delta(dt, self._A_PLUS, self._TAU_PLUS, self._A_MINUS, self._TAU_MINUS),
             self._numpy_ref(dt),
-            rtol=1e-5,
-            atol=1e-7,
             err_msg="LTP-only mismatch: compiled vs NumPy",
         )
 
     @pytest.mark.parametrize("n", [1, 100, 10_000])
     def test_ltd_only(self, n):
         dt = -_RNG.uniform(1.0, 50.0, size=n).astype(np.float32)
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             stdp_delta(dt, self._A_PLUS, self._TAU_PLUS, self._A_MINUS, self._TAU_MINUS),
             self._numpy_ref(dt),
-            rtol=1e-5,
-            atol=1e-7,
             err_msg="LTD-only mismatch: compiled vs NumPy",
         )
 
     def test_mixed_ltp_ltd(self):
         dt = np.array([-20.0, -5.0, 0.0, 5.0, 20.0], dtype=np.float32)
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             stdp_delta(dt, self._A_PLUS, self._TAU_PLUS, self._A_MINUS, self._TAU_MINUS),
             self._numpy_ref(dt),
-            rtol=1e-5,
-            atol=1e-7,
             err_msg="mixed LTP/LTD mismatch: compiled vs NumPy",
         )
 
@@ -168,18 +163,14 @@ class TestCompiledNeuromodDecaySparse:
             self._PRUNE_THR,
         )
 
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             data_c[idx],
             data_np[idx],
-            rtol=1e-5,
-            atol=1e-7,
             err_msg=f"weight mismatch (no mask, interval={interval})",
         )
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             elig_c[idx],
             elig_np[idx],
-            rtol=1e-5,
-            atol=1e-7,
             err_msg=f"eligibility mismatch (no mask, interval={interval})",
         )
         np.testing.assert_array_equal(
@@ -210,18 +201,14 @@ class TestCompiledNeuromodDecaySparse:
             plasticity_mask=mask,
         )
 
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             data_c[idx],
             data_np[idx],
-            rtol=1e-5,
-            atol=1e-7,
             err_msg=f"weight mismatch (masked, interval={interval})",
         )
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             elig_c[idx],
             elig_np[idx],
-            rtol=1e-5,
-            atol=1e-7,
             err_msg=f"eligibility mismatch (masked, interval={interval})",
         )
 
@@ -281,18 +268,14 @@ class TestCompiledNeuromodDecayFull:
             elig_c, data_c, modulator, interval_gain, decay, self._W_MIN, self._W_MAX
         )
 
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             data_c,
             data_np,
-            rtol=1e-5,
-            atol=1e-7,
             err_msg=f"full-array weight mismatch (interval={interval})",
         )
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             elig_c,
             elig_np,
-            rtol=1e-5,
-            atol=1e-7,
             err_msg=f"full-array eligibility mismatch (interval={interval})",
         )
 
@@ -320,8 +303,8 @@ class TestCompiledNeuromodDecayFull:
             plasticity_mask=mask,
         )
 
-        np.testing.assert_allclose(data_c, data_np, rtol=1e-5, atol=1e-7)
-        np.testing.assert_allclose(elig_c, elig_np, rtol=1e-5, atol=1e-7)
+        assert_kernel_equivalent(data_c, data_np)
+        assert_kernel_equivalent(elig_c, elig_np)
 
 
 # ── End-to-end SynapseGroup integration ───────────────────────────────────
@@ -380,11 +363,10 @@ class TestEndToEndCompiledEquivalence:
             sg_np.apply_neuromodulation_and_decay(0.5, interval=1)
         dw_numpy = sg_np.weights.data - w_before
 
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             dw_compiled,
             dw_numpy,
             rtol=1e-4,
-            atol=1e-7,
             err_msg=(
                 f"compiled vs NumPy weight-change mismatch "
                 f"(interval={interval}, sparse_path={sparse_path})"
@@ -422,11 +404,9 @@ class TestEndToEndCompiledEquivalence:
         sg_np.update_weights_stdp(pre_sp, post_sp, pre_t, post_t, current_time=3.0)
         elig_numpy = sg_np.eligibility.copy()
 
-        np.testing.assert_allclose(
+        assert_kernel_equivalent(
             elig_compiled,
             elig_numpy,
-            rtol=1e-5,
-            atol=1e-7,
             err_msg="STDP eligibility trace mismatch: compiled vs NumPy",
         )
 

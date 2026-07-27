@@ -1,7 +1,7 @@
-"""Compiled (Numba-JIT) kernels for the STDP + eligibility-trace hot path.
+"""Compiled (Numba-JIT) kernels for neuromorphic hot paths.
 
 When Numba is available and ``NEURO_COMPILED_STDP`` is not set to ``0``, this
-module exposes JIT-compiled versions of the two most expensive operations in
+module exposes JIT-compiled versions of the most expensive operations in
 the learning pipeline:
 
   1. ``stdp_delta``             — fused LTP/LTD kernel (single pass, no temps)
@@ -10,7 +10,17 @@ the learning pipeline:
   3. ``neuromod_decay_full``    — same, but operating on the full array (used
                                   when active-set tracking is abandoned at >80%)
 
-When Numba is unavailable (or ``NEURO_COMPILED_STDP=0``), the same public
+Separately, when Numba is available and ``NEURO_COMPILED_DEDUP`` is not set to
+``0``, this module also exposes:
+
+  4. ``dedup_indices``          — O(n) active-synapse-index dedup (issue #435,
+                                  ADR 0002 bottleneck #5), replacing
+                                  ``synapses.py``'s ``np.unique``-based dedup
+                                  in ``_gather_active_synapses``. Open-addressing
+                                  hash set over just the active-index count (n),
+                                  not the full nnz range -- true O(n), no sort.
+
+When Numba is unavailable (or the relevant flag is ``0``), the same public
 functions fall back to NumPy-equivalent implementations so ``synapses.py``
 needs no branching of its own.
 
@@ -20,11 +30,16 @@ Performance note (Invariant 1):
   so subsequent process starts reuse the cached binary.  ``fastmath=True``
   lets LLVM reassociate floating-point operations; the resulting values remain
   within float32 rounding of the NumPy reference (verified by the equivalence
-  tests in ``test_compiled_stdp.py``).
+  tests in ``test_compiled_stdp.py`` and ``test_compiled_dedup.py``).
+  ``dedup_indices`` carries no ``fastmath`` (integer dedup, not float math) and
+  returns values in a different order than ``np.unique`` -- callers must not
+  depend on sorted output (verified: neither call site in ``synapses.py`` does).
 
-Feature flag:
-  ``NEURO_COMPILED_STDP=0``  — disable compiled kernels (use NumPy fallback)
-  ``NEURO_COMPILED_STDP=1``  — enable when Numba is importable (default)
+Feature flags:
+  ``NEURO_COMPILED_STDP=0``   — disable STDP/neuromod compiled kernels
+  ``NEURO_COMPILED_STDP=1``   — enable when Numba is importable (default)
+  ``NEURO_COMPILED_DEDUP=0``  — disable the compiled dedup kernel
+  ``NEURO_COMPILED_DEDUP=1``  — enable when Numba is importable (default)
 """
 
 from __future__ import annotations
@@ -57,6 +72,22 @@ else:
         "(NUMBA_AVAILABLE=%s, NEURO_COMPILED_STDP=%r)",
         NUMBA_AVAILABLE,
         _env,
+    )
+
+# Independently toggleable: dedup (issue #435) is unrelated numerics to STDP/
+# neuromod, so it gets its own flag rather than piggybacking on
+# NEURO_COMPILED_STDP's name (which would be misleading for a dedup kernel).
+_env_dedup = os.environ.get("NEURO_COMPILED_DEDUP", "1").lower().strip()
+COMPILED_DEDUP_ENABLED: bool = NUMBA_AVAILABLE and _env_dedup not in ("0", "false", "no")
+
+if COMPILED_DEDUP_ENABLED:
+    logger.debug("neuromorphic: Numba compiled dedup kernel active (cache=True)")
+else:
+    logger.debug(
+        "neuromorphic: Numba compiled dedup kernel disabled "
+        "(NUMBA_AVAILABLE=%s, NEURO_COMPILED_DEDUP=%r)",
+        NUMBA_AVAILABLE,
+        _env_dedup,
     )
 
 
@@ -400,3 +431,84 @@ def neuromod_decay_full(
         dw *= plasticity_mask
     data[:] = np.clip(data + dw, w_min, w_max)
     eligibility *= np.float32(decay)
+
+
+# ── active-synapse dedup (issue #435, ADR 0002 bottleneck #5) ──────────────
+#
+# synapses.py's _gather_active_synapses "large matrix" path (100K < nnz <
+# 10M) concatenates the CSR-post and CSC-pre active-index arrays and calls
+# np.unique() to dedup them -- an O(n log n) sort, profiled at 5.6% of step
+# time. The smaller-matrix path already gets O(1)-per-entry dedup for free
+# via a full nnz-sized boolean mask, but a full-nnz mask is exactly what the
+# large-matrix path exists to avoid (allocating up to 10M+ bools every step).
+#
+# An open-addressing hash set sized to O(n) (n = the *active* index count,
+# not nnz) gets true O(n) expected-time dedup without an nnz-sized
+# allocation. Order of the result is scan order, not sorted -- both call
+# sites in synapses.py use the result purely as fancy-index arrays
+# (rows[active_idx], eligibility[active_idx] += dw, etc.), so sort order was
+# never semantically required; only "each active index appears exactly
+# once" is (duplicate indices under += would silently under-count via
+# NumPy's last-write-wins fancy-indexing behavior).
+
+if COMPILED_DEDUP_ENABLED:
+    import numba as _nb_dedup  # type: ignore[import-untyped]
+
+    @_nb_dedup.njit(cache=True)
+    def _dedup_indices_njit(combined: np.ndarray) -> np.ndarray:
+        """Open-addressing hash-set dedup, O(n) expected time, O(n) space."""
+        n = combined.shape[0]
+        if n == 0:
+            return combined.copy()
+        # Table size: next power of two >= 4n (load factor <= 0.25 keeps
+        # expected probes-per-op low), minimum 16 to avoid degenerate small
+        # tables.
+        table_size = 16
+        while table_size < n * 4:
+            table_size *= 2
+        table_mask = np.int64(table_size - 1)
+        table = np.full(table_size, -1, dtype=np.int64)
+        output = np.empty(n, dtype=combined.dtype)
+        count = 0
+        for i in range(n):
+            val = np.int64(combined[i])
+            # Knuth multiplicative hash; uint64 arithmetic sidesteps signed
+            # overflow, then masked down to the table's index range.
+            h = np.int64((np.uint64(val) * np.uint64(2654435761)) & np.uint64(table_mask))
+            found = False
+            while table[h] != -1:
+                if table[h] == val:
+                    found = True
+                    break
+                h = (h + 1) & table_mask
+            if not found:
+                table[h] = val
+                output[count] = combined[i]
+                count += 1
+        return output[:count]
+
+
+def dedup_indices(combined: np.ndarray) -> np.ndarray:
+    """Deduplicate an array of active-synapse indices.
+
+    Semantically equivalent to ``np.unique(combined)`` for this codebase's
+    use -- same *set* of values, exactly one occurrence each -- but does NOT
+    guarantee sorted output. Callers must only rely on set membership /
+    uniqueness, never on ordering. (Verified for synapses.py's two call
+    sites: both use the result purely as a fancy-index array.)
+
+    Args:
+        combined: int array of possibly-duplicated indices.
+
+    Returns:
+        Array of the same dtype containing each unique value from
+        ``combined`` exactly once, in first-occurrence scan order (not
+        sorted).
+    """
+    if COMPILED_DEDUP_ENABLED:
+        return _dedup_indices_njit(combined)
+    # NumPy fallback -- equivalent to the original synapses.py implementation.
+    # np.unique's sorted output is a strict superset of this function's
+    # contract (sorted output is *also* a valid dedup), so this fallback
+    # remains a correct implementation even though compiled path doesn't sort.
+    return np.unique(combined)
