@@ -17,6 +17,13 @@ Usage:
     # for why this matters — the default thread pool is *slower* than
     # serial at the default dev scale):
     cd neuromorphic && uv run python scripts/profile_hotpath.py --compare-threading
+
+    # Same, at a scaled-up population size (issue #440 / ADR 0002 follow-up
+    # #2: locate the actual serial/parallel crossover point between the
+    # 55K dev-scale default and the 220K point ADR 0002 already measured).
+    # --scale is a multiplier on every _DEV_SCALE_ENV population count, e.g.
+    # --scale 1.4545 ≈ 80K neurons, --scale 2.909 ≈ 160K neurons:
+    cd neuromorphic && uv run python scripts/profile_hotpath.py --compare-threading --scale 1.4545
 """
 
 from __future__ import annotations
@@ -48,9 +55,18 @@ _DEV_SCALE_ENV = {
 }
 
 
-def _build_network(threads: str | None = None):
+# Keys in _DEV_SCALE_ENV that are population counts (scaled by --scale).
+# NEURO_COGNITIVE_ENABLED is a boolean flag, not a count -- must not be
+# multiplied.
+_POPULATION_KEYS = tuple(k for k in _DEV_SCALE_ENV if k != "NEURO_COGNITIVE_ENABLED")
+
+
+def _build_network(threads: str | None = None, scale: float = 1.0):
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     env = dict(_DEV_SCALE_ENV)
+    if scale != 1.0:
+        for key in _POPULATION_KEYS:
+            env[key] = str(max(1, round(int(env[key]) * scale)))
     if threads is not None:
         env["NEURO_STDP_THREADS"] = threads
     os.environ.update(env)
@@ -90,8 +106,8 @@ def _run_steps(net, n_steps: int, warmup: int = 20) -> float:
     return time.perf_counter() - t0
 
 
-def profile(steps: int, top: int, output: str | None) -> None:
-    net, config = _build_network()
+def profile(steps: int, top: int, output: str | None, scale: float = 1.0) -> None:
+    net, config = _build_network(scale=scale)
     print(f"Total neurons: {config.populations.total:,}")
 
     def _run():
@@ -120,12 +136,17 @@ def profile(steps: int, top: int, output: str | None) -> None:
     stats.sort_stats("cumulative").print_stats(top)
 
 
-def compare_threading(steps: int) -> None:
+def compare_threading(steps: int, scale: float = 1.0) -> None:
     """A/B compare serial (NEURO_STDP_THREADS=1) vs. the default parallel
-    thread pool at the profiled dev scale. See docs/adr/0002 for why this
-    matters: the default is measurably *slower* at this scale."""
+    thread pool at the profiled dev scale (or a --scale multiple of it).
+    See docs/adr/0002 for why this matters: the default is measurably
+    *slower* than serial at the unscaled dev scale."""
+    printed_total = False
     for threads in ("1", "8"):
-        net, _ = _build_network(threads=threads)
+        net, config = _build_network(threads=threads, scale=scale)
+        if not printed_total:
+            print(f"Total neurons: {config.populations.total:,} (scale={scale})")
+            printed_total = True
         elapsed = _run_steps(net, steps, warmup=20)
         print(
             f"NEURO_STDP_THREADS={threads}: {steps} steps in {elapsed:.3f}s = "
@@ -143,12 +164,23 @@ def main() -> None:
         action="store_true",
         help="A/B compare serial vs. parallel STDP dispatch instead of profiling",
     )
+    parser.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Multiplier on every _DEV_SCALE_ENV population count (issue #440: "
+            "locate the serial/parallel crossover between the 55K default and "
+            "the 220K point ADR 0002 already measured). Default 1.0 = unscaled "
+            "55K dev-scale config."
+        ),
+    )
     args = parser.parse_args()
 
     if args.compare_threading:
-        compare_threading(args.steps)
+        compare_threading(args.steps, scale=args.scale)
     else:
-        profile(args.steps, args.top, args.output)
+        profile(args.steps, args.top, args.output, scale=args.scale)
 
 
 if __name__ == "__main__":
