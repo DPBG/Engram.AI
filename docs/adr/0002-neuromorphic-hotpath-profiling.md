@@ -226,6 +226,91 @@ enforcement note — out of scope for this ADR, noted for a future one.
 
 ---
 
+## Addendum: crossover sweep findings (issue #440)
+
+**Date:** 2026-07-27. **Environment note:** this sweep ran with Numba-compiled
+STDP kernels active (`compiled_kernels.py`, `NEURO_COMPILED_STDP=1`, the
+default) -- this ADR's original measurement predates that dependency.
+Absolute step times below are consequently ~4x faster across the board than
+the original 55K/220K baseline and are **not directly comparable to it**;
+only the serial-vs-parallel *direction* at each scale is meaningfully
+comparable across the two measurements.
+
+### Methodology
+
+`profile_hotpath.py --compare-threading` gained a `--scale` multiplier (this
+PR) to test population sizes between this ADR's original two data points
+(55K, 220K) -- follow-up item #2 above. Single-run sweep across 9 scale
+points from 55K to 160K, plus 3 repeated trials at the unscaled 55K default
+to check measurement stability.
+
+### Results
+
+| Neurons | Serial | Parallel | Winner |
+|---|---:|---:|---|
+| 55,000 (3-trial range) | 29.2–32.2 ms/step | 34.3–41.6 ms/step | **Serial**, consistently (confirms this ADR's original direction) |
+| 59,998 | 35.5 ms | 47.0 ms | Serial |
+| 65,002 | 48.0 ms | 55.7 ms | Serial |
+| 69,997 | 56.7 ms | 64.5 ms | Serial |
+| 74,998 | 59.3 ms | 66.4 ms | Serial |
+| 79,997 | 73.4 ms | 74.1 ms | ~tied |
+| 99,998 | 110.8 ms | 128.3 ms | Serial |
+| 129,998 | 211.0 ms | 240.2 ms | Serial |
+| 160,002 | 392.2 ms | 345.4 ms | Parallel |
+
+### Finding: no clean single crossover point in this data
+
+Unlike this ADR's original two-point measurement (which implied one
+monotonic crossover somewhere between 55K and 220K), this 9-point sweep
+shows serial winning consistently from 60K through 130K, with no smooth
+transition -- parallel only "wins" at the two ends (55K and 160K) of a
+range where it loses everywhere in between. This does not fit a simple
+"below threshold X, use serial; above X, use parallel" model.
+
+The most likely explanation is measurement noise: **every point above is a
+single, unrepeated run** on one machine with no control for background
+load, thermal throttling, or scheduler variance -- exactly the limitation
+this ADR already flagged for its own two-point measurement ("single run,
+one machine... not a multi-machine statistical study"). The 3-repeated-
+trial check at 55K shows real run-to-run variance large enough to plausibly
+explain the non-monotonic pattern above without needing a more complex
+underlying model.
+
+### Decision: no change to `_NEURO_SMALL` or the threading dispatch logic
+
+Picking a specific crossover threshold from this data and hard-coding it
+into `_route_parallel`'s dispatch logic would risk shipping a wrong number
+to every contributor's dev machine -- worse than the status quo. **Issue
+#440's PR does not change `launcher/registry.py`'s `_NEURO_SMALL`
+population sizes or add scale-adaptive threading dispatch.**
+
+What *is* confirmed and actionable: this ADR's core directional claim --
+serial beats parallel at the 55K dev-scale default -- still holds in this
+(Numba-enabled) environment, repeatably. `NEURO_STDP_THREADS` defaulting to
+8 is still measurably wrong for `python run.py`'s default profile; §1's
+recommended fix (scale-adaptive dispatch, or simply lowering the default)
+remains valid and unimplemented.
+
+### What real confidence would require
+
+- Multiple repeated trials (5+) per scale point, not single runs, with
+  mean + confidence interval -- the same statistical rigor
+  `BenchmarkSuite.run_multi_seed()` already applies elsewhere in this
+  codebase.
+- A dedicated, idle benchmarking environment, not a dev machine with
+  unknown background load.
+- More scale points specifically in the 130K-220K range: this sweep's
+  highest point (160K) already shows parallel winning, but 130K's serial
+  win was one of the largest margins measured -- a real crossover, if one
+  exists as a clean function of scale, most likely sits in that narrower
+  gap rather than anywhere already sampled here.
+
+Tooling for this investigation (`profile_hotpath.py --scale`) is committed;
+re-running this sweep with proper repeated trials is a natural next
+follow-up.
+
+---
+
 ## References
 
 - CLAUDE.md §6 (coding standards — vectorized hot paths, CSR, float32) and
